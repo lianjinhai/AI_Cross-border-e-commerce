@@ -1,0 +1,4 @@
+# 开发依赖（仅本地与 CI 使用，运行时不需要）
+# 安装：pip install -r requirements-dev.txt
+-r requirements.txt
+ruff>=0.6

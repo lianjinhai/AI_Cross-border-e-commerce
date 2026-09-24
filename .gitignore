@@ -1,0 +1,47 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# ---- 本地数据库（禁止入库；示例数据由 app/seed.py 重建）----
+backend/erp.db
+# 测试库：默认 test_erp_<pid>.db（PID 隔离），ERP_TEST_DB 可覆盖为任意名
+backend/test_erp*.db
+backend/*.db
+# SQLite WAL 模式旁文件：`backend/*.db` **不匹配**这些名字，必须单独列出。
+# 漏掉会把 4MB+ 的 -wal 误纳入版本控制（.dockerignore 早已覆盖，此处补齐）
+backend/*.db-wal
+backend/*.db-shm
+backend/*.db-journal
+backend/*.db.bak-*
+!backend/*.db.example
+
+# ---- 前端 ----
+frontend/node_modules/
+frontend/dist/
+frontend/.zcode/
+
+# ---- 其它生成物 ----
+*.log
+.env
+.env.*
+!.env.example
+
+# ---- 冷备产物（运维脚本产出，含 2MB+ 数据库；runbook 要求冷备，但不得入库）----
+backend/backups/
+_erp_backups/
+_wip_backup/
+
+# ---- 根目录临时探测脚本（下划线前缀约定为一次性脚本，禁止入库）----
+/_*.py
+
+# ---- 编辑/变异测试残留备份（回退法产出的 .orig/.bak，禁止入库）----
+*.orig
+*.bak
+*.rej
+
+# ---- Windows 保留设备名残留（禁止用 `> nul`，会生成此垃圾文件）----
+nul

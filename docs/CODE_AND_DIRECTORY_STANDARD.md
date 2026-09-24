@@ -1,0 +1,448 @@
+# 代码与目录规范 V1.0
+
+> 适用范围：`AI-电商ERP` 全仓库（`backend/` `frontend/` `docs/`）
+> 生效日期：2026-09-23
+> 配套文档：`docs/AI_AGENT_OPERATING_SYSTEM_ARCHITECTURE.md`（Agent 层冻结架构）、`docs/CONTRACT.md`（接口契约）、`docs/DECISIONS.md`（决策记录）
+
+## 0. 执行原则（先读这一节）
+
+本规范对**新增与修改**的代码强制生效；对**存量**代码采取「登记债务、渐进整改」。
+
+| 原则 | 说明 |
+|---|---|
+| **增量强制** | 新增文件、新增函数、被修改的函数体，必须符合本规范 |
+| **存量渐进** | 存量不合规代码不得以「顺手重构」名义被大范围改写；整改须走独立任务并登记 |
+| **债务可追溯** | 存量偏差统一登记在 §11 债务台账，不允许存在「隐形债务」 |
+| **门禁优先** | 能用工具自动检查的规则一律进工具链（§9），不依赖人工记忆 |
+| **例外须记录** | 任何偏离规范的实现，必须在 `docs/DECISIONS.md` 追加一条决策记录 |
+
+**为什么不是「一刀切」**：实测现状是 23 个 router **100% 直连 ORM**、`services/platform_adapters.py` 单文件 **1146 行**。若要求立即全面整改，规范将在生效当天即被违反，反而失去权威性。因此采用「新代码严格、老代码登记」路线。
+
+---
+
+## 1. 最高优先级：纳入版本控制（P0）
+
+**现状**：本目录**不是 Git 仓库**（全树无 `.git`）。这意味着：
+
+- `.gitignore` 与 `.dockerignore` 当前**完全未生效**；
+- `.github/workflows/ci.yml` 的 push/PR 触发**永远不会执行**；
+- 任何一次误删、误改都无法回溯——目前唯一的回滚手段是手工冷备（见 `docs/backup_restore_runbook.md`）。
+
+**规范**：
+
+1. 仓库根目录必须存在 `.git`，且 `main` 分支受保护。
+2. 任何超过 1 小时的开发任务开始前，工作区必须处于「已提交或已 stash」状态。
+3. 禁止提交：`*.db`、`node_modules/`、`dist/`、`__pycache__/`、`.pytest_cache/`、`.env`、`.zcode/`、`nul`。
+4. 提交信息格式：`<域>: <动作> <对象>`，例如 `workspace: 修复 superadmin 越权写入`。
+
+> **执行提示**：`git init` 属破坏性不可逆操作范畴的「新起点」，须由项目负责人确认后执行；执行后首次提交前必须先确认 `.gitignore` 覆盖完整（§7）。
+
+---
+
+## 2. 目标目录结构
+
+```
+AI-电商ERP/
+├── .github/workflows/ci.yml        # CI：测试 + 构建
+├── backend/
+│   ├── app/                        # 【运行时】只放会被部署的代码
+│   │   ├── agents/                 # 领域能力 Agent（冻结架构 §7）
+│   │   ├── ai/                     # LLM / RAG 基础设施
+│   │   ├── routers/                # HTTP 边界层
+│   │   ├── services/               # 业务能力层
+│   │   │   ├── settings_service.py      # 配置三级回退（P1-10 隔离）
+│   │   │   ├── shop_scope.py            # 店铺可见性守卫（归档店铺一律视为不存在）
+│   │   │   ├── tenant_data_purge.py     # 演示数据清理（按外键拓扑序）
+│   │   │   └── workspace_context.py     # 身份 Context 唯一入口
+│   │   ├── tools/                  # 【Phase 2 新增】Agent Tool Layer
+│   │   ├── workflows/              # 工作流引擎
+│   │   ├── models.py               # 数据模型（单一入口）
+│   │   ├── auth.py  config.py  db.py  main.py  seed.py
+│   │   └── serialize.py  secure_types.py
+│   ├── migrations/versions/        # Alembic 迁移（只增不改）
+│   ├── scripts/                    # 【运维】迁移/备份/审计脚本，不参与运行时
+│   ├── tests/                      # 测试
+│   │   ├── conftest.py             # 共享夹具（库隔离 + client + auth_headers + 状态自愈），
+│   │   │                           #   禁止任何测试模块跨文件 import 夹具（§8 T-2）
+│   │   └── test_*.py               # 按被测对象/业务域命名；深度对抗测试按域分文件
+│   ├── alembic.ini  pytest.ini  pyproject.toml
+│   ├── requirements.txt            # 运行时依赖
+│   └── requirements-dev.txt        # 开发依赖（lint/format）
+├── docs/
+│   ├── adr/                        # 【Phase 2 目标】架构决策记录；当前决策在 DECISIONS.md
+│   ├── archive/                    # 一次性报告归档（14 篇，索引见 archive/README.md）
+│   └── *.md                        # 活文档（需持续维护）
+├── frontend/
+│   ├── src/{views,components,composables}/   # components/composables 为 Phase 2 目标
+│   ├── tests/
+│   └── dist/  node_modules/        # 生成物，禁止提交
+├── Dockerfile                      # 两阶段构建；runtime 阶段已命名（可 --target 单独验证）
+├── docker-compose.yml              # 生产模式固定 + 密钥必填（无默认值）
+├── docker-entrypoint.sh            # 容器入口：先 alembic upgrade head 再启服务
+└── .gitignore  .dockerignore  .env.example  README.md  AGENTS.md
+```
+
+### 2.1 硬性规则
+
+| 编号 | 规则 |
+|---|---|
+| D-1 | `app/` 内禁止出现数据库文件、日志、临时脚本 |
+| D-2 | 运维脚本一律放 `backend/scripts/`，禁止放 `app/` |
+| D-3 | 业务库唯一为 `backend/erp.db`；**禁止**在 `backend/` 根目录新增**业务** `.db`。测试库例外：默认名 `test_erp_<pid>.db`（PID 隔离）或由 `ERP_TEST_DB` 指定，且必须被 `.gitignore` 覆盖（§7.1）。运维脚本产出的库放 `backend/backups/` |
+| D-8 | 新增 `.db` 类产物（含 WAL 旁文件 `-wal`/`-shm`/`-journal`）前，必须同步 `.gitignore` **与** `.dockerignore`。注意 `*.db` **不匹配** `*.db-wal`，旁文件必须单独列 |
+| D-4 | 一次性报告放 `docs/archive/`（索引见 `docs/archive/README.md`）；只有需要持续维护的文档留在 `docs/` 根 |
+| D-5 | 禁止提交生成物；`.gitignore` 必须先于文件产生而覆盖（§7） |
+| D-6 | 新增顶层目录或 `app/services/` 新增模块必须同步更新本文件 §2 |
+| D-7 | `app/services/workspace_context.py` **刻意不定义** `workspace_memberships` 等 Phase 1 表的 ORM 模型：注册进 `Base.metadata` 会让 `create_all` 绕过迁移门禁。该表族只经 Alembic 落地，读取用运行时探测 + 原生 SQL。新增该族表时必须遵守此约束 |
+
+---
+
+## 3. 分层与依赖方向
+
+### 3.1 目标分层（与 Agent OS 架构对齐）
+
+```
+routers/      HTTP 边界：参数校验、鉴权、序列化、调用下层
+    ↓
+agents/       领域能力：Orchestrator / Planner / 8 个 Specialist Agent
+    ↓
+tools/        Agent 唯一数据通道（Phase 2 起强制）
+    ↓
+services/     业务能力：平台适配、规则引擎、分析、采集
+    ↓
+models.py     数据定义
+```
+
+### 3.2 依赖规则
+
+| 编号 | 规则 | 违反后果 |
+|---|---|---|
+| L-1 | `services/` **禁止** import `routers/` | 立即阻断（当前 0 处，保持） |
+| L-2 | `agents/` **禁止** import `routers/` | 立即阻断（当前 0 处，保持） |
+| L-3 | `agents/` **禁止** import 其他 `agents/`（红线 2，禁止 P2P） | 立即阻断 |
+| L-4 | `routers/` 可以 import `services/` `agents/` `models.py` | 允许（存量已如此） |
+| L-5 | **新增** Agent 数据访问必须经 `tools/`（Phase 2 起）；存量 `BaseAgent.db` 已登记为债务 | 登记 |
+| L-6 | 禁止函数体内延迟 import 来掩盖循环依赖；确需延迟导入必须写明原因注释 | 新增代码阻断 |
+
+> **L-3 补充**：Agent 之间的协作只能由 Orchestrator 编排。任何「A Agent 直接调用 B Agent」的写法都违反架构红线 2。
+
+### 3.3 存量偏差（登记，不立即整改）
+
+- `routers/` 23/23 直连 `models.py`：允许，但**新增 router 若含业务逻辑，逻辑必须下沉到 `services/`**。
+- 函数体内延迟 import 共 32 处（2026-09-24 实测），分布：`shops.py`(11)、`listings.py`(6)、`purchases.py`(4)、`factory_network.py`(3)、`orders.py`(3)、`ai.py`(2)、`bi.py`(2)、`suppliers.py`(1)。**只减不增**。
+- `services/scheduler.py` 反向 import `workflows.engine` 与 `agents.discovery`：登记为债务，Phase 2 通过事件总线解耦。
+- `agents/supplier.py` 反向 import `services.commercial_analytics`：登记为债务。
+
+---
+
+## 4. 命名规范
+
+| 对象 | 规则 | 示例 |
+|---|---|---|
+| 模块 / 文件 | 小写 + 下划线 | `platform_rules.py` |
+| 类 | 大驼峰 | `BaseAdapter`、`WorkspaceContext` |
+| 函数 / 变量 | 小写 + 下划线 | `resolve_workspace_context()` |
+| 常量 | 全大写下划线 | `DEFAULT_RULE_PACKS` |
+| 私有成员 | 单下划线前缀 | `_read_setting()` |
+| 测试文件 | `test_<被测对象>.py` | `test_workspace_context.py` |
+| 测试函数 | `test_<行为>_<预期>` | `test_role_permission_matrix` |
+| 迁移文件 | `<日期>_<序号>_<描述>.py` | `20260923_09_users_nullable_workspace.py` |
+
+### 4.1 业务域命名冲突（须修正）
+
+| 冲突 | 现状 | 规定 |
+|---|---|---|
+| `settlement` | `routers/finance.py` 指**平台结算**；`routers/settlements.py` 指**供应商应付结算** | 前者统一改称 `platform-settlement`；新增接口禁止再用裸 `settlement` |
+| `forecast` | 散落于 `bi.py`、`suppliers.py`、`purchases.py` 三处 | 新增预测能力统一挂 `/bi/` 域下 |
+| `match` | `suppliers.py`（货源匹配）与 `factory_network.py`（工厂机会匹配） | 新增匹配能力须在路径中带域前缀 |
+
+---
+
+## 5. 文件规模与拆分阈值
+
+| 类型 | 警戒线 | 硬上限 | 超出时 |
+|---|---|---|---|
+| Python 模块 | 300 行 | 500 行 | 按职责拆分为包（目录 + `__init__.py`） |
+| Python 函数 | 50 行 | 80 行 | 提取私有函数 |
+| Vue 单文件组件 | 300 行 | 400 行 | 抽 `components/` 子组件与 `composables/` |
+| 测试文件 | 400 行 | 600 行 | 按被测对象拆分 |
+
+**当前超标（2026-09-24 实测，存量债务见 §11）**：
+
+| 文件 | 行数 | 阈值 | 说明 |
+|---|---|---|---|
+| `app/services/platform_adapters.py` | 1158 | 500 | DEBT-05：Phase 2 拆为 `services/adapters/` 包 |
+| `tests/test_api.py` | 857 | 600 | DEBT-11：按业务域拆分 |
+| `scripts/backup_restore_drill.py` | 805 | 500 | 运维脚本，允许放宽（三段式 CLI，逻辑内聚） |
+| `app/models.py` | 716 | 500 | **例外**：见下方说明 |
+| `scripts/migration_preflight.py` | 672 | 500 | 运维脚本，12 项检查各自独立，拆分收益低 |
+| `app/seed.py` | 413 | 300（警戒） | 演示数据构造，Phase 2 可拆 `seed/` 包 |
+| `tests/test_deep_domains.py` | 352 | 400（警戒） | 四域对抗测试，按域分文件即可 |
+| `app/services/workspace_context.py` | 321 | 300（警戒） | 身份 Context 唯一入口，保持单文件便于审计 |
+| `app/routers/purchases.py` | 318 | 300（警戒） | 采购 + 代发同域 |
+| `frontend/src/views/PlatformAdmin.vue` | 518 | 400 | DEBT-12 |
+| `frontend/src/views/Shops.vue` | 473 | 400 | DEBT-12 |
+| `frontend/src/views/Suppliers.vue` | 380 | 300（警戒） | DEBT-12 |
+| `frontend/src/views/Listings.vue` | 358 | 300（警戒） | DEBT-12 |
+| `frontend/src/views/Products.vue` | 338 | 300（警戒） | DEBT-12 |
+
+> **`models.py` 例外**：数据模型集中定义便于 Alembic 与 ORM 关系维护，允许超过 500 行，但**必须保持纯定义**，禁止混入业务逻辑。
+
+---
+
+## 6. 数据库与迁移规范
+
+| 编号 | 规则 |
+|---|---|
+| M-1 | 所有结构变更**必须**通过 Alembic 迁移；禁止手工改表 |
+| M-2 | 迁移文件**只增不改**；已执行的迁移禁止编辑（含改注释） |
+| M-3 | 每个迁移必须实现可用的 `downgrade()`；无法回滚的必须写明原因 |
+| M-4 | 数据回填类迁移必须**幂等**（重复执行结果一致）并带硬性断言 |
+| M-5 | 迁移执行前必须生成冷备并跑 `scripts/migration_preflight.py`；P0 未清零不得执行 |
+| M-6 | 禁止在迁移中 import `app.models`；使用原生 SQL 或 `sa.table()` 轻量定义 |
+| M-7 | 新增含 `tenant_id` 的表必须同时声明 `tenant_id → tenants.id` 外键 |
+| M-8 | 新增 Agent / AI 能力**禁止**直接建表；须走 Agent OS 架构 §9 的 Action 模型 |
+| M-9 | **WAL 模式下"文件哈希未变"不能证明"数据未变"**：判断主库是否被写必须同时比对**行数**（或先 `wal_checkpoint(TRUNCATE)`）；恢复主库时**必须连同 `-wal` / `-shm` 一起删除**，否则残留 WAL 会被回放到新库 |
+
+> **M-7 说明**：`models.py` 当前定义 45 张表（含 `tenant_id` 的 42 张），其中仅 `users`、`tenant_settings` 声明了 `tenant_id → tenants.id` 外键，**40 张缺失**。这导致 `PRAGMA foreign_key_check` 返回 0 违规**不能**作为租户隔离的合规证明（历史 tenant 0 孤儿数据 37 行即因此漏检）。
+>
+> **表数口径**：主库 52 张表 = `models.py` 45 张 + Alembic 独有的 6 张（`workspace_profiles` / `workspace_memberships` / `workspace_roles` / `permissions` / `role_permissions` / `membership_data_scopes`，见 D-7）+ `alembic_version`。
+
+> **M-9 说明（D17 实测踩坑）**：做"隔离性检测"的回退法验证时，故意让服务连回主库，
+> 跑完后主库文件 **SHA256 完全没变**，但**总行数从 3,169 变成 3,230**——因为新数据
+> 先写进了 `erp.db-wal`。若只比对哈希就会**误判为"隔离有效"**，把一个真实发生的
+> 数据污染当成通过。
+>
+> 两个必须记住的推论：
+> 1. **检测**：任何"主库是否被写"的校验，都要同时看行数（`e2e_feasibility.py` 已如此实现）；
+> 2. **恢复**：从冷备恢复时必须 `erp.db` + `erp.db-wal` + `erp.db-shm` 一起删，
+>    否则残留 WAL 回放会把被污染的数据"复活"进来（与 `conftest.py` 删测试库时的
+>    教训同源，见该文件 `_remove_db_files` 的注释）。
+
+---
+
+## 7. 生成物与临时产物管理
+
+### 7.1 必须被忽略（`.gitignore` + `.dockerignore` 双写）
+
+```
+__pycache__/            *.pyc              .pytest_cache/
+backend/erp.db          backend/*.db       backend/test_erp*.db
+backend/*.db-wal        backend/*.db-shm   backend/*.db-journal
+backend/*.db.bak-*      !backend/*.db.example
+frontend/node_modules/  frontend/dist/     frontend/.zcode/
+*.log                   .env               nul
+```
+
+> **为什么 WAL 旁文件必须单独列**：`backend/*.db` **不匹配** `erp.db-wal` 这类名字。
+> 漏写会把 4MB+ 的 WAL 文件误纳入版本控制（`.dockerignore` 早已覆盖，`.gitignore` 曾漏）。
+
+### 7.2 规则
+
+| 编号 | 规则 |
+|---|---|
+| G-1 | 新增任何生成物前，**先**把忽略规则写进 `.gitignore` 与 `.dockerignore` |
+| G-2 | 禁止在仓库内用 `> nul`（Windows 保留设备名会生成垃圾文件）；重定向丢弃输出用 `> $null` |
+| G-3 | 调试脚本用完即删；需保留的必须移入 `backend/scripts/` 并写明用途 |
+| G-4 | `*.db` 一律不进版本控制；示例数据通过 `app/seed.py` 重建 |
+
+---
+
+## 8. 测试规范
+
+| 编号 | 规则 |
+|---|---|
+| T-1 | 新增业务能力必须带测试；Bug 修复必须先写能复现的失败测试 |
+| T-2 | 测试**不得**依赖执行顺序；共享夹具用 pytest fixture |
+| T-3 | 涉及权限/租户隔离的改动，必须同步更新 `tests/test_security.py` 的权限矩阵 |
+| T-4 | 测试断言必须与被测语义一致；**禁止**为让测试通过而放宽断言 |
+| T-5 | 涉及数据库结构的改动，必须同步更新 `tests/test_migration_preflight.py` |
+| T-6 | 缓存/聚合逻辑的测试**必须覆盖「数据变化」**（0→有、有→更多、有→0），只测「0→有」不算覆盖 |
+| T-7 | 涉及 `limit`/`offset` 的接口，测试数据量**必须超过 limit**，并断言排序优先级项仍在结果中 |
+| T-8 | **禁止恒真断言**：`>= 0`、`x == 同一对象`、空集合上的 `all(...)`、`try/except: pass` 吞失败、`pytest.skip` 兜底前置。断言必须能因被测代码出错而失败 |
+| T-9 | **禁止硬编码序号定位**（`steps[7]`、`items[0]` 假定顺序）。改按语义键定位（`next(s for s in steps if s["action"] == ...)`）或用契约字段（`seq`）比较 |
+| T-10 | **测试夹具不得删除业务数据**：任何"删库/清表"路径必须显式校验目标不是业务库（见 `conftest.py::_guard_test_db_path`） |
+| T-11 | 新增回归测试必须用「**临时回退修复 → 确认测试失败 → 恢复**」证明其有效；无法证明时须在 docstring 标注为"契约守护"而非"缺陷回归" |
+| T-12 | **验收脚本自身必须可靠**：脚本选用的前置数据必须显式探测（不得假定 `items[0]` 可用）；数据前提缺失时报 `SKIP` 并说明原因，**不得伪装成 `FAIL`**；断言必须针对"本次操作产生的对象"，不得针对"全局汇总值" |
+| T-13 | **可行性验证必须真启动服务**：进程内 `TestClient` 全绿 ≠ 可部署。涉及"项目可实际运行"的结论，必须真启动 uvicorn + 真实 HTTP 调用 + 静态前端可访问，且**在数据库副本上执行**（不碰主库） |
+
+> **T-4 说明**：本轮修复中，`test_security.py` 曾把「superadmin 可访问租户业务 API」固化为正确行为，`test_api.py` 曾把「租户停用」误断言为「租户到期」。两者都是断言与语义脱节，属于**测试在保护错误行为**，比缺测试更危险。
+
+> **T-6 / T-7 说明（D13 教训，两条都是「测试全绿但功能不可用」）**：
+> - **T-6**：`product_performances` 缓存的失效判据只比「有无订单」，实测 5 单变 25 单仍返回旧值；
+>   而用例只测了 `0 单 → 10 单` 的翻转，恰好绕过缺陷。**缓存有效性必须看数据是否变化，不是数据是否存在。**
+> - **T-7**：`list_alerts` 先按时间 `limit 100` 再在内存按级别排序，实测 120 条新低风险 + 1 条较早高风险时
+>   高风险完全不可见；用例数据量小于 limit，恰好绕过。**任何 limit 都必须发生在排序/过滤之后。**
+
+> **T-8 ~ T-11 说明（D15 教训，来自并行工具（zcode）与审计的共同发现）**：
+> - **T-8**：实测到 4 类恒真断言——`deleted["orders"] >= 0`（计数恒真）、
+>   `read_only == wc._READ_PERMISSIONS`（同一对象自比较）、
+>   `assert len(items) >= 0`、以及 `if not alerts: pytest.skip(...)`（单跑必跳过）。
+>   这类"假测试"给出虚假安全感，比缺测试更危险。
+> - **T-9**：`test_api.py` 用 `steps[7]` 断言"被拦步骤"，而模板里第 7 步是
+>   `review_batch`（下标 6）——顺序调整后测试失败但**指向错误的排查方向**。
+> - **T-10**：`conftest.py` 的 `ERP_TEST_DB` 无防呆，误设 `erp.db` 会让会话夹具
+>   直接删掉业务主库（实测已加校验并验证拒绝启动）。**删除类夹具必须校验目标**。
+> - **T-11**：写了回归测试不等于测试有效。本轮 2 条修复用回退法证明有效，
+>   另 1 条实测**无法复现差异**，已如实降级标注——避免"二次假绿"。
+>   **D16 补充（更强的教训）**：本轮新增的"选品门槛"断言**首版判别力不足**——把
+>   `pick_candidates(min_total=60)` 变异为 `0` 后断言**依然通过**，因为演示租户里种子商品
+>   分数普遍 ≥60，占满了 `limit` 窗口，低分商品本来就挤不进来。改为**隔离租户**场景
+>   （新建租户 + 3 个低分商品，租户内无其它候选）后变异立刻被抓到。
+>   **结论：断言必须在"被测行为坏掉时必然失败"的场景下设计，回退法是唯一可靠证据。**
+
+> **T-12 / T-13 说明（D17 教训：验收脚本自己失灵，把"功能正常"误报为"功能坏了"）**：
+> 2026-09-24 首次对**真实运行的服务**跑 `scripts/live_acceptance.py`，7 步里 2 步 FAIL。
+> 逐条定位后确认**业务功能完全正常，是脚本自己有三处缺陷**：
+> 1. 采购闭环取 `GET /products` 的**第一个**商品建单——该商品恰好没有 `supplier_offers`
+>    记录，于是 404「无可用货源报价」。**是脚本选错商品，不是采购坏了**。
+> 2. 订单闭环传 `platform="shopee"`，而 `/orders/sync` 是**演示订单入口**，只接受
+>    `demo:<平台>`（传真实平台名返回 409）。脚本用错了接口语义。
+> 3. 采购断言要求「该供应商应付**总额归零**」——但供应商 1 存在种子数据里的历史
+>    未结清结算单（`ST#3 pending / 158.4`），于是**每次跑都必然失败**。应断言
+>    「**本次生成的结算单**已 paid」。
+>
+> **教训**：`TestClient` 全绿让人以为"已经验证过了"，但**没有任何一条测试真正启动过
+> 服务、加载过前端构建产物、走过一次真实 HTTP**。验收脚本一旦自己不可靠，产生的
+> 是**假失败**（浪费排查时间）或**假通过**（掩盖真缺陷），两者都比没有脚本更危险。
+> 修正后 7 步全 PASS（`exit=0`），并保留 `SKIP` 语义用于"数据前提缺失"。
+
+**当前基线（2026-09-24 13:10 实测）**：后端 `pytest -q` → **231 passed**；
+后端**反序文件列表**跑 → **231 passed**（顺序依赖已消除）；前端 `npm test` → **67 passed**；
+`ruff check` → All checks passed；`migration_preflight.py` → 12 项全 PASS（主库 `20260924_15`）；
+**真启动服务端到端验收** → `scripts/live_acceptance.py` **7 步全 PASS / exit=0**。
+**任何提交不得低于此基线**。
+
+> **反序跑是强制自检项（D16 新增）**：顺序依赖是"单跑绿、全量红"的唯一根因，而普通全量跑
+> 未必能暴露它（取决于文件名字典序）。提交涉及测试夹具/种子数据的改动前，必须额外跑一次
+> **反序文件列表**：`python -m pytest (ls tests/test_*.py | sort -r) -q`。
+
+> **测试可重复性硬要求（D11 教训）**：
+> - 测试必须能**重复跑**（同一测试库连跑两次全绿）与**并发跑**（多进程各自独立库）。
+>   曾因 `_seed()` 对全局唯一的 `settings` 表不幂等 + 测试库固定名 + WAL 旁文件残留，
+>   并发/重复运行时爆发 100+ 个 `UNIQUE constraint failed: settings.key`。
+> - 新增任何「无租户维度的全局表」时，种子写入必须走幂等的「缺什么补什么」路径。
+> - 测试库默认名带进程号（`test_erp_<pid>.db`）；需要固定名时用 `ERP_TEST_DB` 显式指定。
+
+> **T-2 已发生的两次真实违反（务必避免重犯）**：
+> 1. 共享夹具曾定义在 `test_api.py` 内、被其他文件跨模块 import，隐含「文件名排序决定成败」的
+>    顺序依赖；某个排序更靠前的模块先建连接即触发 `WinError 32` 整批报错。已下沉 `tests/conftest.py` 根治。
+> 2. 改 admin 口令的用例递增 `token_version` 使会话级共享 token 失效，导致后续文件集体 401。
+>    已通过「`auth_headers` 函数级作用域 + token 失效自动重登」与「用例级快照还原」双重防护。
+> 教训：**任何会改变全局状态的测试，必须在用例级还原，或让共享夹具自愈。**
+
+---
+
+## 9. 工具链与代码风格
+
+### 9.1 已配置
+
+- `backend/pyproject.toml`：ruff 规则集（`E` `F` `W` `I` `UP` `B`；行宽 100；`E501` 关闭以兼容存量）
+- `backend/requirements-dev.txt`：开发依赖
+
+### 9.2 使用方式
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+python -m ruff check .          # 只检查，不改动
+python -m ruff check --fix .    # 自动修复可安全修复项
+python -m ruff format .         # 格式化
+```
+
+### 9.3 风格约定
+
+| 编号 | 规则 |
+|---|---|
+| S-1 | 缩进 4 空格（Python）/ 2 空格（JS/Vue）；文件末尾保留单个换行 |
+| S-2 | 导入分组：标准库 → 第三方 → 本地，组间空行；禁止 `import *` |
+| S-3 | 文件统一 UTF-8（无 BOM）；中文注释与中文错误信息一律保留 |
+| S-4 | 公共函数必须有 docstring，说明「做什么」而非「怎么做」 |
+| S-5 | 禁止裸 `except:`；捕获异常必须记录或转换为明确错误 |
+| S-6 | 面向用户的错误信息用中文，日志与内部异常可用英文 |
+
+### 9.4 CI 门禁（已落地）
+
+| 阶段 | 门禁 | 状态 |
+|---|---|---|
+| 当前 | 后端 `ruff check` + `pytest -q`；前端 `npm test` + `npm run build` | 已启用 |
+| 下一步 | 逐步收紧规则集（先移除 `B008` 例外，再启用 `E501`） | 待存量格式化 |
+| 长期 | 追加 `mypy` 关键模块类型检查 | 规划中 |
+
+**当前基线（2026-09-24 12:40 实测）**：`ruff check` → All checks passed；后端 `pytest -q` → **231 passed**（反序同样 231 passed）；前端 `npm test` → **67 passed**；`migration_preflight.py` → 12 项全 PASS（`P0_fail=0`）。
+
+> **规则集说明**：首轮启用时出现 509 条告警，其中 `B008`（FastAPI `Depends()` 必须写在默认参数）等属框架惯用法误报，已按「只报功能性缺陷」原则显式豁免。豁免项均在 `pyproject.toml` 中标注原因与「只减不增」约束，不允许无理由扩大豁免。
+
+---
+
+## 10. 文档规范
+
+| 编号 | 规则 |
+|---|---|
+| Doc-1 | 架构决策写入 `docs/adr/ADR-<序号>-<标题>.md`，并在 `docs/DECISIONS.md` 索引 |
+| Doc-2 | 一次性报告完成后移入 `docs/archive/`，文件名保留日期 |
+| Doc-3 | 活文档必须维护「最后更新」与「状态」字段 |
+| Doc-4 | 接口变更必须同步 `docs/CONTRACT.md`；Agent 相关变更必须同步 Agent OS 架构文档 |
+| Doc-5 | 禁止文档与代码脱节：文档中引用的路径、字段名、状态值必须可被检索验证 |
+
+---
+
+## 11. 存量债务台账
+
+> 登记即可，不要求立即整改。每次整改后更新状态。
+
+| 编号 | 债务 | 严重度 | 涉及文件 | 整改时机 |
+|---|---|---|---|---|
+| DEBT-01 | 仓库未纳入版本控制 | **P0** | 仓库根 | **待负责人确认后 `git init`**（`.gitignore` 已补齐 4 项遗漏） |
+| DEBT-02 | ~~`tenant_id=0` 孤儿业务数据 37 行 / 12 张表~~ | ~~P0~~ | `backend/erp.db` | ✅ **已完成**：已清零（含根因修复：superadmin 越权写入 + 审计脚本护栏） |
+| DEBT-03 | 40 张含 `tenant_id` 的表缺外键约束 | **P1** | `migrations/` | Phase 2 结构收敛 |
+| DEBT-04 | ~~无 lint/format 配置与门禁~~ | ~~P1~~ | 全仓 | ✅ **已完成**：已配 `backend/pyproject.toml` + `requirements-dev.txt`，`ruff check` 全绿并接入 CI |
+| DEBT-05 | `platform_adapters.py` 1158 行单文件承载 15 个适配器 | **P1** | `app/services/platform_adapters.py` | Phase 2 拆为 `services/adapters/` 包 |
+| DEBT-06 | ~~`backend/` 根目录混放 3 个 `.db`，其中 2 个无引用~~ | ~~P1~~ | `backend/*.db` | ✅ 已完成：`test_dbg.db`、`project_goal_acceptance.db` 已冷备后清理，仅留 `erp.db` |
+| DEBT-07 | 缺 `AGENTS.md` / `CONTRIBUTING.md` / ADR 目录 | P1 | 仓库根、`docs/` | 部分完成：`AGENTS.md` 已补；ADR 目录 Phase 2 |
+| DEBT-08 | `agents/base.py` 自建 `SessionLocal`，绕过依赖注入 | **P2** | `app/agents/base.py:10,19` | Phase 2 Tool Layer 落地时一并解决 |
+| DEBT-09 | `services/scheduler.py` 自建 `SessionLocal` + 反向依赖 | **P2** | `app/services/scheduler.py:12,42,57,83,88` | Phase 2 事件总线 |
+| DEBT-10 | 函数体内延迟 import 32 处（2026-09-24 实测） | P2 | 8 个 router | 只减不增（未纳入 ruff 门禁，避免误报；靠评审把关） |
+| DEBT-11 | `test_api.py` 857 行 / 29 用例单文件 | **P2** | `tests/test_api.py` | 按业务域拆分 |
+| DEBT-12 | 前端 5 个视图 >300 行 | **P2** | `views/PlatformAdmin.vue` 等 | Phase 1.7 前端接入时评估 |
+| DEBT-13 | ~~`docs/` 活文档与一次性报告混放~~ | ~~P2~~ | `docs/` | ✅ 已完成：13 个一次性报告已归档到 `docs/archive/`，附索引 README |
+| DEBT-14 | `workspace_profiles.owner_user_id` 7 行全为 NULL | **P2** | 数据 | Phase 1 收尾 |
+| DEBT-15 | `membership_data_scopes` 0 行，Guardrail 第二道闸无数据支撑 | **P2** | 数据 | Phase 2 |
+| DEBT-16 | ~~`shops` 13 行 role 全为 `sales`（1688 应为 `source`）~~ | ~~P2~~ | 数据 | ✅ 已完成：11 行已修正为 `source`，与平台默认一致 |
+| DEBT-17 | `routers/purchases.py` 中 `DropshipIn` 重复定义 | P2 | `app/routers/purchases.py` | 已完成：已删除重复定义 |
+| DEBT-18 | `platform_adapters.py` 发布前校验未按声明字段校验 price/stock/images | P1 | `app/services/platform_adapters.py` | 已完成：已按声明逐项校验 |
+| DEBT-19 | ~~删店铺直接物理删除，撞 5 张表外键 → 500~~ | ~~P0~~ | `app/routers/shops.py` | ✅ 已完成：改为归档式软删除（`shops.archived_at`，Revision E），凭证即时失效 |
+| DEBT-20 | ~~`purge_demo_data` 未按外键拓扑序删除 → 必然 500~~ | ~~P0~~ | `app/routers/shops.py` | ✅ 已完成：抽出 `services/tenant_data_purge.py`，子表在前、父表在后 |
+| DEBT-21 | 店铺可见性守卫散落在各路由，靠人肉记得排除归档行 | **P2** | `app/services/shop_scope.py` | 已提供统一入口 `active_shop()`；`routers/orders.py` 已改用，其余 3 处为内联判断，Phase 2 统一 |
+| DEBT-22 | `requirements.txt` 全为 `>=`，构建不可复现 | **P1** | `backend/requirements.txt` | 待锁定版本（`pip freeze` 或 uv lock） |
+| DEBT-23 | 无 HTTPS / 反向代理配置 | **P0** | 部署层 | 待出方案（见 `docs/DECISIONS.md` D8）；代码侧已就绪 |
+| DEBT-24 | ~~`ERP_ADMIN_PASSWORD` 门禁形同虚设：`auth.admin_bootstrap_password()` 从未被调用，生产环境仍可用 `admin123` 登录~~ | ~~**P0**~~ | `app/seed.py`、`app/main.py` | ✅ **已完成**：新增 `seed._ensure_admin_password()` 并在 lifespan 调用（见 `docs/DECISIONS.md` D10.1），回归测试 3 项 |
+| DEBT-25 | 测试共享夹具跨文件 import，存在收集顺序依赖 | **P2** | `tests/` | ✅ **已完成**：夹具下沉 `tests/conftest.py`，`auth_headers` 自愈 + 用例级状态还原（见 D10.2） |
+| DEBT-26 | ~~`_seed()` 对全局唯一的 `settings` 表不幂等~~；~~测试库单实例（固定名 + WAL 旁文件残留）~~ | ~~**P1**~~ | `app/seed.py`、`tests/conftest.py`、`.gitignore` | ✅ **已完成**：抽出 `DEFAULT_SETTINGS` + `_ensure_default_settings()`（缺什么补什么）；测试库 PID 隔离 + `ERP_TEST_DB` 覆盖 + WAL 旁文件统一清理；`.gitignore` 补齐旁文件与 PID 库名（见 `docs/DECISIONS.md` D11） |
+
+---
+
+## 12. 提交前检查清单
+
+新增或修改代码后，逐项确认：
+
+- [ ] 无新增 `.db` / 日志 / 临时文件进入仓库
+- [ ] 新增文件符合 §2 目录结构，未越层放置
+- [ ] 依赖方向符合 §3（尤其 L-1 / L-2 / L-3）
+- [ ] 文件与函数规模未超 §5 阈值
+- [ ] 结构变更走 Alembic 迁移且 `downgrade()` 可用（§6）
+- [ ] 新增能力带测试；权限改动已更新 `test_security.py`（§8）
+- [ ] `ruff check` 全绿；`pytest -q` ≥ 231 passed；反序跑同样 ≥ 231 passed；`npm test` ≥ 67 passed
+- [ ] 测试可重复（同一库连跑两次全绿）且可并发（多进程各自独立库）
+- [ ] 涉及结构变更时 `scripts/migration_preflight.py` 12 项全 PASS（P0 未清零不得执行）
+- [ ] 涉及"可运行/可部署"的结论时，已真启动服务跑过 `scripts/live_acceptance.py` 且全 PASS（T-13）
+- [ ] 偏离规范的实现已在 `docs/DECISIONS.md` 记录
+- [ ] 相关文档已同步（`CONTRACT.md` / Agent OS 架构 / 本文件）
+
+---
+
+## 附：本规范的维护
+
+- 修改本文件须在 `docs/DECISIONS.md` 追加记录，并说明触发原因。
+- 每次 Phase 收尾时复核 §11 台账，更新状态与新增债务。
+- 本文件与 `docs/AI_AGENT_OPERATING_SYSTEM_ARCHITECTURE.md` 冲突时，Agent 层规则以后者为准。

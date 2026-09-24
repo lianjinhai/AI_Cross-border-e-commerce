@@ -1,0 +1,172 @@
+"""总调度 Agent（Commerce Orchestrator，对应规划第四章 4.1）：
+
+理解用户目标 → 意图路由 → 调度专业 Agent → 汇总结果。
+"""
+from datetime import datetime, timedelta
+
+from sqlalchemy import func
+
+from ..ai.llm import ModelRouter
+from ..models import AdCampaign, AiLog, Conversation, Listing, Order, Product, Supplier
+from .base import BaseAgent
+
+
+class OrchestratorAgent(BaseAgent):
+    name = "orchestrator"
+
+    # ---------- 意图路由 ----------
+    def chat(self, message: str) -> dict:
+        msg = (message or "").strip()
+        try:
+            reply, intent, actions, data = self._route(msg)
+        except Exception as e:
+            reply, intent, actions, data = f"处理请求时出现问题：{e}", "error", [], None
+        self.db.add(AiLog(tenant_id=self.tenant_id, agent="orchestrator", action="chat",
+                          mode="rule", model="router", prompt=msg[:2000],
+                          response=reply[:4000], latency_ms=0, ok=True))
+        self.db.commit()
+        return {"reply": reply, "intent": intent, "actions": actions, "data": data}
+
+    def _route(self, msg: str) -> tuple[str, str, list, object]:
+        if any(w in msg for w in ["选品", "发现", "机会", "爆款", "pick"]):
+            return self._do_pick()
+        if any(w in msg for w in ["趋势", "市场", "热销", "trend"]):
+            return self._do_trends()
+        if any(w in msg for w in ["定价", "价格", "利润", "price", "margin"]):
+            return self._do_reprice()
+        if any(w in msg for w in ["铺货", "上架", "发布", "listing"]):
+            return self._do_listing_guide()
+        if any(w in msg for w in ["供应商", "货源", "采购", "supplier"]):
+            return self._do_suppliers()
+        if any(w in msg for w in ["客服", "消息", "会话", "售后", "support"]):
+            return self._do_support()
+        if any(w in msg for w in ["风险", "巡检", "告警", "预警", "断货", "亏损", "alert", "risk"]):
+            return self._do_risk_scan()
+        if any(w in msg for w in ["报告", "经营", "分析", "bi", "report", "gmv"]):
+            return self._do_bi()
+        return self._fallback_chat(msg)
+
+    # ---------- 各意图执行 ----------
+    def _do_pick(self) -> tuple[str, str, list, object]:
+        from .discovery import DiscoveryAgent
+
+        with DiscoveryAgent(self.tenant_id) as a:
+            r = a.pick_candidates(3, min_total=0)
+        items = r["items"]
+        lines = [f"· {i['title'][:40]}（机会分 {i['total']}：需求{i['demand']:.0f}/竞争{i['competition']:.0f}/利润{i['profit']:.0f}）"
+                 for i in items]
+        reply = f"已为您完成选品分析，Top {len(items)} 机会商品：\n" + "\n".join(lines) + \
+                "\n可到「商品发现」页查看评分依据，或运行「AI工作流-自动铺货」完成后续动作。"
+        return reply, "pick", ["pick_candidates"], items
+
+    def _do_trends(self) -> tuple[str, str, list, object]:
+        from .discovery import DiscoveryAgent
+
+        with DiscoveryAgent(self.tenant_id) as a:
+            trends = a.scan_trends()
+        hot = sorted(trends, key=lambda t: -t["growth_30d"])[:5]
+        lines = [f"· {t['keyword']}（{t['platform']}）30天增长 {t['growth_30d']}%，月搜索 {t['search_volume']}"
+                 for t in hot]
+        return "最新市场趋势 Top5：\n" + "\n".join(lines), "trends", ["scan_trends"], hot
+
+    def _do_reprice(self) -> tuple[str, str, list, object]:
+        from .pricing import PricingAgent
+
+        with PricingAgent(self.tenant_id) as a:
+            r = a.reprice_batch()
+        rows = r["repriced"][:5]
+        lines = [f"· 商品#{x['product_id']} 建议价 ${x['suggested_price']}（利润率 {x['margin'] * 100:.0f}%）"
+                 for x in rows]
+        reply = (f"已完成全店 {len(r['repriced'])} 个商品的动态定价分析，示例：\n" + "\n".join(lines) +
+                 "\n明细见「动态定价」页。")
+        return reply, "pricing", ["reprice_batch"], r["repriced"]
+
+    def _do_listing_guide(self) -> tuple[str, str, list, object]:
+        n = (self.db.query(func.count(Listing.id))
+             .filter(Listing.tenant_id == self.tenant_id, Listing.status == "draft").scalar()) or 0
+        reply = (f"当前有 {n} 条草稿 Listing。建议两种方式：\n"
+                 "1)「Listing工作台」选择商品点击「AI生成」→「发布」；\n"
+                 "2)「AI工作流」运行「自动铺货全流程」，系统将自动完成 "
+                 "选品→标准化→货源匹配→合规检测→生成→发布→广告草稿 全链路。")
+        return reply, "listing", [], {"draft_listings": n}
+
+    def _do_suppliers(self) -> tuple[str, str, list, object]:
+        from .supplier import SupplierAgent
+
+        sups = (self.db.query(Supplier).filter(Supplier.tenant_id == self.tenant_id).all())
+        results = []
+        with SupplierAgent(self.tenant_id) as a:
+            for s in sups[:10]:
+                sc = a.score_supplier(s.id)
+                results.append({"supplier_id": s.id, "name": s.name, "total": sc["total"]})
+        results.sort(key=lambda x: -x["total"])
+        lines = [f"· {x['name']}（综合 {x['total']}）" for x in results[:3]]
+        return "供应商综合评分 Top3：\n" + "\n".join(lines), "supplier", ["score_supplier"], results
+
+    def _do_support(self) -> tuple[str, str, list, object]:
+        open_n = (self.db.query(func.count(Conversation.id))
+                  .filter(Conversation.tenant_id == self.tenant_id, Conversation.status == "open").scalar()) or 0
+        reply = (f"当前有 {open_n} 个待处理会话。可到「智能客服」页使用「AI 自动回复」批量处理常规咨询"
+                 "（订单查询/物流/售后意图识别准确率随知识库完善持续提升）。")
+        return reply, "support", [], {"open_conversations": open_n}
+
+    def _do_risk_scan(self) -> tuple[str, str, list, object]:
+        """M3 主动巡检：跑一轮并把高风险项汇总给用户。
+
+        只告警不执行——巡检产出的是"需要人来决策"的风险清单，
+        不自动改价/下架/补货（架构红线 1）。
+        """
+        from ..services import alerting
+
+        result = alerting.scan(self.db, self.tenant_id)
+        rows = alerting.list_alerts(self.db, self.tenant_id, status="open", limit=50)
+        high = [r for r in rows if r.level == "high"]
+        shown = (high or rows)[:5]
+        if not shown:
+            reply = (f"已执行一轮经营巡检：未发现风险（新增 {result['created']} 条告警）。"
+                     "巡检覆盖库存断货、广告亏损、售价低于成本、平台政策、退款率、"
+                     "供应商时效、汇率波动、物流时效、Listing 老化九项。")
+        else:
+            lines = [f"· [{r.level}] {r.title}：{r.detail}" for r in shown]
+            reply = (f"已执行一轮经营巡检，发现 {len(high)} 条高风险、"
+                     f"{len(rows)} 条待处理：\n" + "\n".join(lines) +
+                     "\n\n请到「风险巡检」页确认处理（系统只告警，不自动执行经营动作）。")
+        return reply, "risk_scan", ["alert_scan"], {
+            "created": result["created"], "skipped": result["skipped"],
+            "open": len(rows), "high": len(high)}
+
+    def _do_bi(self) -> tuple[str, str, list, object]:
+        since = datetime.utcnow() - timedelta(days=30)
+        q = (self.db.query(func.sum(Order.amount), func.count(Order.id), func.sum(Order.profit))
+             .filter(Order.tenant_id == self.tenant_id, Order.created_at >= since,
+                     Order.status != "refunded").first())
+        gmv, orders, profit = float(q[0] or 0), int(q[1] or 0), float(q[2] or 0)
+        ads = (self.db.query(func.sum(AdCampaign.spend), func.sum(AdCampaign.revenue))
+               .filter(AdCampaign.tenant_id == self.tenant_id).first())
+        spend, revenue = float(ads[0] or 0), float(ads[1] or 0)
+        roi = round((revenue - spend) / spend, 2) if spend else 0
+        products = (self.db.query(func.count(Product.id))
+                    .filter(Product.tenant_id == self.tenant_id, Product.status == "active").scalar()) or 0
+        reply = (f"近30天经营概况：GMV ${gmv:.2f}｜订单 {orders} 单｜真实利润 ${profit:.2f}｜"
+                 f"广告花费 ${spend:.2f}，广告 ROI {roi}｜在售商品 {products} 个。"
+                 "详细图表与 AI 经营报告见「BI经营分析」页。")
+        return reply, "bi", [], {"gmv": gmv, "orders": orders, "profit": profit, "ad_roi": roi}
+
+    def _fallback_chat(self, msg: str) -> tuple[str, str, list, object]:
+        router = ModelRouter(self.db)
+        if router.available:
+            try:
+                r = router.chat([
+                    {"role": "system", "content": "你是跨境电商智能运营助手，用中文简洁回答经营相关问题。"},
+                    {"role": "user", "content": msg},
+                ])
+                return r["content"], "chat", [], None
+            except Exception:
+                pass
+        return ("我是您的 AI 经营助手，可以直接对我说：\n"
+                "· 「帮我选品」— 输出机会商品 Top3\n"
+                "· 「看看市场趋势」— 刷新并解读趋势\n"
+                "· 「重新定价」— 全店动态定价\n"
+                "· 「供应商评分」— 货源综合排名\n"
+                "· 「经营情况」— 近30天经营概况\n"
+                "· 「铺货建议」— 上架与工作流指引", "help", [], None)

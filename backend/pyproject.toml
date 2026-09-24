@@ -1,0 +1,23 @@
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["migrations/versions", "__pycache__"]
+
+[tool.ruff.lint]
+# 当前规则集为「只报功能性缺陷」，不追求风格统一。
+# 存量债务见 docs/CODE_AND_DIRECTORY_STANDARD.md §11（DEBT-04）。
+# 待存量告警清零后，再逐步收紧（先移除 B008 例外，再启用 E501）。
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E501",  # 行宽：存量 14000+ 行未格式化，暂不启用
+    "B008",  # FastAPI 的 Depends()/Query() 必须写在默认参数里，属框架惯用法
+    "E701",  # 单行多语句（冒号）：存量写法，只减不增
+    "E702",  # 单行多语句（分号）：存量写法，只减不增
+    "UP031", # printf 风格格式化：存量写法，只减不增
+    "B905",  # zip 缺 strict：存量写法，只减不增
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+# 测试文件需先设置 ERP_DB_URL 等环境变量再 import app，属刻意的模块级导入顺序
+"tests/test_commercial_data_integrity.py" = ["B011", "E402"]
