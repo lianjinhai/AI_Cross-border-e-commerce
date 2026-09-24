@@ -223,6 +223,8 @@ AI-电商ERP/
 ## 📄 文档
 
 - [docs/需求分析与详细设计说明书V8.0.md](docs/需求分析与详细设计说明书V8.0.md) — 原始规划
+- [CONTRIBUTING.md](CONTRIBUTING.md) — **人类开发者贡献指南**（环境搭建 / 开发循环 / 迁移流程 / Windows 陷阱）
+- [AGENTS.md](AGENTS.md) — **AI 助手协作规范**（红线、开工前必做、提交前检查清单）
 - [docs/CONTRACT.md](docs/CONTRACT.md) — 工程接口契约（数据模型/Agent 签名/API 端点）
 - [docs/DECISIONS.md](docs/DECISIONS.md) — 技术选型与开源调研决策记录
-- [docs/官方平台验收运行手册.md](docs/官方平台验收运行手册.md) — Shopee、TikTok、eBay、Walmart、Lazada 官方环境逐级验收与证据要求
+- [docs/archive/官方平台验收运行手册.md](docs/archive/官方平台验收运行手册.md) — Shopee、TikTok、eBay、Walmart、Lazada 官方环境逐级验收与证据要求

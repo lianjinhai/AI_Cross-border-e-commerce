@@ -46,7 +46,8 @@ class TenantAccessLog(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     operator_id: Mapped[int] = mapped_column(index=True)   # superadmin user id
     operator_name: Mapped[str] = mapped_column(String(64), default="")
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_tenant_access_logs_tenant_id_tenants"), index=True)
     action: Mapped[str] = mapped_column(String(64), default="enter")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
@@ -98,7 +99,8 @@ class TenantSetting(Base):
 class Product(Base):
     __tablename__ = "products"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_products_tenant_id_tenants"), index=True)
     sku: Mapped[str] = mapped_column(String(64))
     title: Mapped[str] = mapped_column(String(512))
     category: Mapped[str] = mapped_column(String(64), default="")
@@ -119,7 +121,8 @@ class ProductScore(Base):
     """选品评分（DiscoveryAgent 产出）——对应规划书第七章。"""
     __tablename__ = "product_scores"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_product_scores_tenant_id_tenants"), index=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
     demand: Mapped[float] = mapped_column(Float, default=0)        # 需求 0-100
     competition: Mapped[float] = mapped_column(Float, default=0)   # 竞争度 0-100（越高越卷）
@@ -135,7 +138,8 @@ class MarketTrend(Base):
     """市场趋势/关键词（对应第六章数据采集 + 第七章机会发现）。"""
     __tablename__ = "market_trends"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_market_trends_tenant_id_tenants"), index=True)
     keyword: Mapped[str] = mapped_column(String(128))
     platform: Mapped[str] = mapped_column(String(32), default="google")
     search_volume: Mapped[int] = mapped_column(Integer, default=0)
@@ -152,7 +156,8 @@ class MarketTrend(Base):
 class Supplier(Base):
     __tablename__ = "suppliers"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_suppliers_tenant_id_tenants"), index=True)
     name: Mapped[str] = mapped_column(String(128))
     region: Mapped[str] = mapped_column(String(64), default="")
     rating: Mapped[float] = mapped_column(Float, default=4.5)     # 平台评分 0-5
@@ -176,7 +181,8 @@ class SupplierEvidence(Base):
     """供应商证据链；公开目录只证明被收录，不等同于工商/产能尽调。"""
     __tablename__ = "supplier_evidence"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_supplier_evidence_tenant_id_tenants"), index=True)
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), index=True)
     evidence_type: Mapped[str] = mapped_column(String(32))
     source_url: Mapped[str] = mapped_column(String(1024))
@@ -194,7 +200,8 @@ class SupplierPortalMember(Base):
     """工厂门户账号与单一供应商的最小权限绑定。"""
     __tablename__ = "supplier_portal_members"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_supplier_portal_members_tenant_id_tenants"), index=True)
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
     status: Mapped[str] = mapped_column(String(16), default="active")
@@ -205,7 +212,8 @@ class SupplierCatalogProduct(Base):
     """由工厂自维护的真实供给目录；进入销售商品池前仍需机会和合规复核。"""
     __tablename__ = "supplier_catalog_products"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_supplier_catalog_products_tenant_id_tenants"), index=True)
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), index=True)
     factory_sku: Mapped[str] = mapped_column(String(128))
     title: Mapped[str] = mapped_column(String(512))
@@ -233,7 +241,8 @@ class OpportunitySupplierMatch(Base):
     """市场商品机会与候选工厂的可解释匹配快照。"""
     __tablename__ = "opportunity_supplier_matches"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_opportunity_supplier_matches_tenant_id_tenants"), index=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), index=True)
     catalog_product_id: Mapped[int] = mapped_column(ForeignKey("supplier_catalog_products.id"), index=True)
@@ -257,7 +266,8 @@ class OpportunitySupplierMatch(Base):
 class SupplierOffer(Base):
     __tablename__ = "supplier_offers"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_supplier_offers_tenant_id_tenants"), index=True)
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), index=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
     price: Mapped[float] = mapped_column(Float, default=0)        # 采购价（人民币）
@@ -271,7 +281,8 @@ class SupplierOffer(Base):
 class SupplierScore(Base):
     __tablename__ = "supplier_scores"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_supplier_scores_tenant_id_tenants"), index=True)
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), index=True)
     quality: Mapped[float] = mapped_column(Float, default=0)
     cost: Mapped[float] = mapped_column(Float, default=0)
@@ -288,7 +299,8 @@ class SupplierScore(Base):
 class Listing(Base):
     __tablename__ = "listings"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_listings_tenant_id_tenants"), index=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=True)
     last_edited_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=True)
@@ -312,7 +324,8 @@ class PlatformPublishAttempt(Base):
     __tablename__ = "platform_publish_attempts"
     __table_args__ = (Index("uq_publish_listing_shop", "tenant_id", "listing_id", "shop_id", unique=True),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_platform_publish_attempts_tenant_id_tenants"), index=True)
     listing_id: Mapped[int] = mapped_column(ForeignKey("listings.id"), index=True)
     shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id"), index=True)
     platform: Mapped[str] = mapped_column(String(32))
@@ -333,7 +346,8 @@ class ForecastSnapshot(Base):
     """预测版本快照：保存训练截止点、特征、候选模型、回测和最终预测。"""
     __tablename__ = "forecast_snapshots"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_forecast_snapshots_tenant_id_tenants"), index=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
     version: Mapped[str] = mapped_column(String(32))
     training_cutoff: Mapped[datetime] = mapped_column(DateTime)
@@ -356,7 +370,8 @@ class ForecastOutcome(Base):
     """预测到期后的真实销量评估；每个预测版本只生成一份可重复刷新快照。"""
     __tablename__ = "forecast_outcomes"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_forecast_outcomes_tenant_id_tenants"), index=True)
     snapshot_id: Mapped[int] = mapped_column(ForeignKey("forecast_snapshots.id"), unique=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
     target_start: Mapped[datetime] = mapped_column(DateTime)
@@ -374,7 +389,8 @@ class OpportunityAttribution(Base):
     """已推进工厂机会的销售与利润归因快照。"""
     __tablename__ = "opportunity_attributions"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_opportunity_attributions_tenant_id_tenants"), index=True)
     match_id: Mapped[int] = mapped_column(ForeignKey("opportunity_supplier_matches.id"), unique=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), index=True)
@@ -396,7 +412,8 @@ class ListingReviewDecision(Base):
     """上架复核记忆：保存规则版本、证据、结论及人工裁决。"""
     __tablename__ = "listing_review_decisions"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_listing_review_decisions_tenant_id_tenants"), index=True)
     listing_id: Mapped[int] = mapped_column(ForeignKey("listings.id"), index=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
     platform: Mapped[str] = mapped_column(String(32), index=True)
@@ -414,7 +431,8 @@ class ComplianceReport(Base):
     """合规检测报告（ComplianceAgent 产出）——对应第十章侵权检测。"""
     __tablename__ = "compliance_reports"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_compliance_reports_tenant_id_tenants"), index=True)
     target_type: Mapped[str] = mapped_column(String(16))          # product/listing
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=True)
     listing_id: Mapped[int] = mapped_column(ForeignKey("listings.id"), nullable=True)
@@ -432,7 +450,8 @@ class PricingRecord(Base):
     """成本拆解与动态定价（PricingAgent 产出）——对应第十一章。"""
     __tablename__ = "pricing_records"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_pricing_records_tenant_id_tenants"), index=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
     purchase_cost: Mapped[float] = mapped_column(Float, default=0)     # 采购价 CNY
     logistics_cost: Mapped[float] = mapped_column(Float, default=0)    # 物流 CNY
@@ -451,7 +470,8 @@ class PricingRecord(Base):
 class AdCampaign(Base):
     __tablename__ = "ad_campaigns"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_ad_campaigns_tenant_id_tenants"), index=True)
     name: Mapped[str] = mapped_column(String(128))
     platform: Mapped[str] = mapped_column(String(32), default="facebook")
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=True)
@@ -475,7 +495,8 @@ class Shop(Base):
     """授权店铺（多平台 OAuth）。真实授权后订单/商品从平台 API 拉取。"""
     __tablename__ = "shops"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_shops_tenant_id_tenants"), index=True)
     platform: Mapped[str] = mapped_column(String(32))            # 1688/shopee/tiktok/amazon
     shop_name: Mapped[str] = mapped_column(String(128), default="")
     shop_id: Mapped[str] = mapped_column(String(128), default="")
@@ -498,7 +519,8 @@ class OAuthState(Base):
     """一次性 OAuth 回调绑定，数据库只保存 state 摘要。"""
     __tablename__ = "oauth_states"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_oauth_states_tenant_id_tenants"), index=True)
     shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id"), index=True)
     state_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime)
@@ -526,7 +548,8 @@ class PlatformRulePack(Base):
     """
     __tablename__ = "platform_rule_packs"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tenants.id", name="fk_platform_rule_packs_tenant_id_tenants"), index=True, nullable=True)
     platform: Mapped[str] = mapped_column(String(32), index=True)
     version: Mapped[str] = mapped_column(String(32))             # 如 2026-09-19
     rules: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -538,7 +561,8 @@ class CategoryMapping(Base):
     """系统类目 -> 平台类目映射（上架前置条件，各平台类目体系不同）。"""
     __tablename__ = "category_mappings"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_category_mappings_tenant_id_tenants"), index=True)
     platform: Mapped[str] = mapped_column(String(32))
     system_category: Mapped[str] = mapped_column(String(64))
     platform_category_id: Mapped[str] = mapped_column(String(128))
@@ -555,7 +579,8 @@ class PurchaseOrder(Base):
     """
     __tablename__ = "purchase_orders"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_purchase_orders_tenant_id_tenants"), index=True)
     po_no: Mapped[str] = mapped_column(String(64))
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), index=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
@@ -584,7 +609,8 @@ class RefundOrder(Base):
     """
     __tablename__ = "refund_orders"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_refund_orders_tenant_id_tenants"), index=True)
     refund_no: Mapped[str] = mapped_column(String(64))
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True)
     type: Mapped[str] = mapped_column(String(16), default="refund_only")  # refund_only/return_refund
@@ -602,7 +628,8 @@ class Settlement(Base):
     """供应商账期结算单：汇总已收货未结算采购单 -> 对账确认 -> 付款完成。"""
     __tablename__ = "settlements"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_settlements_tenant_id_tenants"), index=True)
     settle_no: Mapped[str] = mapped_column(String(64))
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), index=True)
     period_start: Mapped[datetime] = mapped_column(DateTime, nullable=True)
@@ -618,7 +645,8 @@ class Settlement(Base):
 class Order(Base):
     __tablename__ = "orders"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_orders_tenant_id_tenants"), index=True)
     shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id"), nullable=True, index=True)
     platform: Mapped[str] = mapped_column(String(32))
     external_no: Mapped[str] = mapped_column(String(64))
@@ -646,7 +674,8 @@ class OrderLine(Base):
     """平台订单行：保留 SKU、数量、成交价与成本快照，订单头不再承担明细粒度。"""
     __tablename__ = "order_lines"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_order_lines_tenant_id_tenants"), index=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True)
     external_line_no: Mapped[str] = mapped_column(String(128), default="")
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=True)
@@ -666,7 +695,8 @@ class OrderFee(Base):
     """订单费用事实：平台佣金、支付费、税、物流、仓储及其他调整。"""
     __tablename__ = "order_fees"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_order_fees_tenant_id_tenants"), index=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True)
     fee_type: Mapped[str] = mapped_column(String(32))
     amount: Mapped[float] = mapped_column(Numeric(18, 4), default=0)
@@ -680,7 +710,8 @@ class ExchangeRate(Base):
     """日级汇率版本：1 base_currency = rate quote_currency。"""
     __tablename__ = "exchange_rates"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_exchange_rates_tenant_id_tenants"), index=True)
     base_currency: Mapped[str] = mapped_column(String(8))
     quote_currency: Mapped[str] = mapped_column(String(8), default="USD")
     rate: Mapped[float] = mapped_column(Numeric(20, 8))
@@ -695,7 +726,8 @@ class PlatformSettlementRecord(Base):
     """销售平台结算事实，用于订单应收与实际到账对账。"""
     __tablename__ = "platform_settlement_records"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_platform_settlement_records_tenant_id_tenants"), index=True)
     shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id"), nullable=True, index=True)
     platform: Mapped[str] = mapped_column(String(32))
     external_settlement_no: Mapped[str] = mapped_column(String(128))
@@ -717,7 +749,8 @@ class PlatformSettlementRecord(Base):
 class Conversation(Base):
     __tablename__ = "conversations"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_conversations_tenant_id_tenants"), index=True)
     platform: Mapped[str] = mapped_column(String(32), default="shopee")
     buyer_name: Mapped[str] = mapped_column(String(64), default="")
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), nullable=True)
@@ -730,7 +763,8 @@ class Conversation(Base):
 class Message(Base):
     __tablename__ = "messages"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_messages_tenant_id_tenants"), index=True)
     conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id"), index=True)
     role: Mapped[str] = mapped_column(String(16))                 # buyer/agent/operator
     content: Mapped[str] = mapped_column(Text)
@@ -745,7 +779,8 @@ class Schedule(Base):
     """自主经营定时任务：到点自动执行工作流或趋势扫描（AI 运营中心）。"""
     __tablename__ = "schedules"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_schedules_tenant_id_tenants"), index=True)
     name: Mapped[str] = mapped_column(String(128))
     kind: Mapped[str] = mapped_column(String(16), default="workflow")  # workflow / trend_scan
     workflow_key: Mapped[str] = mapped_column(String(64), default="")  # kind=workflow 时必填
@@ -760,7 +795,8 @@ class Schedule(Base):
 class WorkflowTemplate(Base):
     __tablename__ = "workflow_templates"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_workflow_templates_tenant_id_tenants"), index=True)
     key: Mapped[str] = mapped_column(String(64))                  # auto_listing / reprice / restock
     name: Mapped[str] = mapped_column(String(128))
     description: Mapped[str] = mapped_column(String(512), default="")
@@ -771,7 +807,8 @@ class WorkflowTemplate(Base):
 class WorkflowRun(Base):
     __tablename__ = "workflow_runs"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_workflow_runs_tenant_id_tenants"), index=True)
     template_key: Mapped[str] = mapped_column(String(64))
     name: Mapped[str] = mapped_column(String(128), default="")
     status: Mapped[str] = mapped_column(String(16), default="queued")  # queued/running/success/partial/blocked/failed
@@ -787,7 +824,8 @@ class WorkflowStep(Base):
     __tablename__ = "workflow_steps"
     id: Mapped[int] = mapped_column(primary_key=True)
     run_id: Mapped[int] = mapped_column(ForeignKey("workflow_runs.id"), index=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_workflow_steps_tenant_id_tenants"), index=True)
     seq: Mapped[int] = mapped_column(Integer, default=0)
     agent: Mapped[str] = mapped_column(String(32))
     action: Mapped[str] = mapped_column(String(64))
@@ -806,7 +844,8 @@ class WorkflowStep(Base):
 class KnowledgeDoc(Base):
     __tablename__ = "knowledge_docs"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_knowledge_docs_tenant_id_tenants"), index=True)
     title: Mapped[str] = mapped_column(String(256))
     content: Mapped[str] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String(128), default="")
@@ -821,7 +860,8 @@ class AiLog(Base):
     """AI 调用审计：每次 Agent/LLM 调用一条（对应第21章 AI 日志数据库）。"""
     __tablename__ = "ai_logs"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_ai_logs_tenant_id_tenants"), index=True)
     agent: Mapped[str] = mapped_column(String(32))
     action: Mapped[str] = mapped_column(String(64))
     model: Mapped[str] = mapped_column(String(64), default="")
@@ -843,7 +883,8 @@ class ProductPerformance(Base):
     """
     __tablename__ = "product_performances"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_product_performances_tenant_id_tenants"), index=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
     window_days: Mapped[int] = mapped_column(Integer, default=30)
     units_sold: Mapped[int] = mapped_column(Integer, default=0)
@@ -863,7 +904,8 @@ class AiDecision(Base):
     """
     __tablename__ = "ai_decisions"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_ai_decisions_tenant_id_tenants"), index=True)
     agent: Mapped[str] = mapped_column(String(32))
     action: Mapped[str] = mapped_column(String(64))
     subject_type: Mapped[str] = mapped_column(String(32), index=True)   # product/listing/order/...
@@ -878,7 +920,8 @@ class AlertRule(Base):
     """主动巡检规则（M3）：阈值可配置、可单独启停。"""
     __tablename__ = "alert_rules"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_alert_rules_tenant_id_tenants"), index=True)
     key: Mapped[str] = mapped_column(String(64), index=True)   # stockout_risk / ads_burning / ...
     name: Mapped[str] = mapped_column(String(128))
     level: Mapped[str] = mapped_column(String(16), default="mid")  # high/mid/low
@@ -892,7 +935,8 @@ class AlertEvent(Base):
     """巡检告警实例（M3）：只告警不执行——决策权在人（红线 1）。"""
     __tablename__ = "alert_events"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_alert_events_tenant_id_tenants"), index=True)
     rule_key: Mapped[str] = mapped_column(String(64), index=True)
     level: Mapped[str] = mapped_column(String(16), default="mid")
     subject_type: Mapped[str] = mapped_column(String(32), default="")
@@ -914,7 +958,8 @@ class KnowledgeCandidate(Base):
     """
     __tablename__ = "knowledge_candidates"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_knowledge_candidates_tenant_id_tenants"), index=True)
     question_hash: Mapped[str] = mapped_column(String(32), index=True)   # 归一化哈希
     question_text: Mapped[str] = mapped_column(String(512))
     intent: Mapped[str] = mapped_column(String(32), default="other")

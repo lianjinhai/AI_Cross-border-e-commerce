@@ -81,7 +81,10 @@ AI-电商ERP/
 │   ├── requirements-dev.txt        # 开发依赖声明
 │   └── requirements-dev.lock.txt   # 开发/CI 精确锁定（含 ruff / pytest）
 ├── docs/
-│   ├── adr/                        # 【Phase 2 目标】架构决策记录；当前决策在 DECISIONS.md
+│   ├── adr/                        # 架构决策记录镜像/索引层（不产生第二份真相）
+│   │   ├── README.md               #   索引 + 状态定义 + 新增流程；权威源为 DECISIONS.md
+│   │   └── NNNN-*.md               #   高价值决策自包含摘要（现 7 篇：0003/0007/0018/
+│   │                               #   0022/0023/0024/0026），必须回指 DECISIONS.md 的 D 编号
 │   ├── archive/                    # 一次性报告归档（14 篇，索引见 archive/README.md）
 │   └── *.md                        # 活文档（需持续维护）
 ├── frontend/
@@ -91,7 +94,7 @@ AI-电商ERP/
 ├── Dockerfile                      # 两阶段构建；runtime 阶段已命名（可 --target 单独验证）
 ├── docker-compose.yml              # 生产模式固定 + 密钥必填（无默认值）
 ├── docker-entrypoint.sh            # 容器入口：先 alembic upgrade head 再启服务
-└── .gitignore  .dockerignore  .env.example  README.md  AGENTS.md
+└── .gitignore  .dockerignore  .env.example  README.md  AGENTS.md  CONTRIBUTING.md
 ```
 
 ### 2.1 硬性规则
@@ -296,6 +299,10 @@ frontend/node_modules/  frontend/dist/     frontend/.zcode/
 | T-30 | **设计变更推翻守护测试前提时，必须改写守护点而非放宽断言**。D24 删除前端兜底表后，「两张表一致」的守护失效——正确做法是改为「不存在第二份表」（见 D24/D26） |
 | T-31 | **安全边界（写权限）与体验兜底（路由/展示）必须分开决策**。把两者绑在一起会导致「要么全删、要么全留」的伪二选一（见 D24） |
 | T-32 | **前端权限兜底表一律视为缺陷**。权限事实源只能是后端 Context；前端手工维护第二份表必然漂移，且可被客户端伪造（见 D24） |
+| T-33 | **「平台级/全局」语义的表禁止用魔法 ID 作哨兵值**（如 `tenant_id=0`）。必须用 NULL + 列 nullable，与 `users` 的 superadmin 处理保持同一模式。哨兵值会让孤儿检测失去判别力（见 D27） |
+| T-34 | **SQLite 加外键只能重建表，且外键必须具名**。匿名外键既无法创建（`Constraint must have a name`），反射出的 `name` 也是 `None`，`downgrade()` 无法安全删除（见 D27） |
+| T-35 | **表重建类迁移必须做前后快照比对并硬性断言**（列 / 索引 / 既有外键 / 行数）。SQLite 重建会静默重建索引与既有外键，不做比对就无法发现丢失（见 D27） |
+| T-36 | **测试库与生产库建库路径不同时，结构断言可能对迁移缺陷免疫**。测试库走 `create_all`（按模型建表）时，迁移清单的遗漏会被完全掩盖——必须额外加「清单 vs 清单」的直接比对，并用回退法验证判别力（见 D27） |
 
 > **T-4 说明**：本轮修复中，`test_security.py` 曾把「superadmin 可访问租户业务 API」固化为正确行为，`test_api.py` 曾把「租户停用」误断言为「租户到期」。两者都是断言与语义脱节，属于**测试在保护错误行为**，比缺测试更危险。
 
@@ -355,9 +362,9 @@ frontend/node_modules/  frontend/dist/     frontend/.zcode/
 > 是**假失败**（浪费排查时间）或**假通过**（掩盖真缺陷），两者都比没有脚本更危险。
 > 修正后 7 步全 PASS（`exit=0`），并保留 `SKIP` 语义用于"数据前提缺失"。
 
-**当前基线（2026-09-24 18:4x 实测）**：后端 `pytest -q` → **257 passed**；
-后端**反序文件列表**跑 → **257 passed**（顺序依赖已消除）；前端 `npm test` → **72 passed**；
-`ruff check` → All checks passed；`migration_preflight.py` → 12 项全 PASS（主库 `20260924_15`）；
+**当前基线（2026-09-24 19:1x 实测）**：后端 `pytest -q` → **264 passed**；
+后端**反序文件列表**跑 → **264 passed**（顺序依赖已消除）；前端 `npm test` → **72 passed**；
+`ruff check` → All checks passed；`migration_preflight.py` → 12 项全 PASS（主库 `20260924_16`）；
 **真启动服务端到端验收** → `scripts/live_acceptance.py` **7 步全 PASS / exit=0**。
 **任何提交不得低于此基线**。
 
@@ -437,7 +444,7 @@ python -m ruff format .         # 格式化
 
 | 编号 | 规则 |
 |---|---|
-| Doc-1 | 架构决策写入 `docs/adr/ADR-<序号>-<标题>.md`，并在 `docs/DECISIONS.md` 索引 |
+| Doc-1 | **决策的唯一权威源是 `docs/DECISIONS.md`**（按 D 编号追加）。`docs/adr/` 是**镜像/索引层**，不产生第二份真相：只收录「改变架构边界或安全模型」的高价值决策，文件名为 `docs/adr/NNNN-<短横线英文名>.md`（四位补零，按原 D 编号顺序），每篇必须自包含（`Context`/`Decision`/`Consequences`/`Alternatives considered`/`References`）并在 `References` **回指 D 编号**。索引与状态定义见 `docs/adr/README.md` |
 | Doc-2 | 一次性报告完成后移入 `docs/archive/`，文件名保留日期 |
 | Doc-3 | 活文档必须维护「最后更新」与「状态」字段 |
 | Doc-4 | 接口变更必须同步 `docs/CONTRACT.md`；Agent 相关变更必须同步 Agent OS 架构文档 |
@@ -453,11 +460,11 @@ python -m ruff format .         # 格式化
 |---|---|---|---|---|
 | DEBT-01 | ~~仓库未纳入版本控制~~ | ~~**P0**~~ | 仓库根 | ✅ **已完成（2026-09-24）**：`git init -b main` + 首次提交 `6215d49`（208 文件 / 0.87 MB / `fsck` 干净）。提交前补齐 `.gitignore` 冷备目录、`_*.py`、`.orig/.bak` 缺口，并新增 `.gitattributes` 锁定行尾 |
 | DEBT-02 | ~~`tenant_id=0` 孤儿业务数据 37 行 / 12 张表~~ | ~~P0~~ | `backend/erp.db` | ✅ **已完成**：已清零（含根因修复：superadmin 越权写入 + 审计脚本护栏） |
-| DEBT-03 | 40 张含 `tenant_id` 的表缺外键约束 | **P1** | `migrations/` | Phase 2 结构收敛 |
+| DEBT-03 | ~~45 张含 `tenant_id` 的表缺外键约束~~ | ~~**P1**~~ | `migrations/` | ✅ **已完成（2026-09-24）**：迁移 `20260924_16` 补齐 45 张表外键，主库 48/48 张含 `tenant_id` 的表全部受约束（执行前实测缺口是 **45 张**，文档原写「40 张」已过期）。施工中挖出关键阻塞：`platform_rule_packs` 用 `tenant_id=0` 作**平台级哨兵值**（`platform_rules.py:235`），直接加外键会让 `check_updates()` 写入路径崩——按 `users` 先例改为 **nullable + 写 NULL**（见 `docs/DECISIONS.md` D27）。**并发现一个测试盲区**：测试库走 `create_all` 会掩盖迁移清单遗漏（删掉 `products` 后其余用例全绿），已补「清单 vs 清单」直接比对 + 回退法验证 |
 | DEBT-04 | ~~无 lint/format 配置与门禁~~ | ~~P1~~ | 全仓 | ✅ **已完成**：已配 `backend/pyproject.toml` + `requirements-dev.txt`，`ruff check` 全绿并接入 CI |
 | DEBT-05 | `platform_adapters.py` 1158 行单文件承载 15 个适配器 | **P1** | `app/services/platform_adapters.py` | Phase 2 拆为 `services/adapters/` 包 |
 | DEBT-06 | ~~`backend/` 根目录混放 3 个 `.db`，其中 2 个无引用~~ | ~~P1~~ | `backend/*.db` | ✅ 已完成：`test_dbg.db`、`project_goal_acceptance.db` 已冷备后清理，仅留 `erp.db` |
-| DEBT-07 | 缺 `AGENTS.md` / `CONTRIBUTING.md` / ADR 目录 | P1 | 仓库根、`docs/` | 部分完成：`AGENTS.md` 已补；ADR 目录 Phase 2 |
+| DEBT-07 | ~~缺 `AGENTS.md` / `CONTRIBUTING.md` / ADR 目录~~ | ~~P1~~ | 仓库根、`docs/` | ✅ **已完成（2026-09-24）三件套齐全**：① `AGENTS.md`（面向 AI 助手，协作红线）；② 仓库根 `CONTRIBUTING.md`（面向人：环境搭建 / 开发循环 / 测试基线 / 迁移流程 / 提交与评审 / Windows 陷阱，与 `AGENTS.md` 互补不重复）；③ `docs/adr/README.md`（权威源 `DECISIONS.md` 的镜像/索引层，含 D1~D26 全量索引表 + 状态定义 + 新增流程）并拆出 7 篇自包含 ADR（`0003`/`0007`/`0018`/`0022`/`0023`/`0024`/`0026`，判定标准=改变架构边界或安全模型） |
 | DEBT-08 | `agents/base.py` 自建 `SessionLocal`，绕过依赖注入 | **P2** | `app/agents/base.py:10,19` | Phase 2 Tool Layer 落地时一并解决 |
 | DEBT-09 | `services/scheduler.py` 自建 `SessionLocal` + 反向依赖 | **P2** | `app/services/scheduler.py:12,42,57,83,88` | Phase 2 事件总线 |
 | DEBT-10 | 函数体内延迟 import 32 处（2026-09-24 实测） | P2 | 8 个 router | 只减不增（未纳入 ruff 门禁，避免误报；靠评审把关） |
@@ -491,7 +498,7 @@ python -m ruff format .         # 格式化
 - [ ] 文件与函数规模未超 §5 阈值
 - [ ] 结构变更走 Alembic 迁移且 `downgrade()` 可用（§6）
 - [ ] 新增能力带测试；权限改动已更新 `test_security.py`（§8）
-- [ ] `ruff check` 全绿；`pytest -q` ≥ 257 passed；反序跑同样 ≥ 257 passed；`npm test` ≥ 72 passed
+- [ ] `ruff check` 全绿；`pytest -q` ≥ 264 passed；反序跑同样 ≥ 264 passed；`npm test` ≥ 72 passed
 - [ ] 测试可重复（同一库连跑两次全绿）且可并发（多进程各自独立库）
 - [ ] 涉及结构变更时 `scripts/migration_preflight.py` 12 项全 PASS（P0 未清零不得执行）
 - [ ] 涉及"可运行/可部署"的结论时，已真启动服务跑过 `scripts/live_acceptance.py` 且全 PASS（T-13）

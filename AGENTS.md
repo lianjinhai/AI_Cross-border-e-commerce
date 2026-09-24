@@ -19,10 +19,10 @@
 ### 常用命令
 
 ```bash
-# 后端测试（基线：246 passed）
+# 后端测试（基线：264 passed）
 cd backend && python -m pytest -q
 
-# 前端测试（基线：68 passed）与构建
+# 前端测试（基线：72 passed）与构建
 cd frontend && npm test && npm run build
 
 # 启动服务（开发）
@@ -139,7 +139,7 @@ routers/ -> agents/ -> tools/ -> services/ -> models.py
 - [ ] 文件与函数规模未超阈值
 - [ ] 结构变更走迁移且 `downgrade()` 可用
 - [ ] 新增能力带测试；权限改动已更新权限矩阵
-- [ ] `pytest -q` 不低于 246 passed（反序跑同样）；`npm test` 不低于 68 passed；`ruff check` 全绿
+- [ ] `pytest -q` 不低于 264 passed（反序跑同样）；`npm test` 不低于 72 passed；`ruff check` 全绿
 - [ ] 涉及「可运行/可部署」结论时，已跑 `scripts/e2e_feasibility.py` 且全 PASS（T-13）
 - [ ] 涉及容器 / TLS / 代理配置改动时，已跑 `scripts/docker_feasibility.py`（12 项）与 `scripts/tls_feasibility.py`（8 项）
 - [ ] 改动构建链路（Dockerfile / 依赖文件 / .gitattributes / 入口脚本）后，已跑 `scripts/docker_feasibility.py` 且全 PASS（DP-1）
@@ -152,9 +152,11 @@ routers/ -> agents/ -> tools/ -> services/ -> models.py
 | 文档 | 用途 |
 |---|---|
 | `docs/CODE_AND_DIRECTORY_STANDARD.md` | **代码与目录规范（本文件的上位文档）** |
+| `CONTRIBUTING.md` | **面向人类开发者**的贡献指南（环境搭建 / 开发循环 / 迁移流程 / Windows 陷阱）；本文件面向 AI 助手，两者互补 |
 | `docs/AI_AGENT_OPERATING_SYSTEM_ARCHITECTURE.md` | Agent 操作系统架构冻结 V1.0 |
 | `docs/CONTRACT.md` | 接口契约 |
 | `docs/DECISIONS.md` | 架构决策记录（ADR） |
+| `docs/adr/README.md` | ADR 镜像/索引层（权威源为 `DECISIONS.md`；含全量 D 编号索引与状态定义） |
 | `docs/backup_restore_runbook.md` | 备份与恢复运维手册 |
 | `docs/WORKSPACE_MIGRATION_PROGRESS.md` | Workspace 迁移进度 |
 | `docs/项目介绍与功能地图.md` | 功能全景 |

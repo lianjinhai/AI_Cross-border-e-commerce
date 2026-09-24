@@ -113,6 +113,9 @@ DEFAULT_RULE_PACKS: dict[str, dict] = {
 
 def get_active_rules(db: Session, platform: str) -> dict:
     """当前生效规则包：库内最新版本优先，否则内置。返回 {version, rules, source_url, origin}。"""
+    # 平台级共享数据：规则包由平台公开文档整理而来，对**所有租户**一致，
+    # 因此 tenant_id 恒为 NULL（平台级哨兵），查询刻意**不带租户过滤**。
+    # 与 users.tenant_id 的 superadmin 处理同源（见 docs/DECISIONS.md D27）。
     row = (db.query(PlatformRulePack)
            .filter(PlatformRulePack.platform == platform)
            .order_by(PlatformRulePack.updated_at.desc()).first())
@@ -232,7 +235,10 @@ def check_updates(db: Session, platform: str) -> dict:
         if target.get("version") == current_version:
             return {"platform": platform, "updated": False,
                     "hint": "已是最新版本"}
-        row = PlatformRulePack(tenant_id=0, platform=platform,
+        # tenant_id=None：平台级共享规则包，不归属任何租户（禁止写 0 哨兵值——
+        # tenants 表无 id=0，开启 foreign_keys 后会直接违反外键约束，
+        # 历史事故见 app/seed.py 的同类注释）。
+        row = PlatformRulePack(tenant_id=None, platform=platform,
                                version=target["version"], rules=target["rules"],
                                source_url=str(target.get("source_url") or remote_url))
         db.add(row)

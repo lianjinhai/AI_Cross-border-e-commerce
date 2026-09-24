@@ -1563,3 +1563,113 @@ COMPLIANCE、另一边漏掉）。写侧与读侧必须同一张表。
 新增文件 `app/services/membership_service.py`、`tests/test_membership_write.py`；
 修改文件 `app/routers/admin.py`、`app/routers/auth.py`、`tests/test_role_permissions.py`、
 `frontend/src/permissions.js`、`frontend/src/workspace.js`、`frontend/tests/permissions*.test.js`。
+
+---
+
+## D27：tenant_id 外键收敛 —— 平台级表用 NULL 而不是 0 哨兵值（2026-09-24）
+
+**背景**：`app/db.py` 在**应用连接级**强制 `PRAGMA foreign_keys=ON`，但 45 张含
+`tenant_id` 的业务表**从未声明** `tenants.id` 外键（DEBT-03）。后果有两个：
+
+1. 应用层写错租户时数据库**不拒绝**——DEBT-02 的 37 行 `tenant_id=0` 孤儿数据
+   就是这么产生的（`app/seed.py:153` 有同源注释）；
+2. `PRAGMA foreign_key_check` 返回 0 只说明「**已声明**的外键没违规」，
+   **不能**证明租户引用完整——这是合规假象，比明面上的缺陷更危险。
+
+**施工前实测**（主库只读体检，2026-09-24）：48 张表含 `tenant_id`，其中
+3 张已有外键（`tenant_settings` / `users` / `workspace_profiles`），缺口 **45 张**；
+45 张表数据干净（孤儿 0 / NULL 0 / FK 违规 0）。
+
+### 一、关键阻塞：`platform_rule_packs` 用 `tenant_id=0` 作平台级哨兵值
+
+`app/services/platform_rules.py:235` 写入 `PlatformRulePack(tenant_id=0, ...)`。
+探针实测：**该写入当前成功**（正因缺外键），一旦补上外键，写入路径立即崩。
+
+判定它是**平台级共享表**的依据（不是猜的）：
+
+- 读取路径 `get_active_rules()` 只按 `platform` 过滤，**刻意不带租户维度**
+  （`platform_rules.py:116-118`）；
+- `alerting.py:219-220` 也只看 `updated_at`，同样无租户过滤；
+- 规则包内容来自各平台**公开**卖家规则文档，对所有租户一致。
+
+即：`tenant_id=0` 在这里是「不归属任何租户」的**哨兵值**，与
+`users.tenant_id=0`（superadmin 平台身份）是**同一类缺陷**——Revision C
+（`20260923_09`）已把后者迁为 NULL 并把列改 nullable。
+
+### 二、决策：沿用 users 先例，改 NULL，**不做豁免**
+
+| 候选方案 | 取舍 |
+|---|---|
+| A. 改 nullable + 写入侧改 None | ✅ **采纳**。语义正确，与 users 先例一致 |
+| B. 给该表豁免（不加外键） | ❌ 否决。会让「45 张表全有外键」退化成「44 张 + 1 个例外」，例外会在**后续每一次 schema 审计中被反复误报**，长期成本更高 |
+| C. 混合（租户表加 FK + 平台级表豁免） | ❌ 同 B 的问题 |
+
+**为什么不做「给 tenants 插入 id=0 的哨兵租户」**：那会让 0 变成合法租户 ID，
+使「孤儿数据检测」失去判别力（`migration_preflight.check_tenant_zero` 直接失效），
+且 `orders.tenant_id=0` 这类真实错误将永远无法被发现。
+
+### 三、实现要点（迁移 `20260924_16`）
+
+1. **SQLite 不支持 `ALTER TABLE ADD CONSTRAINT`**，加外键只能重建表
+   （`batch_alter_table(recreate="always")`）。重建会连带重建索引与**既有外键**，
+   因此迁移对每张表做「前后快照比对」并在漂移时**中止**：列定义、索引、
+   既有外键集合、行数——任一漂移即 `RuntimeError`。
+2. **外键必须具名**（`fk_<table>_tenant_id_tenants`）：实测匿名外键
+   （`batch.create_foreign_key(None, ...)`）会直接抛
+   `ValueError: Constraint must have a name`；且 SQLite 下匿名外键反射出的
+   `name` 为 `None`，`downgrade()` 无法安全删除。
+3. **幂等**：加外键前先探测 `PRAGMA foreign_key_list`，已有则跳过
+   （测试库路径是 `create_all` + 全量迁移链，必须能重复执行）。
+4. **`downgrade()` 可用**：按反射名 `drop_constraint`；平台级表改回 NOT NULL 前
+   若仍有 NULL 行则**主动报错**（防止静默丢失「平台级」语义）。
+5. **模型层同步**：45 处 `mapped_column(index=True)` 改为带具名
+   `ForeignKey("tenants.id", ...)`——否则 `create_all` 建的新库与迁移后的库
+   结构漂移，测试库（走 create_all）会与生产库不一致。
+6. **平台级表改 nullable 必须在加外键之前**，否则外键会先拒绝 NULL 写入。
+
+### 四、实测验证
+
+| 验证 | 结果 |
+|---|---|
+| 副本库执行 | ✅ 45 张表补完；列定义零漂移、索引零漂移、既有外键**全部保住**、行数 3169 不变、integrity ok、FK 违规 0 |
+| 唯一「差异」 | ✅ 仅 `platform_rule_packs.tenant_id` 由 `NOT NULL` 变 nullable——**正是设计意图** |
+| 幂等性 | ✅ 重复 `upgrade head` 两次：exit=0、状态不变 |
+| `downgrade()` | ✅ 回退到 `_15` 后外键从 48 降到 3（=原始状态）；再 upgrade 恢复 48 |
+| **判别力（对照组）** | ✅ 未加外键的原始库：`products.tenant_id=999/0`、`rulepack.tenant_id=0` **三个都写入成功**（缺陷真实存在）；加外键后**全部被拒**（5/5 符合预期） |
+| 主库执行 | ✅ exit=0，48/48 张含 `tenant_id` 的表全部有外键 |
+| 主库复验 | ✅ `migration_preflight` **12 项全 PASS**（执行前唯一 FAIL 是 alembic 账本 `_15` vs `_16`，属迁移前预期）；`e2e_feasibility` **7 步全 PASS**（含真实服务 + 业务闭环，主库 sha256 前后一致） |
+| 回归 | ✅ 后端 **264 passed**（257 基线 + 7 新增）；`ruff` 全绿 |
+| 冷备 | ✅ 执行前 `backup_restore_drill.py backup` 7 项检查全 PASS |
+
+### 五、挖出的测试盲区（本次最有价值的发现）
+
+新增 `tests/test_tenant_id_foreign_keys.py` 后做**回退法验证**，发现一个**真实盲区**：
+
+> 从迁移清单里删掉 `products` 后，其余 5 个用例**全部照常通过**。
+
+**成因**：测试库建库路径是 `create_all`（按**模型**建表）+ 全量迁移链。
+模型层已声明外键，`create_all` 就把外键建好了——于是「库里有外键」这类断言
+**完全掩盖**了迁移清单的遗漏。换言之：**只测「最终结构」无法验证「迁移本身」**。
+
+**修法**：新增 `test_migration_table_list_matches_model_metadata`，**不查库**，
+直接比对迁移模块的 `TENANT_FK_TABLES` 与模型元数据。再次回退法验证：
+删掉 `products` → 该用例**立即变红**。
+
+**方法论沉淀**：结构类断言存在「多路径建库」时必须识别**哪条路径会被测到**。
+本项目测试库与生产库的建库路径不同（`create_all` vs 纯迁移），
+任何「只测结果不测过程」的断言都可能对迁移缺陷免疫。
+
+### 六、补充规范
+
+| 编号 | 规则 |
+|---|---|
+| T-33 | **「平台级/全局」语义的表禁止用魔法 ID 作哨兵值**（如 `tenant_id=0`）。必须用 NULL + 列 nullable，并保持与 `users` 的 superadmin 处理同一模式。哨兵值会让孤儿检测失去判别力 |
+| T-34 | **SQLite 加外键只能重建表，且外键必须具名**。匿名外键既无法创建（`Constraint must have a name`）也无法在 `downgrade()` 中安全删除 |
+| T-35 | **表重建类迁移必须做前后快照比对并硬性断言**（列/索引/既有外键/行数）。SQLite 重建会静默重建索引与既有外键，不做比对就无法发现丢失 |
+| T-36 | **测试库与生产库建库路径不同时，结构断言可能对迁移缺陷免疫**。必须额外加「清单 vs 清单」的直接比对，并用回退法验证判别力 |
+
+**关联**：DEBT-02（`tenant_id=0` 孤儿数据，根因已修但未封死）、
+D18/`20260923_09`（users nullable 先例）、`docs/CODE_AND_DIRECTORY_STANDARD.md` §7；
+新增 `migrations/versions/20260924_16_tenant_id_foreign_keys.py`、
+`tests/test_tenant_id_foreign_keys.py`；
+修改 `app/models.py`（45 处）、`app/services/platform_rules.py`。
