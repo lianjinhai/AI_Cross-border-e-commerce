@@ -418,6 +418,70 @@ def test_docmap_reports_missing_map_file(tmp_path, monkeypatch):
     assert len(problems) == 1, problems
     assert "DOCUMENT_MAP.md 不存在" in problems[0]
 
+# ---------------------------------------------------------------- I. 子代理状态
+
+def _subagent(tmp_path, monkeypatch, ledger: str, index_body: str):
+    docs = tmp_path / "docs"
+    docs.mkdir(parents=True, exist_ok=True)
+    (docs / "CODE_AND_DIRECTORY_STANDARD.md").write_text(ledger, encoding="utf-8")
+    (docs / "\u5b50\u4ee3\u7406\u5b9e\u65bd\u7d22\u5f15-20260923.md").write_text(
+        index_body, encoding="utf-8")
+    monkeypatch.setattr(cdc, "REPO_DIR", tmp_path)
+    return cdc.check_subagent_status()
+
+
+LEDGER_DEBT07_DONE = (
+    "| DEBT-07 | ~~\u7f3a AGENTS.md~~ | ~~P1~~ | \u4ed3\u5e93\u6839 | "
+    "\u2705 **\u5df2\u5b8c\u6210\uff082026-09-24\uff09** |\n")
+LEDGER_DEBT29_OPEN = "| DEBT-29 | \u8d8a\u5c42 | **P2** | x | \u5f85\u5904\u7406 |\n"
+
+AID = "01a0d31f-4795-7090-8e4a-7c53129891f5"
+
+
+def test_subagent_catches_zombie_progress_on_closed_debt(tmp_path, monkeypatch):
+    """\u5224\u522b\u529b\uff1a\u300c\u8fdb\u884c\u4e2d\u300d\u4e0d\u5f97\u6302\u5728\u89c4\u8303 \u00a711 \u5df2\u5173\u95ed\u7684\u503a\u52a1\u4e0a\u3002
+
+    \u5b9e\u6d4b\u80cc\u666f\uff1aParfit\uff08DEBT-07 `CONTRIBUTING.md`\uff09\u6807\u300c\U0001f504 \u8fdb\u884c\u4e2d\u300d\uff0c
+    \u800c `CONTRIBUTING.md` \u65e9\u5df2\u5b58\u5728\uff0816050 \u5b57\u8282\uff09\u3001\u89c4\u8303 \u00a711 \u5df2\u6807\u300c\u5df2\u5b8c\u6210\u300d\u3002
+    \u8fd9\u79cd\u50f5\u5c38\u72b6\u6001\u4f1a\u8ba9\u4eba\u8bef\u4ee5\u4e3a\u300c\u8fd8\u6709\u6d3b\u6ca1\u5e72\u5b8c\u300d\u3002
+    """
+    problems = _subagent(
+        tmp_path, monkeypatch, LEDGER_DEBT07_DONE,
+        "| `%s` | Parfit | DEBT-07 | \U0001f504 \u8fdb\u884c\u4e2d | - | - |\n" % AID)
+    assert len(problems) == 1, problems
+    assert "\u50f5\u5c38\u72b6\u6001" in problems[0]
+    assert "DEBT-07" in problems[0]
+
+
+def test_subagent_catches_self_contradiction(tmp_path, monkeypatch):
+    """\u5224\u522b\u529b\uff1a\u540c\u4e00 ID \u4e0d\u5f97\u540c\u65f6\u6807\u300c\u8fdb\u884c\u4e2d\u300d\u4e0e\u300c\u5df2\u5b8c\u6210\u300d\u3002
+
+    \u5b9e\u6d4b\u80cc\u666f\uff1aGodel\uff08P1-04\uff09\u5728\u7b2c 33 \u884c\u6807\u300c\u8fdb\u884c\u4e2d\u300d\uff0c
+    \u800c\u540c\u4e00\u6587\u4ef6\u7b2c 46 \u884c\u5df2\u5199\u300c\u5df2\u5b8c\u6210\uff0c\u603b\u7ed3\u5df2\u5165\u7d22\u5f15\uff0c\u5df2\u6e05\u7406\u300d\u3002
+    """
+    body = ("| `%s` | Godel | \u8fdb\u884c\u4e2d |\n" % AID +
+            "| `%s` | Godel | \u5df2\u5b8c\u6210\uff0c\u5df2\u6e05\u7406 |\n" % AID)
+    problems = _subagent(tmp_path, monkeypatch, LEDGER_DEBT29_OPEN, body)
+    assert len(problems) == 1, problems
+    assert "\u72b6\u6001\u77db\u76fe" in problems[0]
+
+
+def test_subagent_allows_progress_on_open_debt(tmp_path, monkeypatch):
+    """\u53cd\u5411\u7528\u4f8b\uff1a\u503a\u52a1\u4ecd\u672a\u5173\u95ed\u65f6\uff0c\u300c\u8fdb\u884c\u4e2d\u300d\u662f\u5408\u6cd5\u72b6\u6001\uff0c\u4e0d\u5f97\u8bef\u62a5\u3002"""
+    problems = _subagent(
+        tmp_path, monkeypatch, LEDGER_DEBT29_OPEN,
+        "| `%s` | X | DEBT-29 | \U0001f504 \u8fdb\u884c\u4e2d | - | - |\n" % AID)
+    assert problems == [], problems
+
+
+def test_subagent_allows_clean_closed_entry(tmp_path, monkeypatch):
+    """\u53cd\u5411\u7528\u4f8b\uff1a\u5df2\u5173\u95ed\u7684\u6761\u76ee\u5fc5\u987b\u6b63\u5e38\u653e\u884c\u3002"""
+    problems = _subagent(
+        tmp_path, monkeypatch, LEDGER_DEBT07_DONE,
+        "| `%s` | Parfit | DEBT-07 | \u2705 \u5df2\u5b8c\u6210\u5e76\u5173\u95ed | x | ok | \u65e0 |\n" % AID)
+    assert problems == [], problems
+
+
 # ---------------------------------------------------------------- 真实仓库（端到端）
 
 def test_real_repo_is_consistent():

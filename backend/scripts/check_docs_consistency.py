@@ -48,6 +48,8 @@
     H. 文档地图完整：`docs/` 根下每个活文档都必须在 `docs/DOCUMENT_MAP.md`
        登记，且归档目录每个文件都要在 `docs/archive/README.md` 登记——
        否则新增文档会成为「没人知道它存在」的孤儿。
+    I. 子代理状态自洽：子代理索引里同一 ID 不得同时标「进行中」与「已完成」，
+       且「进行中」不得挂在规范 §11 已关闭的债务上——僵尸状态会误导调度。
 
 豁免机制（防止校验器变成噪音后被整体关掉）
     - 行内标记 ``docs-ok``：该行豁免（用于**历史性**记录，如 DECISIONS 里
@@ -502,16 +504,22 @@ def check_document_map() -> list[str]:
     return problems
 
 
-def check_ledger_status() -> list[str]:
-    """C：规范 §11 标记「已完成」的债务，不得在其它活文档里仍写「未完成」。"""
+def _closed_debt_ids() -> set[str]:
+    """规范 §11 债务台账里标记「已完成」的债务编号（C / I 两项共用，避免第二份逻辑）。"""
     standard = REPO_DIR / "docs" / "CODE_AND_DIRECTORY_STANDARD.md"
     if not standard.exists():
-        return []
+        return set()
     done_ids = set()
     for line in standard.read_text(encoding="utf-8").splitlines():
         match = re.match(r"\|\s*(DEBT-\d+)\s*\|", line)
         if match and "已完成" in line:
             done_ids.add(match.group(1))
+    return done_ids
+
+
+def check_ledger_status() -> list[str]:
+    """C：规范 §11 标记「已完成」的债务，不得在其它活文档里仍写「未完成」。"""
+    done_ids = _closed_debt_ids()
     if not done_ids:
         return []
     problems = []
@@ -527,6 +535,66 @@ def check_ledger_status() -> list[str]:
                     problems.append(
                         "%s:%d 台账状态矛盾：%s 在规范 §11 已标「已完成」，此处仍写「未完成」"
                         % (rel, lineno, debt))
+    return problems
+
+
+# 子代理 ID（UUID v7 形态）与状态标记
+_AGENT_ID = re.compile(
+    r"`(01[0-9a-f]{6}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})`")
+_IN_PROGRESS_MARKS = ("\u8fdb\u884c\u4e2d", "\U0001f504")          # 进行中 / 🔄
+_DONE_MARKS = ("\u5df2\u5b8c\u6210", "\u5df2\u5173\u95ed", "\u5df2\u6e05\u7406")  # 已完成/已关闭/已清理
+
+
+def check_subagent_status() -> list[str]:
+    """I：子代理索引里的状态必须自洽，不得留下「早已完成却仍标进行中」的僵尸条目。
+
+    为什么需要：用户明确要求「没用的进程及时交接关闭，不要长期占用资源」。
+    实测 `docs/子代理实施索引-20260923.md` 里：
+
+    - **Godel**（P1-04）在第 33 行标「进行中」，而同一文件第 46 行已写
+      「已完成，总结已入索引，已清理」——**同一份文档内自相矛盾**；
+    - **Parfit**（DEBT-07 `CONTRIBUTING.md`）标「🔄 进行中」，而
+      `CONTRIBUTING.md` 早已存在（16050 字节）、规范 §11 的 DEBT-07 已标「已完成」；
+    - 第十八轮小结行也写着「`CONTRIBUTING.md` 进行中」。
+
+    这两条僵尸状态会让人误以为「有活没干完」或「有进程还占着资源」，**直接误导调度决策**。
+    人工核对会被遗漏，因此固化为机器检查。
+    """
+    problems = []
+    done_ids = _closed_debt_ids()
+    debt_ref = re.compile(r"DEBT-\d+")
+
+    for path in sorted((REPO_DIR / "docs").glob("\u5b50\u4ee3\u7406\u5b9e\u65bd\u7d22\u5f15-*.md")):
+        rel = path.relative_to(REPO_DIR).as_posix()
+        state: dict[str, dict[str, list[int]]] = {}
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "docs-ok" in line:
+                continue
+            ids = _AGENT_ID.findall(line)
+            if not ids:
+                continue
+            progressing = any(mark in line for mark in _IN_PROGRESS_MARKS)
+            finished = any(mark in line for mark in _DONE_MARKS)
+            for agent_id in ids:
+                slot = state.setdefault(agent_id, {"progress": [], "done": []})
+                if progressing:
+                    slot["progress"].append(lineno)
+                if finished:
+                    slot["done"].append(lineno)
+                # 「进行中」不得挂在已关闭的债务上
+                if progressing:
+                    for debt in set(debt_ref.findall(line)):
+                        if debt in done_ids:
+                            problems.append(
+                                "%s:%d 子代理 %s 标「进行中」，但它引用的 %s 在规范 §11 "
+                                "已标「已完成」——僵尸状态，须交接并关闭"
+                                % (rel, lineno, agent_id, debt))
+
+        for agent_id, slot in sorted(state.items()):
+            if slot["progress"] and slot["done"]:
+                problems.append(
+                    "%s 子代理 %s 状态矛盾：「进行中」在第 %s 行，「已完成/已关闭」在第 %s 行"
+                    % (rel, agent_id, slot["progress"], slot["done"]))
     return problems
 
 
@@ -550,12 +618,14 @@ def main(argv=None) -> int:
         "code_line_refs": check_code_line_refs(),
         "adr_index": check_adr_index(),
         "document_map": check_document_map(),
+        "subagent_status": check_subagent_status(),
         "baseline": {"backend": baseline["backend"]["tests"],
                      "frontend": baseline["frontend"]["tests"]},
     }
     total = sum(len(report[key]) for key in
                 ("baseline_numbers", "path_refs", "ledger_status", "text_hygiene",
-                 "injected_newlines", "code_line_refs", "adr_index", "document_map"))
+                 "injected_newlines", "code_line_refs", "adr_index", "document_map",
+                 "subagent_status"))
     report["total"] = total
 
     if args.json:
@@ -572,7 +642,8 @@ def main(argv=None) -> int:
                            ("injected_newlines", "E. 换行注入（字面量 \\n 被写成真换行）"),
                            ("code_line_refs", "F. 代码位置引用有效（file.py:123 未越界）"),
                            ("adr_index", "G. ADR 索引锚点有效（行号一致 + 无漏收录）"),
-                           ("document_map", "H. 文档地图完整（活文档 + 归档均已登记）")):
+                           ("document_map", "H. 文档地图完整（活文档 + 归档均已登记）"),
+                           ("subagent_status", "I. 子代理状态自洽（无僵尸「进行中」）")):
             items = report[key]
             print("\n[%s] %s" % ("PASS" if not items else "FAIL(%d)" % len(items), title))
             for item in items[:40]:
