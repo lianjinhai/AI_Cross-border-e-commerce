@@ -185,9 +185,7 @@ Phase 1 解除条件核对：
 | 页面身份来源收口 | ✅ 完成 | `Users.vue`→`contextUserId()`；`PlatformAdmin.vue`→`roleKey()`；代客不再伪造角色 |
 | 代客会话一致性 | ✅ 完成 | 进入/退出/401 三条路径统一清 Context + 代客标记；`me.py` 三端点透传 `is_impersonating` |
 | 工厂账号 Context 通道（G-3） | ✅ **已完成（2026-09-24）** | `/api/me/workspaces` 与 `/api/me/workspace-context` 已对工厂账号放行（**只读**，`/switch` 仍拒——工厂无可切换项）。真启动服务端到端实测通过：工厂真登录后取到 `source=FACTORY` 的 Context。**顺带修掉一个 fail-open 缺陷**（`build_factory_context` 未校验绑定 `status`，见 `docs/DECISIONS.md` D23） |
-| 删除 legacy 入口 | ✅ **已完成（2026-09-24，D24）** | 采纳「写权限 fail-closed + 路由兜底保留」：canWrite/canAdmin/canApprove/can 在 Context 不可用时**一律 false**，LEGACY_CAPABILITIES 兜底表**整体删除**；
-oleKey/
-outeRedirect/defaultLanding 的 legacy 兜底保留（否则 Context 故障时平台/工厂账号会被弹到无权页面，且改跳登录页会引入重定向环）。**残留**：伪造 rp_user.role 仍能影响路由与菜单（UI 层，非数据越权，后端已实测兜住） |
+| 删除 legacy 入口 | ✅ **已完成（2026-09-24，D24）** | 采纳「写权限 fail-closed + 路由兜底保留」：canWrite/canAdmin/canApprove/can 在 Context 不可用时**一律 false**，LEGACY_CAPABILITIES 兜底表**整体删除**；`roleKey`/`routeRedirect`/`defaultLanding` 的 legacy 兜底保留（否则 Context 故障时平台/工厂账号会被弹到无权页面，且改跳登录页会引入重定向环）。**残留**：伪造 `erp_user.role` 仍能影响路由与菜单（UI 层，非数据越权，后端已实测兜住） |
 
 > **legacy 依赖点已收敛到 3 处**（`permissions.js` 文件头声明的 `currentUser()`/`role()`/
 > `LEGACY_ROLE_MAP`），其余代码禁止再读 `localStorage.erp_user.role`。

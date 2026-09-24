@@ -25,11 +25,11 @@
 
 在临时副本上直接执行 `alembic upgrade head`，在 revision 02 报错：
 
-`
+```
 sqlalchemy.exc.IntegrityError: UNIQUE constraint failed:
 suppliers.tenant_id, suppliers.name, suppliers.source_url
 [SQL: CREATE UNIQUE INDEX uq_supplier_source ON suppliers (tenant_id, name, source_url)]
-`
+```
 
 主库 `suppliers` 表存在 3 组重复键（共 11 行冗余）：
 

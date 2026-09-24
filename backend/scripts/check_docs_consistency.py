@@ -12,11 +12,21 @@
 
     这类漂移的共同特征是「数字/状态看起来合理」，人工评审必然漏掉。
 
+    4. **文档内容被静默损坏**——`WORKSPACE_MIGRATION_PROGRESS.md` 里
+       `roleKey` / `routeRedirect` / `erp_user.role` 三个词的首字符被吃掉，
+       变成 `oleKey` / `outeRedirect` / `rp_user.role`，并残留一个 ESC(0x1B)
+       控制字符。根因是 **PowerShell 反引号转义**：markdown 的反引号在
+       PowerShell 双引号字符串里是转义符，`` `r `` 变成回车、`` `e `` 变成 ESC。
+       该损坏从首次提交（6215d49）就存在，历经 20 轮评审未被发现——
+       因为**损坏后的文本仍然「读得通」**。这类问题必须由机器检查。
+
 检查项
     A. 基线数字一致：活文档中出现的 `N passed` 必须与 `docs/baseline.json` 一致。
     B. 路径引用有效：反引号里的文件路径必须能在仓库中解析。
     C. 台账状态自洽：规范 §11 中标记「已完成」的债务，不得在其它活文档里
        仍被描述为「未完成」。
+    D. 文本卫生：文档不得含控制字符、BOM，行尾必须 LF，且行内代码标记
+       （反引号）必须成对——这些是**内容损坏**，肉眼看不出来但会污染阅读与检索。
 
 豁免机制（防止校验器变成噪音后被整体关掉）
     - 行内标记 ``docs-ok``：该行豁免（用于**历史性**记录，如 DECISIONS 里
@@ -81,6 +91,22 @@ def _live_docs() -> list[Path]:
     return docs
 
 
+def _all_docs() -> list[Path]:
+    """文本卫生检查的覆盖面：**所有**文档（含历史文档）。
+
+    与 A/B/C 不同，控制字符 / BOM / 行尾 / 反引号配对是「文件本身的损坏」，
+    与内容是否属于历史记录无关——历史记录也不该含 ESC 控制字符。
+    因此这里不区分 HISTORICAL_DOCS。
+    """
+    docs = {p.resolve() for p in (REPO_DIR / "docs").rglob("*.md")}
+    docs |= {p.resolve() for p in _live_docs()}
+    for name in ("README.md",):
+        path = REPO_DIR / name
+        if path.exists():
+            docs.add(path.resolve())
+    return sorted(docs)
+
+
 def check_baseline_numbers(baseline: dict) -> list[str]:
     """A：活文档里出现的 `N passed` 必须与单一事实源一致。"""
     expected = {baseline["backend"]["tests"], baseline["frontend"]["tests"]}
@@ -128,6 +154,133 @@ def check_paths() -> list[str]:
     return problems
 
 
+# 允许出现的控制字符（换行、制表）；其余（ESC/NUL/BEL/BS/VT/FF/SO/SI...）
+# 一律视为内容损坏——它们通常来自编辑器或 shell 转义事故，肉眼不可见。
+_ALLOWED_CTRL = {"\n", "\t"}
+
+# 正规代码围栏（3 个及以上反引号）。
+_FENCE = re.compile(r"^\s*`{3,}")
+
+# **残缺围栏**：`` ``` `` 被 PowerShell 反引号转义塌缩成 `` ` `` 或 `` `` ``，
+# 或 `` ```python `` 塌缩成 `` `python ``。这是本仓库实测发生过的真实损坏
+# （4 个文档 / 18 处），肉眼看上去像行内代码，极易漏过。
+_BROKEN_FENCE = re.compile(
+    r"^\s*`{1,2}\s*(?:sql|python|bash|json|text|sh|js|yaml|powershell|vue|ini|"
+    r"toml|http|diff|ts|html|css|md)?\s*$")
+
+# 疑似 `` `n `` 注入：文档里本应是字面量 \n 的地方被写成了真换行，
+# 特征是「上一行以 `X: 之类未完成片段结尾」+「下一行以孤立小写词开头」。
+_LONE_FRAGMENT = re.compile(r"^[a-z][a-z0-9_]{1,9}$")
+
+
+def _scan_text_hygiene(docs: list[Path]) -> list[str]:
+    """D：文档文本卫生——控制字符 / BOM / 行尾 / 残缺围栏 / 未闭合行内代码。
+
+    实现要点（每一条都是实测踩出来的）：
+    1. **CR 只由行尾检查上报一次**。第一版把 CR 同时当作「控制字符」再报一遍，
+       同一问题重复 3 次，让报告可信度崩塌（T-46 同类问题）。
+    2. **行内代码允许跨行**，必须用状态机而非按行算反引号奇偶——按行算会把
+       `` `sqlite3...\n...settings.key` `` 这类合法跨行 code span 全部误报（实测 8 处）。
+    3. **残缺围栏只在「不在行内代码内」时才判定**。行内 code span 里的单反引号
+       是合法内容，误报会淹没真损坏。
+    """
+    problems = []
+    for doc in docs:
+        rel = doc.relative_to(REPO_DIR).as_posix()
+        raw = doc.read_bytes()
+        if raw.startswith(b"\xef\xbb\xbf"):
+            problems.append("%s:1 含 UTF-8 BOM（规范要求 UTF-8 无 BOM）" % rel)
+        body = raw[3:] if raw.startswith(b"\xef\xbb\xbf") else raw
+        if b"\r" in body:
+            problems.append(
+                "%s:1 含 CR 行尾（%d 处）；仓库行尾策略为 LF（见 .gitattributes）"
+                % (rel, body.count(b"\r")))
+        text = body.decode("utf-8", errors="replace")
+        in_fence = False
+        inline_len = 0          # 已开启但未闭合的行内代码反引号个数
+        inline_line = 0
+        for lineno, line in enumerate(text.split("\n"), 1):
+            if _FENCE.match(line):
+                in_fence = not in_fence
+                inline_len = 0
+                continue
+            if in_fence:
+                continue
+            # 控制字符（CR 已由行尾检查负责，不在此重复上报）
+            for ch in line:
+                if ord(ch) < 32 and ch not in _ALLOWED_CTRL and ch != "\r":
+                    problems.append(
+                        "%s:%d 含控制字符 %s(0x%02X)：%s"
+                        % (rel, lineno, _ctrl_name(ord(ch)), ord(ch), line[:90]))
+                    break
+            # 残缺围栏：仅在「不在行内代码内」时判定。
+            # 判定为残缺后**不喂给行内状态机**——否则塌缩的开栏 `` `sql `` 会被
+            # 当成 code span 开启、与塌缩的闭栏 `` ` `` 配成一对，于是只报 1 处
+            # （实测：真实损坏 18 处 = 开栏 + 闭栏都要报）。
+            if inline_len == 0 and _BROKEN_FENCE.match(line):
+                problems.append(
+                    "%s:%d 残缺代码围栏（%r，应为 3 个反引号）：%s"
+                    % (rel, lineno, line.strip(), line[:80]))
+                continue
+            # 更新行内代码状态（同长反引号配对）
+            for match in re.finditer(r"`+", line):
+                run_len = len(match.group(0))
+                if inline_len == 0:
+                    inline_len, inline_line = run_len, lineno
+                elif run_len == inline_len:
+                    inline_len = 0
+        if inline_len:
+            problems.append(
+                "%s:%d 行内代码标记未闭合（%d 个反引号，直到文末无同长闭合）：%s"
+                % (rel, inline_line, inline_len, _line_at(text, inline_line)[:80]))
+    return problems
+
+
+def _ctrl_name(code: int) -> str:
+    return {0x00: "NUL", 0x07: "BEL", 0x08: "BS", 0x0B: "VT", 0x0C: "FF",
+            0x0E: "SO", 0x0F: "SI", 0x1A: "SUB", 0x1B: "ESC"}.get(code, "CTRL")
+
+
+def _line_at(text: str, lineno: int) -> str:
+    lines = text.split("\n")
+    return lines[lineno - 1] if 0 < lineno <= len(lines) else ""
+
+
+def _scan_injected_newlines(docs: list[Path]) -> list[str]:
+    """E：疑似 `` `n `` 注入——字面量被写成了真换行，把一行撕成两行。
+
+    实测案例（DECISIONS.md）：``（`D:\nodejs\node.exe`，PID 3864）`` 被撕成
+    ``（`D:`` / ``odejs`` / ``ode.exe`，PID 3864）`` 三行。这类损坏在渲染后
+    「读起来仍然通顺」，只有机器能发现。
+    """
+    problems = []
+    for doc in docs:
+        rel = doc.relative_to(REPO_DIR).as_posix()
+        lines = doc.read_text(encoding="utf-8", errors="replace").split("\n")
+        in_fence = False
+        for i in range(len(lines) - 1):
+            if _FENCE.match(lines[i]):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
+            cur, nxt = lines[i], lines[i + 1]
+            if not cur.strip() or not nxt.strip():
+                continue
+            if not _LONE_FRAGMENT.match(nxt):
+                continue
+            # 上一行必须「未完成」：不以标点收尾、不以表格/引用/标题开头。
+            # 注意 ASCII 冒号 `:` 不算收尾标点——实测损坏样本正是 `（`D:` 这种「路径写到一半被撕开」的形态（全角「：」保留为收尾）。
+            if len(cur) > 60 or cur.rstrip()[-1] in "。：；、）)》】」』.!?;)]}\"'|*~,，-—>":
+                continue
+            if cur.lstrip().startswith(("|", ">", "#", "-", "*", "`")):
+                continue
+            problems.append(
+                "%s:%d 疑似 `n 注入（行被撕开）：%r + %r"
+                % (rel, i + 1, cur[-40:], nxt[:40]))
+    return problems
+
+
 def check_ledger_status() -> list[str]:
     """C：规范 §11 标记「已完成」的债务，不得在其它活文档里仍写「未完成」。"""
     standard = REPO_DIR / "docs" / "CODE_AND_DIRECTORY_STANDARD.md"
@@ -171,11 +324,14 @@ def main(argv=None) -> int:
         "baseline_numbers": check_baseline_numbers(baseline),
         "path_refs": check_paths(),
         "ledger_status": check_ledger_status(),
+        "text_hygiene": _scan_text_hygiene(_all_docs()),
+        "injected_newlines": _scan_injected_newlines(_all_docs()),
         "baseline": {"backend": baseline["backend"]["tests"],
                      "frontend": baseline["frontend"]["tests"]},
     }
     total = sum(len(report[key]) for key in
-                ("baseline_numbers", "path_refs", "ledger_status"))
+                ("baseline_numbers", "path_refs", "ledger_status", "text_hygiene",
+                 "injected_newlines"))
     report["total"] = total
 
     if args.json:
@@ -187,7 +343,9 @@ def main(argv=None) -> int:
         print("=" * 74)
         for key, title in (("baseline_numbers", "A. 基线数字一致"),
                            ("path_refs", "B. 路径引用有效"),
-                           ("ledger_status", "C. 台账状态自洽")):
+                           ("ledger_status", "C. 台账状态自洽"),
+                           ("text_hygiene", "D. 文本卫生（控制字符/BOM/行尾/围栏）"),
+                           ("injected_newlines", "E. 换行注入（字面量 \\n 被写成真换行）")):
             items = report[key]
             print("\n[%s] %s" % ("PASS" if not items else "FAIL(%d)" % len(items), title))
             for item in items[:40]:

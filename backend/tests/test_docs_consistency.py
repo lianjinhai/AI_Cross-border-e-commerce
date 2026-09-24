@@ -25,6 +25,11 @@ sys.path.insert(0, str(BACKEND_DIR / "scripts"))
 
 import check_docs_consistency as cdc  # noqa: E402
 
+# 反引号常量：测试里要构造 markdown 代码标记，直接写反引号会让本文件自身的
+# 引号嵌套变得极难阅读（也容易被 shell/编辑器转义事故吃掉）。
+BT = chr(96)
+F3 = BT * 3
+
 # ---------------------------------------------------------------- 事实源
 
 def test_baseline_file_exists_and_has_expected_shape():
@@ -133,6 +138,106 @@ def test_path_check_ignores_historical_temp_files(monkeypatch, tmp_path):
 
     assert problems == [], problems
 
+
+# ---------------------------------------------------------------- D. 文本卫生
+
+def _hygiene(tmp_path, monkeypatch, body: str, name: str = "docs/X.md"):
+    """把 body 写成文档后跑文本卫生检查（body 以 bytes 语义写入，保留控制字符）。"""
+    path = tmp_path / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(body.encode("utf-8"))
+    monkeypatch.setattr(cdc, "REPO_DIR", tmp_path)
+    return cdc._scan_text_hygiene([path])
+
+
+def test_hygiene_catches_escape_character(tmp_path, monkeypatch):
+    """判别力：ESC(0x1B) 必须被抓到——这是 PowerShell `` `e `` 转义事故的残留。"""
+    problems = _hygiene(tmp_path, monkeypatch,
+                        "伪造 " + BT + "erp_user.role" + BT + " 无效\x1b 仍可影响路由。\n")
+    assert len(problems) == 1, problems
+    assert "ESC" in problems[0] and "0x1B" in problems[0]
+
+
+def test_hygiene_catches_broken_fence(tmp_path, monkeypatch):
+    """判别力：`` ``` `` 塌缩成 `` ` `` 必须被抓到（实测 4 文档 / 18 处）。"""
+    body = "\n".join([BT + "sql", "SELECT 1;", BT, ""])
+    problems = _hygiene(tmp_path, monkeypatch, body)
+    assert len(problems) == 2, problems
+    assert all("残缺代码围栏" in p for p in problems), problems
+
+
+def test_hygiene_catches_crlf(tmp_path, monkeypatch):
+    """判别力：CR 行尾必须被抓到（仓库策略为 LF）。"""
+    problems = _hygiene(tmp_path, monkeypatch, "第一行\r\n第二行\r\n")
+    assert len(problems) == 1, problems
+    assert "CR" in problems[0]
+
+
+def test_hygiene_catches_bom(tmp_path, monkeypatch):
+    """判别力：UTF-8 BOM 必须被抓到（规范要求无 BOM）。"""
+    path = tmp_path / "docs" / "X.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\xef\xbb\xbf" + "# 标题\n".encode())
+    monkeypatch.setattr(cdc, "REPO_DIR", tmp_path)
+    problems = cdc._scan_text_hygiene([path])
+    assert len(problems) == 1, problems
+    assert "BOM" in problems[0]
+
+
+def test_hygiene_accepts_clean_doc(tmp_path, monkeypatch):
+    """反向用例：合规文档不得误报（否则校验器沦为噪音）。"""
+    body = ("# 标题\n\n"
+            "普通行内代码 " + BT + "roleKey" + BT + " 与 " + BT + "routeRedirect" + BT + "。\n\n"
+            + F3 + "python\nprint(1)\n" + F3 + "\n\n"
+            "围栏内的单反引号是代码内容，合法：" + F3 + "\n" + BT + "\n" + F3 + "\n")
+    assert _hygiene(tmp_path, monkeypatch, body) == []
+
+
+def test_hygiene_allows_multiline_inline_code(tmp_path, monkeypatch):
+    """反向用例：markdown 行内代码**允许跨行**，按行算奇偶会误报（实测 8 处）。
+
+    第一版校验器就是按行算奇偶，把 `` `sqlite3...\n...settings.key` `` 这类
+    合法的跨行 code span 全报了出来。
+    """
+    body = ("并发跑测试时出现 " + BT + "sqlite3.IntegrityError: UNIQUE constraint\n"
+            "failed: settings.key" + BT + "（一次实测 115 个用例报错）。\n")
+    assert _hygiene(tmp_path, monkeypatch, body) == []
+
+
+def test_hygiene_catches_unclosed_inline_code(tmp_path, monkeypatch):
+    """判别力：真正未闭合的行内代码仍要被抓到（不能为了去误报而放过）。"""
+    body = "这里有一个未闭合的 " + BT + "roleKey 标记。\n"
+    problems = _hygiene(tmp_path, monkeypatch, body)
+    assert len(problems) == 1, problems
+    assert "未闭合" in problems[0]
+
+
+# ---------------------------------------------------------------- E. 换行注入
+
+def test_injected_newline_catches_split_line(tmp_path, monkeypatch):
+    """判别力：`` `n `` 被写成真换行、把一行撕成两行，必须被抓到。
+
+    实测案例（DECISIONS.md）：``（`D:\\nodejs\\node.exe`，PID 3864）`` 被撕成
+    ``（`D:`` / ``odejs`` / ``ode.exe`，PID 3864）``。
+    """
+    path = tmp_path / "docs" / "X.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("端口被本机另一个项目的 node 占用\n（" + BT + "D:\nodejs\n"
+                    "ode.exe" + BT + "，PID 3864）——无关。\n", encoding="utf-8")
+    monkeypatch.setattr(cdc, "REPO_DIR", tmp_path)
+    problems = cdc._scan_injected_newlines([path])
+    assert len(problems) == 1, problems
+    assert "注入" in problems[0]
+
+
+def test_injected_newline_ignores_normal_wrapping(tmp_path, monkeypatch):
+    """反向用例：正常的中文换行（上一行以标点收尾）不得误报。"""
+    path = tmp_path / "docs" / "X.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("这是一句正常的话，\n下一行继续说明。\n\n"
+                    "另一段以标点结尾：\n继续。\n", encoding="utf-8")
+    monkeypatch.setattr(cdc, "REPO_DIR", tmp_path)
+    assert cdc._scan_injected_newlines([path]) == []
 
 # ---------------------------------------------------------------- 真实仓库（端到端）
 

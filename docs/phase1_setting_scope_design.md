@@ -53,24 +53,24 @@
 
 把现有 `platform_fees` / `fx` / `rules` 三行**复制**（不是移动）到所有真实租户：
 
-`sql
+```sql
 INSERT INTO tenant_settings (tenant_id, key, value, updated_at)
 SELECT t.id, s.key, s.value, CURRENT_TIMESTAMP
 FROM tenants t CROSS JOIN settings s
 WHERE s.key IN ('platform_fees','fx','rules') AND t.id <> 0;
-`
+```
 
 `settings` 中的原行保留，作为**平台默认值**（租户无覆盖时回退使用）。
 
 ### 2.3 读取优先级（代码侧，Service 统一实现）
 
-`
+```
 租户级 tenant_settings(tenant_id, key)
     ↓ 不存在
 平台级 settings(key)
     ↓ 不存在
 代码内 _SETTING_DEFAULTS
-`
+```
 
 ### 2.4 写入规则（代码侧）
 

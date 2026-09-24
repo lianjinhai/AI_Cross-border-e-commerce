@@ -307,21 +307,37 @@ push/PR 自动跑后端 `ruff check` + `pytest`、前端 `npm test` + `npm run b
    $t = [System.IO.File]::ReadAllText('路径'); $t.Contains("`r`n")
    ```
 
-   若为 `True`，用 `-replace "`r`n","`n"` 归一后 `[System.IO.File]::WriteAllText(...)`
+   若为 `True`，用 ``-replace "`r`n","`n"`` 归一后 `[System.IO.File]::WriteAllText(...)`
    写回（默认 UTF-8 无 BOM）。`*.bat` / `*.cmd` / `*.ps1` 例外，保持 CRLF。
 
-2. **丢弃输出用 `> $null`，不要用 `> nul`**。PowerShell 会把 `nul` 当普通文件名，
+2. **写 markdown 时，PowerShell 会把反引号当转义符吃掉**。这是本项目**潜伏最久**的
+   事故（从首次提交起 20 轮未发现）：在 PowerShell 双引号字符串里，`` `r `` 是回车、
+   `` `n `` 是换行、`` `e `` 是 ESC(0x1B)、三个反引号会被压成一个。实测后果：
+
+   - 4 个文档共 **18 处代码围栏**从 `` ``` `` 塌缩成 `` ` ``；
+   - 3 个标识符被吃掉首字符：`roleKey`→`oleKey`、`routeRedirect`→`outeRedirect`、
+     `erp_user.role`→`rp_user.role`，并残留一个不可见 ESC 字符；
+   - `DECISIONS.md` 里 `D:\nodejs\node.exe` 被撕成 3 行。
+
+   **规则**：写文档一律用 `[System.IO.File]::WriteAllText`（单引号 here-string），
+   或在 Python 里用 `write_bytes`。**禁止**用 PowerShell 双引号字符串拼 markdown。
+
+3. **Python 的 `write_text` 在 Windows 上会把 `\n` 写成 CRLF**。默认
+   `newline=None` 会做翻译，而仓库 `.gitattributes` 锁 `eol=lf`。写文件时必须显式
+   `newline="\n"`（或写完用 `write_bytes` 归一），否则每次编辑都污染整个文件行尾。
+
+4. **丢弃输出用 `> $null`，不要用 `> nul`**。PowerShell 会把 `nul` 当普通文件名，
    生成垃圾文件 `nul`（`.gitignore` 里专门列了它）。
 
-3. **子进程必须显式 `encoding="utf-8"`**。Windows 默认按 GBK 解码子进程输出，
+5. **子进程必须显式 `encoding="utf-8"`**。Windows 默认按 GBK 解码子进程输出，
    读中文日志会直接抛 `UnicodeDecodeError`。
 
-4. **管道会吃掉退出码**。`... | Select-String ...` 之后 `$LASTEXITCODE` 不可靠；
+6. **管道会吃掉退出码**。`... | Select-String ...` 之后 `$LASTEXITCODE` 不可靠；
    先重定向到文件（`> log.txt 2>&1`）再读 `$LASTEXITCODE`。
 
-5. **读中文输出**：设 `$env:PYTHONIOENCODING='utf-8'`，读文件加 `-Encoding UTF8`。
+7. **读中文输出**：设 `$env:PYTHONIOENCODING='utf-8'`，读文件加 `-Encoding UTF8`。
 
-6. **SQLite 旁文件**：脚本异常退出会留下 `-wal` / `-shm`；清理时三个文件一起删（M-9）。
+8. **SQLite 旁文件**：脚本异常退出会留下 `-wal` / `-shm`；清理时三个文件一起删（M-9）。
 
 ---
 

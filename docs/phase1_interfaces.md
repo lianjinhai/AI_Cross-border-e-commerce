@@ -25,7 +25,7 @@ Phase 1 要把"一个用户固定属于一个租户"改造成"用户可加入多
 
 新增代码只能通过 `WorkspaceContext` 获取身份，不得直接读 `User.tenant_id` 或 `User.role`。
 
-`python
+```python
 @dataclass(frozen=True)
 class WorkspaceContext:
     user_id: int                      # users.id
@@ -41,7 +41,7 @@ class WorkspaceContext:
     source: str                       # MEMBERSHIP / LEGACY_FALLBACK / PLATFORM / FACTORY
     is_impersonating: bool            # superadmin 代客访问
     trace_id: str                     # 每次请求生成，用于日志串联
-`
+```
 
 `source` 语义（必须显式，禁止默认值猜测）：
 
@@ -68,7 +68,7 @@ class WorkspaceContext:
 
 命名规则：`<领域>:<动作>`，动作取值 `read` / `write` / `approve` / `admin`。
 
-`
+```
 workspace:read          workspace:write        workspace:member:admin
 product:read            product:write
 supply:read             supply:write
@@ -81,7 +81,7 @@ refund:read             refund:write
 compliance:read         compliance:approve
 ai:read                 ai:write
 platform:admin
-`
+```
 
 角色 → 权限默认映射（Phase 1 基线，后续由 `role_permissions` 表承载）：
 

@@ -122,12 +122,12 @@
 
 ### 2.3 回填 workspace_profiles
 
-`sql
+```sql
 INSERT INTO workspace_profiles (tenant_id, name, kind, status, created_at)
 SELECT id, name, 'ORGANIZATION', 'active', CURRENT_TIMESTAMP
 FROM tenants
 WHERE id <> 0;
-`
+```
 
 **实测数据（2026-09-23 只读复核）**：`tenants` 表共 **7 行且不存在 id=0 的行**；
 `tenant_id=0` 的 39 行只存在于业务表与 `users.id=4`（superadmin）。
@@ -158,7 +158,7 @@ tenant 0 的 39 行业务数据**不归属任何 Workspace**，属隔离处理�
 
 SQL 骨架：
 
-`sql
+```sql
 INSERT INTO workspace_memberships
   (workspace_id, user_id, role_key, status, is_primary, source, created_at, updated_at)
 SELECT wp.id, u.id,
@@ -171,7 +171,7 @@ SELECT wp.id, u.id,
 FROM users u
 JOIN workspace_profiles wp ON wp.tenant_id = u.tenant_id
 WHERE LOWER(u.role) IN ('admin','operator','viewer','compliance_approver');
-`
+```
 
 ### 2.5 硬性断言（回填后立即校验，失败即回滚）
 
@@ -237,10 +237,10 @@ SQLite 必须用 `op.batch_alter_table` 重建表：
 
 ## 4. 执行顺序与回滚点
 
-`
+```
 [冷备 1] → Revision A → 验证 → [冷备 2] → Revision B → 断言
    → [冷备 3] → Revision C → 断言 → 双读启用 → 观察期 → 前端接入
-`
+```
 
 | 阶段 | 失败处理 |
 |---|---|
@@ -253,7 +253,7 @@ SQLite 必须用 `op.batch_alter_table` 重建表：
 Revision B 完成后，`backend/app/services/workspace_context.py` 的
 `resolve_workspace_context()` 只需在 `TODO(P1-06)` 处插入 MEMBERSHIP 分支：
 
-`python
+```python
 if membership_table_available(db):
     membership = (db.query(WorkspaceMembership)
                    .filter(WorkspaceMembership.user_id == user.id,
@@ -262,7 +262,7 @@ if membership_table_available(db):
                    .first())
     if membership:
         return build_membership_context(db, user, membership, trace)
-`
+```
 
 调用方零改动。`membership_table_available()` 已实现，可用于渐进启用。
 
