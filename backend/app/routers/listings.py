@@ -10,6 +10,7 @@ from ..agents.listing import ListingAgent
 from ..auth import get_current_user, require_compliance_approver, require_write
 from ..db import get_db
 from ..models import Listing, ListingReviewDecision, Product, User
+from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
 
 router = APIRouter(prefix="/listings", tags=["listings"])
@@ -30,7 +31,7 @@ class ListingEdit(BaseModel):
 
 @router.get("")
 def list_listings(product_id: int | None = None, platform: str = "", status: str = "",
-                  page_num: int = 1, page_size: int = 20,
+                  page_num: int = PageNum, page_size: int = PageSize,
                   user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     q = db.query(Listing).filter(Listing.tenant_id == user.tenant_id)
     if product_id:

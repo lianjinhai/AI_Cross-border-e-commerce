@@ -20,6 +20,7 @@ from ..models import (
     User,
     utcnow,
 )
+from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
 
 router = APIRouter(prefix="/admin", tags=["platform-admin"])
@@ -60,7 +61,7 @@ class TenantUpdate(BaseModel):
 
 
 @router.get("/tenants")
-def list_tenants(page_num: int = 1, page_size: int = 20,
+def list_tenants(page_num: int = PageNum, page_size: int = PageSize,
                  user: User = Depends(_require_superadmin), db: Session = Depends(get_db)):
     q = db.query(Tenant).order_by(Tenant.id)
     total = q.count()

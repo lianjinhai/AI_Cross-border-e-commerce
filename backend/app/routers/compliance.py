@@ -7,6 +7,7 @@ from ..agents.compliance import ComplianceAgent
 from ..auth import get_current_user, require_permission
 from ..db import get_db
 from ..models import ComplianceReport, User
+from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
 
 router = APIRouter(prefix="/compliance", tags=["compliance"])
@@ -19,7 +20,7 @@ class CheckIn(BaseModel):
 
 @router.get("/reports")
 def list_reports(target_type: str = "", ref_id: int | None = None,
-                 risk_level: str = "", page_num: int = 1, page_size: int = 20,
+                 risk_level: str = "", page_num: int = PageNum, page_size: int = PageSize,
                  user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """合规报告列表。
 

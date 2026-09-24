@@ -74,11 +74,24 @@ class TestFunctionDomain:
                     f"{path} 错误信息非中文: {r.json()['detail']}"
 
     def test_pagination_edge(self, client, auth_headers):
-        """page_num 边界不应 500；超大 page_size 被接受或限流而非崩溃。"""
-        for params in ({"page_num": 0}, {"page_num": -1}, {"page_num": 99999},
-                       {"page_size": 10000}, {"page_size": 0}):
+        """分页边界必须给出可预期响应，不得 500。
+
+        约束语义（`app/pagination.py`）：
+        - `page_num=0/-1` → 422（`ge=1`）
+        - `page_num=99999` → 200 + 空列表（越界页合法）
+        - `page_size=0` / `10000` → 422（`ge=1` / `le=MAX_PAGE_SIZE`）
+        超上限**刻意报错而非静默截断**：否则集合比对会漏数据（审计 #10 / DEBT-27）。
+        """
+        expect_422 = ({"page_num": 0}, {"page_num": -1},
+                      {"page_size": 10000}, {"page_size": 0})
+        for params in expect_422:
             r = client.get("/api/products", headers=auth_headers, params=params)
-            assert r.status_code in (200, 422), f"{params} -> {r.status_code}"
+            assert r.status_code == 422, f"{params} 应被拒（避免静默截断），实际 {r.status_code}"
+        r = client.get("/api/products", headers=auth_headers, params={"page_num": 99999})
+        assert r.status_code == 200 and r.json()["items"] == [], "越界页应为空列表"
+        # 上限内必须可用，且返回的 page_size 与请求一致
+        r = client.get("/api/products", headers=auth_headers, params={"page_size": 200})
+        assert r.status_code == 200 and r.json()["page_size"] == 200
 
     def test_duplicate_standardize_stable(self, client, auth_headers):
         """重复标准化同一商品：dedupe_hash 必须稳定（幂等）。"""
@@ -191,10 +204,9 @@ class TestDataFinanceDomain:
         yield s
         s.close()
 
-    def test_order_profit_identity(self, client, auth_headers):
+    def test_order_profit_identity(self, client, auth_headers, fetch_all):
         """逐条核对：订单 profit == amount - cost（误差 0.01）。"""
-        items = client.get("/api/orders", headers=auth_headers,
-                           params={"page_num": 1, "page_size": 500}).json()["items"]
+        items = fetch_all("/api/orders", auth_headers)
         assert items, "无订单可核对"
         bad = [o["external_no"] for o in items
                if abs(o["profit"] - (o["amount"] - o["cost"])) > 0.011]
@@ -216,7 +228,7 @@ class TestDataFinanceDomain:
         after_po = client.get(f"/api/products/{pid}", headers=auth_headers).json()["attrs"]["onhand"]
         assert after_po == 17, f"采购入库后应为 17，实际 {after_po}"
 
-    def test_settlement_amount_conservation(self, client, auth_headers):
+    def test_settlement_amount_conservation(self, client, auth_headers, fetch_all):
         """结算单总额 == 纳入的采购单金额之和。"""
         r = client.post("/api/products", headers=auth_headers,
                         json={"title": "结算守恒测试品", "attrs": {"supplier_price": 11, "sale_price": 25}})
@@ -239,8 +251,7 @@ class TestDataFinanceDomain:
         assert st["total_amount"] >= round(total, 2) - 0.01, \
             f"结算总额 {st['total_amount']} 小于本批采购合计 {total}"
         assert st["po_count"] >= len(po_ids)
-        pos = client.get("/api/purchases", headers=auth_headers,
-                         params={"page_num": 1, "page_size": 200}).json()["items"]
+        pos = fetch_all("/api/purchases", auth_headers)
         linked = [p for p in pos if p["id"] in po_ids and p.get("settlement_id") == st["id"]]
         assert len(linked) == len(po_ids), f"本批 {len(po_ids)} 张 PO 未全部挂到结算单 {st['id']}"
 

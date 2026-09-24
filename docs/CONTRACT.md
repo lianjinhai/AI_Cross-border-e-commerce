@@ -138,6 +138,16 @@ def gen_order(db, tenant_id: int, platform: str | None = None) -> Order         
 
 每个文件 `router = APIRouter(prefix="/xxx", tags=["xxx"])`；统一在 main.py 注册（prefix="/api"）。列表接口分页参数 `page:int=1, page_size:int=20`，`total=db.query(...).count()`。
 
+**分页参数约束（2026-09-24 起，`app/pagination.py`）**：
+
+- `page_num >= 1`，`1 <= page_size <= 200`（`MAX_PAGE_SIZE`），越界一律 **422**；
+- **超上限刻意报错、不做静默截断**：调用方做「集合比对」时若只拿到第一页，
+  漏掉的记录不会被发现（实测测试库 `orders` 恰好 500 条，与旧的硬编码
+  `page_size=500` 相等，数据一涨就会假绿）；
+- 需要全量时**必须分页遍历**（参考 `tests/conftest.py` 的 `fetch_all` 夹具、
+  `scripts/security_data_audit.py` 的 `get_all`），禁止用大 `page_size` 一把梭；
+- `limit` 类参数（非分页）沿用各自上限并在服务端 `min()` 夹取。
+
 ### B1 名下
 - **auth.py** `/auth`：`POST /login {"username","password"} -> {"token","user":{...}}`（验证失败 400）；`GET /me -> user dict`；`GET /users`(admin) 列表；`POST /users`(admin) {"username","password","role","display_name"}；`PUT /users/{id}`(admin)；`DELETE /users/{id}`(admin，不能删自己)。
 - **products.py** `/products`：`GET ""?keyword&category&status&page&page_size`（keyword 模糊匹配 title/sku）；`POST ""` 创建；`GET /{id}` 详情（附 scores 最新5、offers（带 supplier_name）、listings、pricing 最新1、compliance 最新1）；`PUT /{id}`；`DELETE /{id}`（软删 status="deleted"）；`POST /collect`（require_write，body {"source_platform","keyword","count"} → mock_market.collect）；`POST /{id}/standardize`（ProductAgent）。

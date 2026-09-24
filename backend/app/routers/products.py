@@ -21,6 +21,7 @@ from ..models import (
     SupplierOffer,
     User,
 )
+from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
 from ..services import mock_market, scraper
 
@@ -62,7 +63,7 @@ def _get_owned(db: Session, tenant_id: int, product_id: int) -> Product:
 
 @router.get("")
 def list_products(keyword: str = "", category: str = "", status: str = "",
-                  page_num: int = 1, page_size: int = 20,
+                  page_num: int = PageNum, page_size: int = PageSize,
                   user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     q = db.query(Product).filter(Product.tenant_id == user.tenant_id,
                                  Product.status != "deleted")

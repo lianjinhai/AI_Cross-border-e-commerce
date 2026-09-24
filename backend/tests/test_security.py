@@ -82,7 +82,7 @@ def test_role_permission_matrix(client):
     assert r.status_code == 404 and "不存在" in r.json()["detail"], r.text
 
 
-def test_cross_tenant_isolation(client):
+def test_cross_tenant_isolation(client, fetch_all):
     """A 租户不能看到/读写 B 租户的商品、订单、知识库、AI 日志。"""
     sa = {"Authorization": f"Bearer {client.post('/api/auth/login', json={'username': 'root', 'password': 'root-test-123'}).json()['token']}"}
     # 开通 B 租户
@@ -103,7 +103,7 @@ def test_cross_tenant_isolation(client):
 
     issues = []
     # A 商品列表无 B 商品
-    a_items = client.get("/api/products", headers=ha, params={"page_size": 200}).json()["items"]
+    a_items = fetch_all("/api/products", ha)
     if any(p["id"] == pid_b for p in a_items):
         issues.append("商品列表泄漏")
     # A 读 B 商品详情 -> 404
@@ -113,8 +113,8 @@ def test_cross_tenant_isolation(client):
     if client.put(f"/api/products/{pid_b}", headers=ha, json={"title": "x"}).status_code == 200:
         issues.append("跨租户改商品")
     # 订单无交集
-    oa = {o["id"] for o in client.get("/api/orders", headers=ha, params={"page_size": 500}).json()["items"]}
-    ob = {o["id"] for o in client.get("/api/orders", headers=hb, params={"page_size": 500}).json()["items"]}
+    oa = {o["id"] for o in fetch_all("/api/orders", ha)}
+    ob = {o["id"] for o in fetch_all("/api/orders", hb)}
     if oa & ob:
         issues.append("订单跨租户重叠")
     # A 对 B 订单发货 -> 非 200
@@ -123,8 +123,8 @@ def test_cross_tenant_isolation(client):
         if r.status_code == 200:
             issues.append("跨租户发货")
     # 知识库无交集
-    kb = {d["id"] for d in client.get("/api/knowledge/docs", headers=hb, params={"page_size": 100}).json()["items"]}
-    ka = {d["id"] for d in client.get("/api/knowledge/docs", headers=ha, params={"page_size": 200}).json()["items"]}
+    kb = {d["id"] for d in fetch_all("/api/knowledge/docs", hb)}
+    ka = {d["id"] for d in fetch_all("/api/knowledge/docs", ha)}
     if kb & ka:
         issues.append("知识库跨租户重叠")
     # B 的 AI 日志全是自己租户的
@@ -234,7 +234,7 @@ def test_login_lock_and_token_revocation(client, auth_headers):
     client.delete(f"/api/auth/users/{created['id']}", headers=auth_headers)
 
 
-def test_data_consistency_after_flows(client, auth_headers):
+def test_data_consistency_after_flows(client, auth_headers, fetch_all):
     """跑过采购/售后流程后：退款-订单状态联动、结算单时间戳、订单 source 合法值。"""
 
     # 造订单并完成整单退款
@@ -247,9 +247,8 @@ def test_data_consistency_after_flows(client, auth_headers):
     client.put(f"/api/refunds/{rid}/status", headers=auth_headers, json={"status": "approved"})
     client.post(f"/api/refunds/{rid}/refund", headers=auth_headers)
 
-    refunds = client.get("/api/refunds", headers=auth_headers, params={"page_num": 1, "page_size": 200}).json()["items"]
-    orders = {x["id"]: x for x in client.get("/api/orders", headers=auth_headers,
-                                             params={"page_num": 1, "page_size": 500}).json()["items"]}
+    refunds = fetch_all("/api/refunds", auth_headers)
+    orders = {x["id"]: x for x in fetch_all("/api/orders", auth_headers)}
     for rf in refunds:
         od = orders.get(rf["order_id"])
         if od is None:

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from ..auth import get_current_user, require_write
 from ..db import get_db
 from ..models import Order, Product, Shop, User
+from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
 from ..services import mock_market
 
@@ -41,7 +42,7 @@ class StatusIn(BaseModel):
 
 @router.get("")
 def list_orders(platform: str = "", status: str = "", keyword: str = "",
-                page_num: int = 1, page_size: int = 20,
+                page_num: int = PageNum, page_size: int = PageSize,
                 user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     q = db.query(Order).filter(Order.tenant_id == user.tenant_id)
     if platform:

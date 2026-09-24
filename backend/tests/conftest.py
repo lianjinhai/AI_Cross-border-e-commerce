@@ -159,6 +159,50 @@ def _admin_token_cache():
 
 
 @pytest.fixture
+def fetch_all(client):
+    """返回一个「分页遍历取回**全量**条目」的函数，供集合比对类断言使用。
+
+    **为什么不能用 `page_size=500` 一把梭**（审计 #10 / DEBT-27）：
+
+    接口对 `page_size` 有上限（`app/pagination.py` 的 `MAX_PAGE_SIZE=200`），
+    超出返回 422；而即便没有上限，一次性大页也只是「看起来取全了」——
+    实测测试库 `orders` 恰好 500 条、与硬编码的 500 相等，
+    一旦数据增长，跨租户隔离比对会**静默漏掉多出来的记录**（假绿）。
+
+    本函数按 `total` 逐页取完再合并，数据量增长也不会漏；
+    若某页返回的条目数与 `total` 不一致（说明有并发写入），直接断言失败而非静默截断。
+
+    用法::
+
+        def test_x(client, auth_headers, fetch_all):
+            orders = fetch_all("/api/orders", auth_headers, status="paid")
+    """
+    from app.pagination import MAX_PAGE_SIZE
+
+    def _fetch_all(path: str, headers: dict, **params) -> list[dict]:
+        items: list[dict] = []
+        page_num = 1
+        total = None
+        while True:
+            query = {**params, "page_num": page_num, "page_size": MAX_PAGE_SIZE}
+            r = client.get(path, headers=headers, params=query)
+            assert r.status_code == 200, f"{path} {query} -> {r.status_code} {r.text[:200]}"
+            body = r.json()
+            if total is None:
+                total = body["total"]
+            items.extend(body["items"])
+            if len(items) >= total or not body["items"]:
+                break
+            page_num += 1
+        assert len(items) == total, (
+            f"{path} 分页遍历取回 {len(items)} 条，但 total={total}——"
+            f"可能存在并发写入，或分页实现有缺陷")
+        return items
+
+    return _fetch_all
+
+
+@pytest.fixture
 def auth_headers(client, _admin_token_cache):
     """演示租户 admin 的认证头。
 

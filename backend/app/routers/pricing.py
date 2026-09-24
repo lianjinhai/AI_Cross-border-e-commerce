@@ -7,6 +7,7 @@ from ..agents.pricing import PricingAgent
 from ..auth import get_current_user, require_write
 from ..db import get_db
 from ..models import PricingRecord, Product, User
+from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
 
 router = APIRouter(prefix="/pricing", tags=["pricing"])
@@ -22,7 +23,7 @@ class SuggestIn(BaseModel):
 
 
 @router.get("")
-def list_records(product_id: int | None = None, page_num: int = 1, page_size: int = 20,
+def list_records(product_id: int | None = None, page_num: int = PageNum, page_size: int = PageSize,
                  user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     q = db.query(PricingRecord).filter(PricingRecord.tenant_id == user.tenant_id)
     if product_id:

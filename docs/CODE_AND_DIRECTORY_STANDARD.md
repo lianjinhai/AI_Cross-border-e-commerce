@@ -59,6 +59,7 @@ AI-电商ERP/
 │   │   ├── tools/                  # 【Phase 2 新增】Agent Tool Layer
 │   │   ├── workflows/              # 工作流引擎
 │   │   ├── models.py               # 数据模型（单一入口）
+│   │   ├── pagination.py           # 分页参数统一约束（PageNum/PageSize，上限 200）
 │   │   ├── auth.py  config.py  db.py  main.py  seed.py
 │   │   └── serialize.py  secure_types.py
 │   ├── migrations/versions/        # Alembic 迁移（只增不改）
@@ -269,6 +270,9 @@ frontend/node_modules/  frontend/dist/     frontend/.zcode/
 | T-11 | 新增回归测试必须用「**临时回退修复 → 确认测试失败 → 恢复**」证明其有效；无法证明时须在 docstring 标注为"契约守护"而非"缺陷回归" |
 | T-12 | **验收脚本自身必须可靠**：脚本选用的前置数据必须显式探测（不得假定 `items[0]` 可用）；数据前提缺失时报 `SKIP` 并说明原因，**不得伪装成 `FAIL`**；断言必须针对"本次操作产生的对象"，不得针对"全局汇总值" |
 | T-13 | **可行性验证必须真启动服务**：进程内 `TestClient` 全绿 ≠ 可部署。涉及"项目可实际运行"的结论，必须真启动 uvicorn + 真实 HTTP 调用 + 静态前端可访问，且**在数据库副本上执行**（不碰主库） |
+| T-14 | **回退法变异只能改「被测逻辑」，不得同时修改「守护断言」**：两者一起改等于自己拆掉报警器，会得出"守护无效"的假结论。必须保留断言、只让被测行为坏掉 |
+| T-15 | **需要全量数据时必须分页遍历**（`tests/conftest.py::fetch_all`、`scripts/security_data_audit.py::get_all`），禁止用大 `page_size` 一把梭；遍历函数必须断言「取回条数 == total」 |
+| T-16 | **审计/校验脚本禁止抽样**：抽样得出的「无问题」结论不成立。实测主库订单 518 条而脚本只取 500 条，最后 18 条从未被审计却仍打印「已全覆盖」 |
 
 > **T-4 说明**：本轮修复中，`test_security.py` 曾把「superadmin 可访问租户业务 API」固化为正确行为，`test_api.py` 曾把「租户停用」误断言为「租户到期」。两者都是断言与语义脱节，属于**测试在保护错误行为**，比缺测试更危险。
 
@@ -294,6 +298,23 @@ frontend/node_modules/  frontend/dist/     frontend/.zcode/
 >   分数普遍 ≥60，占满了 `limit` 窗口，低分商品本来就挤不进来。改为**隔离租户**场景
 >   （新建租户 + 3 个低分商品，租户内无其它候选）后变异立刻被抓到。
 >   **结论：断言必须在"被测行为坏掉时必然失败"的场景下设计，回退法是唯一可靠证据。**
+
+> **T-14 ~ T-16 说明（D19 教训：静默截断会让"隔离比对"假绿）**：
+> 13 个列表端点的 `page_size` 原本**无上界**。实测测试库 `orders` 恰好 500 条，
+> 与测试里硬编码的 `page_size=500` **完全相等**——当时没截断纯属侥幸，
+> seed 一增订单数，跨租户隔离比对与利润恒等式核对就会静默漏数据。
+> 主库更能说明问题：`security_data_audit.py` 写死取 500 条并注释"应全覆盖"，
+> 而主库实际 518 条，**最后 18 条从未被审计过**。
+>
+> 处置：新增 `app/pagination.py`（`MAX_PAGE_SIZE=200`，越界 **422 快速失败**），
+> 13 个端点统一改用 `PageNum`/`PageSize`，并提供分页遍历工具。
+> 加上限后**立刻有 3 个测试失败**（它们本来就依赖"无上限"）——这正是修复的价值：
+> 把"将来会静默出错"变成"现在立刻报错"。
+>
+> **T-14 是本轮最有价值的教训**：做回退法验证时，第一版把 `fetch_all` 的
+> 「只取第一页」变异**和**它的总数一致性断言**一起改掉了，结果测试通过，
+> 差点得出"守护无效"的错误结论。第二次**只变异遍历逻辑、保留断言**，
+> 立刻被抓到。**变异测试的前提是报警器必须还在。**
 
 > **T-12 / T-13 说明（D17 教训：验收脚本自己失灵，把"功能正常"误报为"功能坏了"）**：
 > 2026-09-24 首次对**真实运行的服务**跑 `scripts/live_acceptance.py`，7 步里 2 步 FAIL。
@@ -433,6 +454,7 @@ python -m ruff format .         # 格式化
 | DEBT-24 | ~~`ERP_ADMIN_PASSWORD` 门禁形同虚设：`auth.admin_bootstrap_password()` 从未被调用，生产环境仍可用 `admin123` 登录~~ | ~~**P0**~~ | `app/seed.py`、`app/main.py` | ✅ **已完成**：新增 `seed._ensure_admin_password()` 并在 lifespan 调用（见 `docs/DECISIONS.md` D10.1），回归测试 3 项 |
 | DEBT-25 | 测试共享夹具跨文件 import，存在收集顺序依赖 | **P2** | `tests/` | ✅ **已完成**：夹具下沉 `tests/conftest.py`，`auth_headers` 自愈 + 用例级状态还原（见 D10.2） |
 | DEBT-26 | ~~`_seed()` 对全局唯一的 `settings` 表不幂等~~；~~测试库单实例（固定名 + WAL 旁文件残留）~~ | ~~**P1**~~ | `app/seed.py`、`tests/conftest.py`、`.gitignore` | ✅ **已完成**：抽出 `DEFAULT_SETTINGS` + `_ensure_default_settings()`（缺什么补什么）；测试库 PID 隔离 + `ERP_TEST_DB` 覆盖 + WAL 旁文件统一清理；`.gitignore` 补齐旁文件与 PID 库名（见 `docs/DECISIONS.md` D11） |
+| DEBT-27 | ~~`page_size` 无上限；调用方用大 `page_size` 做集合比对会被静默截断~~ | ~~**P1**~~ | `app/pagination.py`、13 个 router、`tests/conftest.py`、`scripts/security_data_audit.py` | ✅ **已完成（2026-09-24）**：新增 `app/pagination.py`（`MAX_PAGE_SIZE=200`，越界 422）；13 个列表端点统一改用 `PageNum`/`PageSize`；新增 `fetch_all` 夹具与 `get_all` 辅助函数做**分页遍历取全量**；`test_pagination_edge` 收紧为「超上限必须 422」。回退法验证：去掉上限 → 被抓；`fetch_all` 只取首页 → 被抓 |
 
 ---
 

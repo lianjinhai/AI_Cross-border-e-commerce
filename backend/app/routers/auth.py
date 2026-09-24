@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ..auth import create_token, get_current_user, hash_password, require_admin, verify_password
 from ..db import get_db
 from ..models import LoginAttempt, User
+from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -72,7 +73,7 @@ def me(user: User = Depends(get_current_user)):
 
 
 @router.get("/users")
-def list_users(page_num: int = 1, page_size: int = 20,
+def list_users(page_num: int = PageNum, page_size: int = PageSize,
                user: User = Depends(require_admin), db: Session = Depends(get_db)):
     q = db.query(User).filter(User.tenant_id == user.tenant_id)
     total = q.count()

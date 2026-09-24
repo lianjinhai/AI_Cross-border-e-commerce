@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from ..auth import get_current_user, require_write
 from ..db import get_db
 from ..models import Order, Product, RefundOrder, User, utcnow
+from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
 
 router = APIRouter(prefix="/refunds", tags=["refunds"])
@@ -78,7 +79,7 @@ def create_refund(body: RefundIn, user: User = Depends(require_write),
 
 
 @router.get("")
-def list_refunds(status: str = "", page_num: int = 1, page_size: int = 20,
+def list_refunds(status: str = "", page_num: int = PageNum, page_size: int = PageSize,
                  user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     q = db.query(RefundOrder).filter(RefundOrder.tenant_id == user.tenant_id)
     if status:

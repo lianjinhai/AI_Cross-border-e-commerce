@@ -866,3 +866,89 @@ NOT NULL 插入 NULL: 被拒绝 -> NOT NULL constraint failed
 - 日常开发改为「小步提交」，提交信息遵循 `<域>: <动作> <对象>`；
 - `main` 分支保护与远端仓库（GitHub/GitLab）**尚未配置**——属部署层事项，需负责人决定托管位置后执行；
 - CI（`.github/workflows/ci.yml`）现已被 Git 识别，但**仍需推送到远端才会真正触发**。
+
+---
+
+## D19：分页参数必须有上限 —— 静默截断会让「隔离比对」假绿（2026-09-24）
+
+### 一、问题（审计 #10 / DEBT-27）
+
+13 个列表端点的 `page_size: int = 20` **没有上界**，带来两个后果：
+
+1. **可被拉全表**：`page_size=10**9` 会把整表读进内存再序列化，是廉价 DoS 面；
+2. **静默截断更危险**：调用方用大 `page_size` 做「集合比对」时，
+   若实际数据比页大小多一条，返回的第一页**看起来完全正常**，漏掉的记录不会被发现。
+
+### 二、实测证据：测试库恰好卡在临界点
+
+修复前实测（临时探测用例，跑完即删）：
+
+| 端点 | `total` | `page_size=500` 取回 | 是否截断 |
+|---|---:|---:|---|
+| `/api/orders` | **500** | 500 | 否——**恰好相等** |
+| `/api/products` | 24 | 24 | 否 |
+| `/api/knowledge/docs` | 8 | 8 | 否 |
+
+**`total` 与硬编码的 500 完全相等**，意味着当时只是「侥幸没截断」：
+seed 一旦增加订单数，`test_security.py` 的跨租户订单比对与
+`test_deep_domains.py` 的利润恒等式核对就会**静默漏掉多出来的订单**（假绿）。
+
+**主库更能说明问题**：`security_data_audit.py` 里写死 `page_size=500` 并注释
+「演示库订单 500 条，分页取 500 应全覆盖」——而主库实际已有 **518 条**，
+即**最后 18 条从未被审计过**，脚本却仍会打印「已全覆盖」。这是自欺式通过。
+
+### 三、处置
+
+1. **新增 `app/pagination.py`**：`MAX_PAGE_SIZE = 200`，
+   `PageNum = Query(1, ge=1)`、`PageSize = Query(20, ge=1, le=MAX_PAGE_SIZE)`。
+2. **13 个列表端点**统一改用这两个依赖（`admin/auth/compliance/discovery/knowledge/
+   listings/orders/pricing/products/purchases/refunds/settlements/support`）。
+3. **上限取 200**：覆盖全部前端用法（最大 200，`views/Refunds.vue`），
+   并与既有 `limit` 类参数上限（`ai.py`/`listings.py`/`admin.py`）保持一致。
+4. **快速失败而非静默截断**：越界返回 **422**，强制调用方改成分页遍历。
+5. **提供遍历工具**：`tests/conftest.py` 新增 `fetch_all` 夹具，
+   `scripts/security_data_audit.py` 新增 `get_all`——按 `total` 逐页取完再合并，
+   并断言「取回条数 == total」，数据增长或并发写入都不会静默漏。
+
+### 四、修复后被测试立刻抓出的 3 处依赖「无上限」
+
+加上限后全量跑，**3 个测试当场失败**（`KeyError: 'items'`，即拿到 422）：
+
+| 测试 | 原写法 | 改法 |
+|---|---|---|
+| `test_security.py::test_cross_tenant_isolation` | `page_size=500` 比对订单集合 | 改 `fetch_all`（分页遍历） |
+| `test_security.py::test_data_consistency_after_flows` | `page_size=500` 取订单字典 | 改 `fetch_all` |
+| `test_deep_domains.py::test_order_profit_identity` | `page_size=500` 逐条核对利润 | 改 `fetch_all` |
+
+这正是上限约束的价值：**把「将来会静默出错」变成「现在立刻报错」。**
+
+### 五、回退法验证（证明守护有效）
+
+| 变异 | 期望 | 实测 |
+|---|---|---|
+| 去掉 `PageSize` 的 `le=MAX_PAGE_SIZE` | 测试失败 | ✅ `test_pagination_edge` 失败（`assert 200 == 422`） |
+| `fetch_all` 只取第一页（**保留**总数断言） | 测试失败 | ✅ 隔离测试与利润核对均失败 |
+| `fetch_all` 只取第一页（**同时删掉**总数断言） | — | ❌ **没被抓到** |
+
+**第三行是本轮最重要的教训**：变异时若把「被测逻辑」和「守护断言」一起改掉，
+等于自己拆掉了报警器，回退法会给出「守护无效」的假结论。
+**正确做法：只变异被测逻辑，保留断言**——第二次重做后立刻被抓到。
+
+### 六、规范固化
+
+| 编号 | 规则 |
+|---|---|
+| P-1 | 列表端点的 `page_size` 必须有上限（`app/pagination.py` 的 `MAX_PAGE_SIZE`），越界返回 422 |
+| P-2 | 需要全量数据时**必须分页遍历**（`fetch_all` / `get_all`），禁止用大 `page_size` 一把梭 |
+| P-3 | 遍历函数必须断言「取回条数 == total」，防止并发写入或分页缺陷导致的静默漏数据 |
+| P-4 | 审计/校验脚本**禁止抽样**：抽样得出的「无问题」结论不成立（主库 518 条却只审 500 条即为例证） |
+| T-14 | 回退法变异**只能改被测逻辑**，不得同时修改守护断言——否则报警器被自己拆掉，结论无效 |
+
+### 七、回归基线（2026-09-24 实测）
+
+| 项 | 结果 |
+|---|---|
+| 后端 `pytest -q` | **231 passed** |
+| `ruff check .` | All checks passed |
+| `e2e_feasibility.py` | **7 步全 PASS / exit=0**，主库隔离性成立（3169 行未变） |
+| 前端 `page_size` 用法 | 全部 ≤ 200，无需改动 |

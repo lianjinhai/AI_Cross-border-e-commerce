@@ -9,6 +9,7 @@ from ..agents.support import SupportAgent
 from ..auth import get_current_user, require_write
 from ..db import get_db
 from ..models import Conversation, Message, User
+from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
 
 router = APIRouter(prefix="/support", tags=["support"])
@@ -27,7 +28,7 @@ class ReplyIn(BaseModel):
 
 
 @router.get("/conversations")
-def list_conversations(status: str = "", page_num: int = 1, page_size: int = 20,
+def list_conversations(status: str = "", page_num: int = PageNum, page_size: int = PageSize,
                        user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     q = db.query(Conversation).filter(Conversation.tenant_id == user.tenant_id)
     if status:

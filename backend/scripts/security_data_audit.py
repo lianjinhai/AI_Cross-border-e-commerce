@@ -213,11 +213,34 @@ def get(path):
     return client.get(f"{BASE}{path}", headers=admin_h).json()
 
 
+def get_all(path: str, **params) -> list[dict]:
+    """分页遍历取回全量条目。
+
+    审计脚本必须取全量：`page_size` 有上限（`app/pagination.py` 的 200），
+    而「抽样」会让审计结论失真——实测主库订单已 518 条，
+    原先写死 `page_size=500` 时**最后 18 条从未被审计过**，
+    且脚本还会打印「已全覆盖」，属自欺式通过（审计 #10 / DEBT-27）。
+    """
+    from app.pagination import MAX_PAGE_SIZE
+
+    items: list[dict] = []
+    page_num = 1
+    while True:
+        query = {**params, "page_num": page_num, "page_size": MAX_PAGE_SIZE}
+        qs = "&".join(f"{k}={v}" for k, v in query.items())
+        body = get(f"{path}?{qs}")
+        items.extend(body["items"])
+        if len(items) >= body["total"] or not body["items"]:
+            break
+        page_num += 1
+    return items
+
+
 issues = []
 
 # 1. 退款单引用的订单存在且属于同租户
-refunds = get("/api/refunds?page_num=1&page_size=200")["items"]
-orders = {o["id"]: o for o in get("/api/orders?page_num=1&page_size=500")["items"]}
+refunds = get_all("/api/refunds")
+orders = {o["id"]: o for o in get_all("/api/orders")}
 for rf in refunds:
     o = orders.get(rf["order_id"])
     if o is None:
@@ -234,7 +257,7 @@ for rf in refunds:
         issues.append(f"退款单 {rf['refund_no']} 金额 {rf['amount']} 超过订单总额 {o['amount']}")
 
 # 3. 采购单 ↔ 结算单关联完整性
-settlements = get("/api/settlements?page_num=1&page_size=200")["items"]
+settlements = get_all("/api/settlements")
 st_ids = {s["id"] for s in settlements}
 summary = {x["supplier_name"]: x for x in get("/api/settlements/summary")["items"]}
 for s in settlements:
@@ -261,11 +284,12 @@ dash = get("/api/bi/dashboard")
 non_refund = [o for o in orders.values() if o["status"] != "refunded"]
 api_gmv = round(sum(o["amount"] for o in non_refund), 2)
 dash_gmv = float(dash["gmv"])
-# 演示库订单 500 条，分页取 500 应全覆盖；若 total>500 则抽样说明
+# 订单已由 get_all 全量取回，故此处必然是全量比对（不再有「抽样」分支）
 total_orders = get("/api/orders?page_num=1&page_size=1")["total"]
-if total_orders <= 500:
-    if abs(api_gmv - dash_gmv) > max(1.0, dash_gmv * 0.01):
-        issues.append(f"BI GMV {dash_gmv} 与订单明细合计 {api_gmv} 偏差过大")
+if len(orders) != total_orders:
+    issues.append(f"订单取回 {len(orders)} 条与 total={total_orders} 不一致（分页遍历有缺陷）")
+if abs(api_gmv - dash_gmv) > max(1.0, dash_gmv * 0.01):
+    issues.append(f"BI GMV {dash_gmv} 与订单明细合计 {api_gmv} 偏差过大")
 
 # 7. 供应商汇总：summary 的供应商都真实存在
 sup_names = {s["name"] for s in get("/api/suppliers")["items"]}

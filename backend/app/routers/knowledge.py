@@ -7,6 +7,7 @@ from ..ai.knowledge import retrieve
 from ..auth import get_current_user, require_write
 from ..db import get_db
 from ..models import KnowledgeDoc, User
+from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
@@ -21,7 +22,7 @@ class DocIn(BaseModel):
 
 
 @router.get("/docs")
-def list_docs(keyword: str = "", page_num: int = 1, page_size: int = 20,
+def list_docs(keyword: str = "", page_num: int = PageNum, page_size: int = PageSize,
               user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     q = db.query(KnowledgeDoc).filter(KnowledgeDoc.tenant_id == user.tenant_id)
     if keyword:
