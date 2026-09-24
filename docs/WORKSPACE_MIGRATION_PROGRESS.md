@@ -156,7 +156,7 @@ Phase 1 解除条件核对：
 | R-03 | 40 张含 `tenant_id` 的表缺外键 | P1 | **未完成** | 实测：43 张含 `tenant_id`，仅 3 张声明 `FK → tenants`，**缺 40 张**。导致 `foreign_key_check=0` 不能作为租户隔离合规证明（DEBT-03） |
 | R-04 | `workspace_profiles.owner_user_id` 全为 NULL | P2 | **未完成** | 实测：2 行，`owner_user_id` **均为 NULL**（未回填）。Workspace 所有者字段在 Phase 1 未被写入，Phase 2 引入 Workspace 管理界面时补齐 |
 | R-05 | `membership_data_scopes` 0 行 | P2 | **未完成** | 实测 0 行。Guardrail 第二道闸（数据范围）暂无数据支撑，Phase 2 落地时填充 |
-| R-06 | tenants 中 5 个 `probe tenant` 测试残留（id 2,3,4,5,7） | P2 | **未完成** | 实测 7 个租户：id 1 演示商家、2/3/4/5/7 为 probe tenant、6 为隔离测试租户。建议随 Phase 2 清理 |
+| R-06 | ~~tenants 中 5 个 `probe tenant` 测试残留（id 2,3,4,5,7）~~ | ~~P2~~ | ✅ **已完成（2026-09-24）** | 实测仅剩 2 个租户（id 1 演示商家、id 6 隔离测试租户）；5 个 probe tenant 及其 25 行关联数据已清理（清理前冷备 `_erp_backups/erp-20260924-010314-pre-probe-cleanup.db`）。**残余**：`users` 2 / `products` 13 / `schedules` 11 行仍是 probe 命名，见下方「主库残余测试数据」 |
 | R-07 | ~~前端 `routeRedirect` 基于 legacy `erp_user.role`~~ | ~~P2~~ | ✅ **已完成（2026-09-24）** | 路由分流与菜单权限已切 Context 优先：① `permissions.js` 新增 `resolveIdentity()`，**Context 无条件优先**，legacy 仅兜底（`routeRedirect`/`defaultLanding`/`/login` 分支全部走它）；② 守卫同时传 `user`（兜底）与 `context`（权威）；③ `Layout.vue` 菜单判断改 `roleKey()`；④ `Users.vue` 改用 `contextUserId()`；⑤ `PlatformAdmin.vue` 改 `roleKey()==='PLATFORM_ADMIN'` 且代客不再伪造 legacy 角色。**legacy 保留为兜底**（工厂账号 `/api/me/*` 403 属既有契约 G-3，见 `permissions.js` 文件头），删除入口待工厂 Context 通道落地 |
 | R-08 | ~~`backend/` 根目录 3 个 `.db`（其中 2 个无引用）~~ | ~~P2~~ | ✅ **已完成** | 实测仅剩 `erp.db`；测试库已改 PID 隔离并自动清理 |
 | R-09 | ~~`docs/` 活文档与一次性报告混放~~ | ~~P2~~ | ✅ **已完成** | 11 篇活文档 / 14 篇已归档（`docs/archive/`）；活跃文档失效引用已归零 |
@@ -185,5 +185,35 @@ Phase 1 解除条件核对：
 > （sha256 `4121CCAE...7B1F94`）。清理后 `integrity ok` / FK 违规 0 / 预检 12 项全 PASS。
 > **教训**：测试若跑在业务库上会留下永久污染；现已强制测试库隔离（`test_erp_<pid>.db`），
 > 新增测试**禁止**连接 `backend/erp.db`。
+
+### 主库残余测试数据（2026-09-24 15:04 处置）
+
+**新发现的真问题**：11 个测试残留的计划任务（10 个 `probe` + 1 个 `验收-趋势扫描`）
+**处于 `enabled=1` 状态、每小时真实执行**，已累计 50 次以上。
+这不是静态脏数据，而是**正在持续运行的后台任务**——每次启动服务都会触发。
+
+| 项 | 处置前 | 处置后 |
+|---|---:|---:|
+| `schedules` 中 `enabled=1` | **12** | **1**（仅合法的「每日市场趋势扫描」） |
+| 主库总行数 | 3,169 | 3,169（**未删任何行**） |
+| `integrity_check` | ok | ok |
+| `foreign_key_check` 违规 | 0 | 0 |
+| 预检 | 12 项全 PASS | 12 项全 PASS |
+| `e2e_feasibility` | 7 步全 PASS | 7 步全 PASS |
+
+**处置方式**：仅 `UPDATE schedules SET enabled = 0`（**可逆、不删行**），
+处置前冷备 `backend/backups/erp-20260924-150445.db`。
+行保留的原因：`run_count` / `last_run_at` 是排查线索，删掉会丢失取证信息。
+
+**仍存在的静态残余**（未处置，属"脏演示数据"）：
+
+| 表 | 数量 | 内容 |
+|---|---:|---|
+| `users` | 2 | `probe-user-tmp`、`probe_x`（另有 `compliance_test`、`factory_portal_test` 属功能验证账号） |
+| `products` | 13 | 10 条 `probe item`、2 条「门禁验证商品 无图」、2 条「权限探针」 |
+| `schedules` | 11 | 上述已停用的 `probe` 任务（保留取证） |
+
+**未处置原因**：删除会牵动 `compliance_reports` / `product_scores` / `listings` /
+`orders` 等外键链，属主库写操作，需先出清理方案再执行。**已登记待裁决**。
 
 > 完整债务台账见 `docs/CODE_AND_DIRECTORY_STANDARD.md` §11。
