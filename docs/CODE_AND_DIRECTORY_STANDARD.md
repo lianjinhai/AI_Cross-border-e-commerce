@@ -63,7 +63,13 @@ AI-电商ERP/
 │   │   ├── auth.py  config.py  db.py  main.py  seed.py
 │   │   └── serialize.py  secure_types.py
 │   ├── migrations/versions/        # Alembic 迁移（只增不改）
-│   ├── scripts/                    # 【运维】迁移/备份/审计脚本，不参与运行时
+│   ├── scripts/                    # 【运维】迁移/备份/审计/验证脚本，不参与运行时
+│   │   ├── migration_preflight.py       # 迁移前 12 项预检
+│   │   ├── backup_restore_drill.py      # 冷备与恢复演练
+│   │   ├── live_acceptance.py           # 真服务业务闭环验收（7 步）
+│   │   ├── e2e_feasibility.py           # 端到端可行性（真启动 + 隔离性校验）
+│   │   ├── docker_feasibility.py        # Docker 镜像可行性（真构建 + 真运行 + 真登录）
+│   │   └── security_data_audit.py       # 权限矩阵与数据一致性审计
 │   ├── tests/                      # 测试
 │   │   ├── conftest.py             # 共享夹具（库隔离 + client + auth_headers + 状态自愈），
 │   │   │                           #   禁止任何测试模块跨文件 import 夹具（§8 T-2）
@@ -274,6 +280,7 @@ frontend/node_modules/  frontend/dist/     frontend/.zcode/
 | T-15 | **需要全量数据时必须分页遍历**（`tests/conftest.py::fetch_all`、`scripts/security_data_audit.py::get_all`），禁止用大 `page_size` 一把梭；遍历函数必须断言「取回条数 == total」 |
 | T-16 | **审计/校验脚本禁止抽样**：抽样得出的「无问题」结论不成立。实测主库订单 518 条而脚本只取 500 条，最后 18 条从未被审计却仍打印「已全覆盖」 |
 | T-17 | 测试**禁止**在业务库创建 `schedules` 记录；确需验证调度逻辑必须用测试库并断言清理。**排查主库异常时必须检查 `schedules.enabled`**——残留任务会持续运行，不会被「不查询」规避（见 D20） |
+| T-18 | **新增验证脚本后必须逐项用回退法验证每个检查点的判别力**：「整体通过」不代表每个检查点都有效。实测 `docker_feasibility.py` 首版的「依赖版本比对」就检不出「Dockerfile 没引用锁定清单」（兼容区间恰好解析出相同版本），补结构检查后才有效（见 D21） |
 
 > **T-4 说明**：本轮修复中，`test_security.py` 曾把「superadmin 可访问租户业务 API」固化为正确行为，`test_api.py` 曾把「租户停用」误断言为「租户到期」。两者都是断言与语义脱节，属于**测试在保护错误行为**，比缺测试更危险。
 
@@ -473,6 +480,7 @@ python -m ruff format .         # 格式化
 - [ ] 测试可重复（同一库连跑两次全绿）且可并发（多进程各自独立库）
 - [ ] 涉及结构变更时 `scripts/migration_preflight.py` 12 项全 PASS（P0 未清零不得执行）
 - [ ] 涉及"可运行/可部署"的结论时，已真启动服务跑过 `scripts/live_acceptance.py` 且全 PASS（T-13）
+- [ ] 改动构建链路（`Dockerfile` / 依赖文件 / `.gitattributes` / 入口脚本）后，已跑 `scripts/docker_feasibility.py` 且 11 项全 PASS（DP-1 / DP-2）
 - [ ] 偏离规范的实现已在 `docs/DECISIONS.md` 记录
 - [ ] 相关文档已同步（`CONTRACT.md` / Agent OS 架构 / 本文件）
 

@@ -1014,3 +1014,112 @@ WHERE name LIKE '%probe%' OR name LIKE '%验收%';
 主库仍有 2 个 probe 用户与 13 个 probe 商品（静态脏数据，未处置）：
 删除会牵动 `compliance_reports` / `product_scores` / `listings` / `orders` 外键链，
 需先出清理方案（含拓扑序删除）再执行。**已登记，待裁决。**
+
+
+---
+
+## D21：Docker 生产镜像端到端实测 —— 从「构建通过」到「真的能跑」（2026-09-24）
+
+### 一、为什么必须做这一步
+
+D8 定下了生产部署基线（compose 门禁、容器跑迁移、HEALTHCHECK、非 root 用户），
+但此后**从未实测过完整镜像**。而本轮改动（依赖锁定、`.gitattributes` 行尾策略）
+恰好都落在构建链路上：
+
+- `Dockerfile` 从 `requirements.txt` 改为 `requirements.lock.txt`；
+- `.gitattributes` 新锁定 `*.sh` 为 LF。
+
+两者任一失效，都会造成「本地测试全绿、镜像起不来」。因此必须真构建 + 真运行。
+
+### 二、实测过程与结果
+
+| 步骤 | 命令/方式 | 结果 |
+|---|---|---|
+| 前端构建 | `npm run build` | ✅ 27.57s 成功 |
+| 镜像构建 | `docker build --target runtime -t ai-erp-verify:latest .` | ✅ exit=0 |
+| 依赖版本核对 | 容器内 `pip list` | ✅ fastapi 0.141.1 / uvicorn 0.53.0 / starlette 1.7.0 / alembic 1.20.0 —— **与锁定清单逐项一致** |
+| 生产镜像纯净性 | 容器内查 `pytest` / `ruff` | ✅ **均不存在**（验证「pytest 移出运行时依赖」生效） |
+| 入口脚本行尾 | `od -c /usr/local/bin/docker-entrypoint.sh` | ✅ 首行 `# ! / b i n / s h \n` —— **LF，非 CRLF**（`.gitattributes` 生效） |
+| 容器启动 | `docker run` + 生产模式三项必填密钥 | ✅ 启动成功，entrypoint 自动跑完迁移（日志见下） |
+| 健康检查 | `GET /api/health` | ✅ 200 `{"ok":true,"app":"AI-Commerce ERP"}` |
+| 静态前端 | `GET /` | ✅ 200，945 字节 |
+| **真实登录** | `POST /api/auth/login`（用 `ERP_ADMIN_PASSWORD` 设的口令） | ✅ 200，user=admin |
+| **业务接口** | `GET /api/products?page_size=5`（带 token） | ✅ 200，total=24，取回 5 |
+
+容器内迁移日志（entrypoint 自动执行）：
+
+```
+[Revision 14] knowledge_candidates 已存在，跳过
+[Revision 15] permissions 新增 compliance:check
+[Revision 15] 已插入权限映射: ['OWNER->compliance:check', ...]
+[entrypoint] 启动应用：python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+数据卷 `/data` 正常生成 `erp.db` + `-shm` + `-wal`（WAL 模式生效），属主为 `erp`（非 root）。
+
+### 三、过程中的一个「假失败」
+
+首轮用 `-p 18080:8000` 映射端口，容器内 `GET /api/health` 明明 200，
+宿主机访问却 **404**。排查发现 **18080 被本机另一个项目的 node 服务占用**
+（`D:
+odejs
+ode.exe`，PID 3864）——与本项目无关。
+
+换随机空闲端口后全部通过。**教训**：本机并行跑着多个项目，
+做端口相关验证时必须**动态取空闲端口**，不能写死常见端口；
+否则会把「端口冲突」误判为「应用起不来」。
+
+### 四、规范固化
+
+| 编号 | 规则 |
+|---|---|
+| DP-1 | 改动构建链路（`Dockerfile` / 依赖文件 / `.gitattributes` / 入口脚本）后，**必须真构建镜像并真运行容器**，不能只跑单元测试 |
+| DP-2 | 容器验证必须覆盖：依赖版本与锁定清单一致、生产镜像不含测试工具、入口脚本为 LF、健康检查 200、**真实登录 + 一个业务接口调用** |
+| DP-3 | 端口相关验证必须**动态取空闲端口**（`socket.bind(("127.0.0.1", 0))`），不得写死——本机并行项目会占用常见端口，导致误判 |
+
+### 五、边界（未做的事，避免误读为「已可上线」）
+
+- **TLS 仍未落地**（DEBT-23）：容器可运行 ≠ 可对外暴露，必须置于 TLS 终止代理之后；
+- 本次验证在**本机 Docker Desktop** 完成，未在真实云主机/编排环境验证；
+- 镜像验证后已清理（`docker rmi`），未留残留镜像或容器。
+
+### 六、固化：`scripts/docker_feasibility.py`（11 项检查，一条命令复验）
+
+上述验证已固化为脚本，避免下次改构建链路又要临时拼命令：
+
+```bash
+cd backend && python scripts/docker_feasibility.py            # 完整：构建 + 运行
+cd backend && python scripts/docker_feasibility.py --skip-build  # 复用镜像
+```
+
+检查项：前端产物 / Dockerfile 引用锁定清单 / 镜像构建 / 依赖版本逐项一致 /
+不含 pytest·ruff / 入口脚本 LF / 容器启动 / 健康检查 / 静态前端 /
+真实登录 / 业务接口调用。
+
+### 七、回退法验证（含一条"检查项不足"的教训）
+
+| 变异 | 期望 | 实测 |
+|---|---|---|
+| 镜像内额外 `pip install pytest` | 失败 | ✅ `[FAIL] 不含 pytest/ruff` |
+| 锁文件把 `fastapi` 钉到 0.115.0 | 失败 | ✅ 构建阶段即失败（exit=3），也算检出 |
+| **Dockerfile 改回用 `requirements.txt`**（无锁定） | 失败 | ❌ **第一版没被抓到** |
+
+**第三行是重要教训**：`requirements.txt` 的兼容上限（`fastapi>=0.115,<1.0`）
+恰好解析出了与锁定清单**相同的版本**，于是"版本比对"通过——
+**脚本只能验「装了什么」，验不出「装的是不是锁定清单」**。
+这属于「检查项覆盖不足」，不是脚本 bug：锁定清单的价值在于**确定性**，
+而"这次恰好解析一致"不代表下次也一致。
+
+补了一项**结构检查**（`Dockerfile` 必须引用 `requirements.lock.txt`）后重跑同一变异，
+立刻被检出。**两项互补**：一个验「装的是锁定清单」，一个验「装的版本对得上」。
+
+> 与 D19 的 T-14 是同一条原则的两个侧面：
+> T-14 说"变异时别把报警器一起拆掉"；
+> 这里说"报警器本身可能测不到你想测的东西，必须用变异验证它的覆盖范围"。
+
+### 八、补充规范
+
+| 编号 | 规则 |
+|---|---|
+| DP-4 | 验证"是否使用了锁定清单"必须做**结构检查**（如 grep Dockerfile），不能只比对安装结果——兼容区间可能恰好解析出相同版本 |
+| DP-5 | 新增任何验证脚本后，必须用**回退法逐项验证每个检查点的判别力**；"整体通过"不代表每个检查点都有效 |

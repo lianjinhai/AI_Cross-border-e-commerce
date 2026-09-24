@@ -120,6 +120,9 @@ python -m pytest -q          # 231 个测试用例（含发布恢复、代发幂
 
 # 端到端可行性验证：真启动服务 + 真实 HTTP + 静态前端检查（在数据库副本上跑，不碰业务库）
 python scripts/e2e_feasibility.py
+
+# Docker 生产镜像可行性验证：真构建 + 真运行 + 真登录（需 docker）
+python scripts/docker_feasibility.py
 ```
 
 ### 数据库迁移
