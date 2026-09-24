@@ -151,7 +151,7 @@ Phase 1 解除条件核对：
 
 | 编号 | 事项 | 严重度 | 状态 | 说明 |
 |---|---|---|---|---|
-| R-01 | 仓库未纳入 Git | **P0** | **未完成** | 无版本控制，`.gitignore` 与 CI 未生效；需负责人确认后 `git init`（规范 §1） |
+| R-01 | ~~仓库未纳入 Git~~ | ~~**P0**~~ | ✅ **已完成（2026-09-24）** | 已 `git init -b main` + 首次提交 `6215d49`（208 文件 / 0.87 MB / `fsck` 干净）；提交前补齐 `.gitignore` 冷备目录与临时脚本缺口，新增 `.gitattributes` 锁定 LF 行尾（防 `docker-entrypoint.sh` 变 CRLF 导致容器 `bad interpreter`） |
 | R-02 | ~~P1-10 Setting 隔离未实施~~ | ~~P1~~ | ✅ **已完成** | 迁移 `20260923_10_setting_scope.py` 已执行；`services/settings_service.py` 三级回退 + 写入按 key 分流；5 项测试通过 |
 | R-03 | 40 张含 `tenant_id` 的表缺外键 | P1 | **未完成** | 实测：43 张含 `tenant_id`，仅 3 张声明 `FK → tenants`，**缺 40 张**。导致 `foreign_key_check=0` 不能作为租户隔离合规证明（DEBT-03） |
 | R-04 | `workspace_profiles.owner_user_id` 全为 NULL | P2 | **未完成** | 实测：2 行，`owner_user_id` **均为 NULL**（未回填）。Workspace 所有者字段在 Phase 1 未被写入，Phase 2 引入 Workspace 管理界面时补齐 |
@@ -161,7 +161,8 @@ Phase 1 解除条件核对：
 | R-08 | ~~`backend/` 根目录 3 个 `.db`（其中 2 个无引用）~~ | ~~P2~~ | ✅ **已完成** | 实测仅剩 `erp.db`；测试库已改 PID 隔离并自动清理 |
 | R-09 | ~~`docs/` 活文档与一次性报告混放~~ | ~~P2~~ | ✅ **已完成** | 11 篇活文档 / 14 篇已归档（`docs/archive/`）；活跃文档失效引用已归零 |
 
-**剩余 4 项**：R-01（P0，需你确认 `git init`）、R-03（P1，Phase 2 结构收敛）、R-04 / R-05（P2，Phase 2 处理）。
+**剩余 3 项**：R-03（P1，Phase 2 结构收敛）、R-04 / R-05（P2，Phase 2 处理）。
+**R-01 已于 2026-09-24 完成**（仓库纳入 Git，唯一 P0 债务清零）。
 **R-07 已于 2026-09-24 完成**（Phase 1.8 前端 Context 接入收口）。
 
 ### Phase 1.8 完成度（2026-09-24）

@@ -799,3 +799,70 @@ NOT NULL 插入 NULL: 被拒绝 -> NOT NULL constraint failed
 
 **已留档**：`backend/backups/erp-20260924-131822.db`（含变异残留，可追溯）与
 `erp-20260924-131713.db`（干净基线）。两者均保留，不删除。
+
+---
+
+## D18：仓库纳入 Git —— 唯一 P0 债务清零（2026-09-24）
+
+### 一、背景
+
+自项目启动以来仓库**无 `.git`**（见规范 §1、DEBT-01、R-01）。后果：
+
+- `.gitignore` / `.dockerignore` / `.github/workflows/ci.yml` **全部未生效**；
+- 唯一回滚手段是手工冷备，**代码本身无任何版本历史**；
+- 并行工具（zcode）与主代理反复发生「文件同改、迁移编号撞车」，无冲突检测能力。
+
+`git init` 按规范 §1 须由项目负责人确认。本次获得明确授权（用户「按你推荐的来」）后执行。
+
+### 二、执行前的安全体检（先查后做，全部实测）
+
+| 检查项 | 方法 | 结果 |
+|---|---|---|
+| 危险文件是否会被入库 | `git add --dry-run .` 逐项核对 | 208 文件中 `.db` / `-wal` / `node_modules` / `dist` / `.log` / 临时脚本**均 0 命中** |
+| 密钥泄漏 | 正则扫描 `AKIA*` / `sk-*` / PEM 私钥 / `secret=` 赋值 | **0 命中**；`.env.example` 全为占位符 |
+| 忽略规则是否覆盖冷备 | `git check-ignore -v` 逐项实测 | 补齐后 10 项关键路径全部命中 |
+| 行尾一致性 | 扫描 197 个文本文件 | 181 LF / 2 CRLF / **14 混合**；`core.autocrlf=true` |
+
+### 三、发现并修复的三个真实隐患（**若不体检就会踩**）
+
+1. **`.gitignore` 缺口：冷备目录完全未覆盖。**
+   `backend/backups/`（10 个 2.3 MB 冷备库）、`_erp_backups/`、`_wip_backup/` 都不在忽略列表。
+   原因：`backend/*.db` **不匹配子目录**。若直接提交，会一次性灌入约 25 MB 数据库文件。
+   → 已显式声明三个目录。
+
+2. **`.gitignore` 缺口：临时脚本与变异残留。**
+   根目录 `_h.py` / `_w.py` / `_chk*.py`（一次性探测脚本）与 `test_api.py.orig`
+   （回退法残留备份）会被入库。→ 已加 `/_*.py`、`*.orig`、`*.bak`、`*.rej`。
+
+3. **`docker-entrypoint.sh` 会被写成 CRLF，容器启动即失败。**
+   本机 `core.autocrlf=true`，而该文件仓库内为 LF。检出到 Linux 时变成 CRLF，
+   容器报 `bad interpreter: /bin/sh^M`——**这是「本地一切正常、部署就崩」的典型缺陷**。
+   → 新增 `.gitattributes`：`* text=auto eol=lf`，`*.sh` / `Dockerfile` 强制 LF，
+   `*.db` 等声明 `binary`，`package-lock.json` 折叠 diff。
+
+### 四、执行结果
+
+| 指标 | 值 |
+|---|---|
+| 命令 | `git init -b main` |
+| 首次提交 | `6215d49` — `chore: 首次纳入版本控制（R-01）` |
+| 纳入文件 | **208 个**（`backend/` + `frontend/` + `docs/` + 部署与协作配置） |
+| `.git` 体积 | **0.87 MB**（223 objects） |
+| `git fsck` | 干净（exit 0） |
+| 提交后工作区 | 干净（0 未跟踪 / 0 修改） |
+| 忽略规则实测 | 11 项关键路径中 10 项命中；唯一「未忽略」为 `.env.example`（**应当入库**，是模板） |
+
+### 五、规范固化
+
+| 编号 | 规则 |
+|---|---|
+| V-1 | 冷备目录（`backend/backups/`、`_erp_backups/`、`_wip_backup/`）、根目录 `_*.py`、`.orig`/`.bak`/`.rej` **一律禁止入库**；`.gitignore` 与 `.dockerignore` 必须**双写** |
+| V-2 | 新增任何「子目录下的产物」时，必须实测 `git check-ignore -v <路径>`——通配符**不跨目录**，`backend/*.db` 挡不住 `backend/backups/x.db` |
+| V-3 | 行尾由 `.gitattributes` 锁定 LF；shell 脚本与 `Dockerfile` 一旦变成 CRLF，容器会 `bad interpreter` |
+| V-4 | 首次提交（或大范围 `git add`）前，必须先 `git add --dry-run` 核对清单，确认危险文件 0 命中后才提交 |
+
+### 六、后续
+
+- 日常开发改为「小步提交」，提交信息遵循 `<域>: <动作> <对象>`；
+- `main` 分支保护与远端仓库（GitHub/GitLab）**尚未配置**——属部署层事项，需负责人决定托管位置后执行；
+- CI（`.github/workflows/ci.yml`）现已被 Git 识别，但**仍需推送到远端才会真正触发**。

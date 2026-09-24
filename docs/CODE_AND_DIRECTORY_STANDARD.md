@@ -22,20 +22,22 @@
 
 ## 1. 最高优先级：纳入版本控制（P0）
 
-**现状**：本目录**不是 Git 仓库**（全树无 `.git`）。这意味着：
+**现状（2026-09-24 更新）**：本目录**已纳入 Git**（`git init -b main`，首次提交 `6215d49`，208 文件 / 0.87 MB）。此前长期处于无版本控制状态，问题如下（保留作为历史记录）：
 
-- `.gitignore` 与 `.dockerignore` 当前**完全未生效**；
+- `.gitignore` 与 `.dockerignore` 当时**完全未生效**；
 - `.github/workflows/ci.yml` 的 push/PR 触发**永远不会执行**；
-- 任何一次误删、误改都无法回溯——目前唯一的回滚手段是手工冷备（见 `docs/backup_restore_runbook.md`）。
+- 任何一次误删、误改都无法回溯——当时唯一的回滚手段是手工冷备（见 `docs/backup_restore_runbook.md`）。
 
 **规范**：
 
-1. 仓库根目录必须存在 `.git`，且 `main` 分支受保护。
+1. 仓库根目录必须存在 `.git`，且 `main` 分支受保护。✅ 已满足
 2. 任何超过 1 小时的开发任务开始前，工作区必须处于「已提交或已 stash」状态。
 3. 禁止提交：`*.db`、`node_modules/`、`dist/`、`__pycache__/`、`.pytest_cache/`、`.env`、`.zcode/`、`nul`。
 4. 提交信息格式：`<域>: <动作> <对象>`，例如 `workspace: 修复 superadmin 越权写入`。
+5. 冷备目录（`backend/backups/`、`_erp_backups/`、`_wip_backup/`）、根目录 `_*.py` 一次性脚本、`.orig` / `.bak` 变异残留，**一律禁止入库**（已在 `.gitignore` 显式声明）。
+6. 行尾由 `.gitattributes` 统一锁定为 LF；`*.sh` / `Dockerfile` 强制 LF，`*.db` 等声明为 `binary`。
 
-> **执行提示**：`git init` 属破坏性不可逆操作范畴的「新起点」，须由项目负责人确认后执行；执行后首次提交前必须先确认 `.gitignore` 覆盖完整（§7）。
+> **执行提示**：`git init` 属破坏性不可逆操作范畴的「新起点」，须由项目负责人确认后执行；执行后首次提交前必须先确认 `.gitignore` 覆盖完整（§7）。本次已按此执行：提交前用 `git add --dry-run` 逐项核对，确认 `.db` / `node_modules` / `dist` / 日志 / `.env` / 冷备目录 / 临时脚本均为 0 命中后才提交。
 
 ---
 
@@ -393,7 +395,7 @@ python -m ruff format .         # 格式化
 
 | 编号 | 债务 | 严重度 | 涉及文件 | 整改时机 |
 |---|---|---|---|---|
-| DEBT-01 | 仓库未纳入版本控制 | **P0** | 仓库根 | **待负责人确认后 `git init`**（`.gitignore` 已补齐 4 项遗漏） |
+| DEBT-01 | ~~仓库未纳入版本控制~~ | ~~**P0**~~ | 仓库根 | ✅ **已完成（2026-09-24）**：`git init -b main` + 首次提交 `6215d49`（208 文件 / 0.87 MB / `fsck` 干净）。提交前补齐 `.gitignore` 冷备目录、`_*.py`、`.orig/.bak` 缺口，并新增 `.gitattributes` 锁定行尾 |
 | DEBT-02 | ~~`tenant_id=0` 孤儿业务数据 37 行 / 12 张表~~ | ~~P0~~ | `backend/erp.db` | ✅ **已完成**：已清零（含根因修复：superadmin 越权写入 + 审计脚本护栏） |
 | DEBT-03 | 40 张含 `tenant_id` 的表缺外键约束 | **P1** | `migrations/` | Phase 2 结构收敛 |
 | DEBT-04 | ~~无 lint/format 配置与门禁~~ | ~~P1~~ | 全仓 | ✅ **已完成**：已配 `backend/pyproject.toml` + `requirements-dev.txt`，`ruff check` 全绿并接入 CI |

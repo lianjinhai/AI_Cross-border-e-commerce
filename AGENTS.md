@@ -19,10 +19,10 @@
 ### 常用命令
 
 ```bash
-# 后端测试（基线：131 passed）
+# 后端测试（基线：231 passed）
 cd backend && python -m pytest -q
 
-# 前端测试（基线：18 passed）与构建
+# 前端测试（基线：67 passed）与构建
 cd frontend && npm test && npm run build
 
 # 启动服务（开发）
@@ -30,6 +30,9 @@ cd backend && python -m uvicorn app.main:app --port 8000
 
 # 代码检查（只检查不改动）
 cd backend && python -m ruff check .
+
+# 端到端可行性验证（真启动服务 + 隔离性校验，不碰主库）
+cd backend && python scripts/e2e_feasibility.py
 ```
 
 ## 2. 开工前必做
@@ -44,10 +47,12 @@ cd backend && python -m ruff check .
 
 ## 3. 版本控制（P0）
 
-**当前仓库尚未纳入 Git**（无 `.git`），意味着 `.gitignore` 与 CI 均未生效，误改无法回溯。
+**仓库已纳入 Git**（2026-09-24 首次提交 `6215d49`，分支 `main`）。`.gitignore` 与 CI 均已生效。
 
-- 任务开始前必须确认有可用的回滚手段（冷备或 Git 提交）。
+- 任务开始前必须确认有可用的回滚手段（Git 提交；涉及主库数据时仍须**先冷备**）。
 - **禁止**提交：`*.db`、`node_modules/`、`dist/`、`__pycache__/`、`.pytest_cache/`、`.env`、`.zcode/`、`nul`。
+- 冷备目录（`backend/backups/`、`_erp_backups/`）与根目录 `_*.py` 临时脚本**禁止**入库，已由 `.gitignore` 覆盖。
+- 行尾由 `.gitattributes` 统一为 LF；`docker-entrypoint.sh` 等脚本若变成 CRLF，容器会报 `bad interpreter`。
 - 提交信息：`<域>: <动作> <对象>`，例如 `workspace: 修复 superadmin 越权写入`。
 
 ## 4. 分层与依赖红线
@@ -128,7 +133,9 @@ routers/ -> agents/ -> tools/ -> services/ -> models.py
 - [ ] 文件与函数规模未超阈值
 - [ ] 结构变更走迁移且 `downgrade()` 可用
 - [ ] 新增能力带测试；权限改动已更新权限矩阵
-- [ ] `pytest -q` 不低于 131 passed；`npm test` 不低于 18 passed
+- [ ] `pytest -q` 不低于 231 passed（反序跑同样）；`npm test` 不低于 67 passed；`ruff check` 全绿
+- [ ] 涉及「可运行/可部署」结论时，已跑 `scripts/e2e_feasibility.py` 且全 PASS（T-13）
+- [ ] 工作区已提交（§3）；提交前用 `git add --dry-run` 核对无 `.db` / 冷备 / 日志 / 临时脚本混入
 - [ ] 偏离规范的实现已在 `docs/DECISIONS.md` 记录
 - [ ] 相关文档已同步
 
