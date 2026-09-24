@@ -25,6 +25,16 @@
 
 **Phase 1 主库迁移：已执行完成（含 Revision D/E）。**
 
+### 部署层（Phase 1 之外的 P0 债务，2026-09-24 收口）
+
+| 债务 | 状态 | 结果 |
+|---|---|---|
+| DEBT-23 无 HTTPS / 反向代理 | ✅ **已完成** | Caddy 自动 ACME + TLS 覆盖层；应用侧两道闸（`ERP_TRUST_PROXY_HEADERS` + `ERP_TRUSTED_PROXY_HOSTS`）；新增 `scripts/tls_feasibility.py`（真 HTTPS 端到端 8 项全 PASS）。**上一版改动藏的 3 个真实缺陷已修**，详见 `docs/DECISIONS.md` D22 |
+
+> **验证方式**：`cd backend && python scripts/tls_feasibility.py`（真 Caddy +
+> 真应用容器，离线可用自签证书）。8 项含「应用真的采信转发头」——
+> 只验「HTTPS 能通」会漏掉该缺陷。
+
 ## 主库实际状态（2026-09-24 11:40 实测）
 
 | 指标 | 值 |

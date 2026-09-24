@@ -1079,7 +1079,9 @@ ode.exe`，PID 3864）——与本项目无关。
 
 ### 五、边界（未做的事，避免误读为「已可上线」）
 
-- **TLS 仍未落地**（DEBT-23）：容器可运行 ≠ 可对外暴露，必须置于 TLS 终止代理之后；
+- **TLS 已于 D22 落地**（DEBT-23 完成）：本节的「容器可运行」结论仍不等于
+  「可对外暴露」——TLS 配置由 `docker-compose.tls.yml` + `Caddyfile` 提供，
+  需按 `scripts/tls_feasibility.py` 验证后使用（见 D22）；
 - 本次验证在**本机 Docker Desktop** 完成，未在真实云主机/编排环境验证；
 - 镜像验证后已清理（`docker rmi`），未留残留镜像或容器。
 
