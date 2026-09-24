@@ -46,7 +46,8 @@
 ```bash
 # 1. 后端
 cd backend
-pip install -r requirements.txt
+# 锁定版本安装：与 CI、Docker 镜像完全一致（可复现）
+pip install -r requirements-dev.lock.txt
 
 # 2. 构建前端（首次）
 cd ../frontend
@@ -115,7 +116,10 @@ docker compose up -d --build           # SQLite 版，数据持久化在 erp-dat
 
 ```bash
 cd backend
-python -m pytest -q          # 139 个测试用例（含发布恢复、代发幂等、财务结算、预测评估、工厂机会归因、店铺归档与配置隔离）
+python -m pytest -q          # 231 个测试用例（含发布恢复、代发幂等、财务结算、预测评估、工厂机会归因、店铺归档与配置隔离）
+
+# 端到端可行性验证：真启动服务 + 真实 HTTP + 静态前端检查（在数据库副本上跑，不碰业务库）
+python scripts/e2e_feasibility.py
 ```
 
 ### 数据库迁移

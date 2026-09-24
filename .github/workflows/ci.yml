@@ -17,8 +17,9 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: backend/requirements-dev.txt
-      - run: pip install -r requirements-dev.txt
+          cache-dependency-path: backend/requirements-dev.lock.txt
+      # 用锁定清单安装（DEBT-22）：CI 结果与本地、与镜像一致
+      - run: pip install -r requirements-dev.lock.txt
       # 代码检查：当前以「功能性缺陷」为门禁（见 docs/CODE_AND_DIRECTORY_STANDARD.md §9.4）
       # 存量风格告警清零后，再逐步收紧规则集。
       - run: python -m ruff check .

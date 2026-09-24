@@ -118,6 +118,9 @@ def _upgrade_to_head() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=str(backend_dir), capture_output=True, text=True,
+        # Windows 默认用 GBK 解码子进程输出；alembic 输出含中文时会抛
+        # UnicodeDecodeError，导致 result.stderr 变 None，迁移失败的真实原因丢失。
+        encoding="utf-8", errors="replace",
         env={**os.environ},  # ERP_DB_URL 已在模块顶部设置，子进程据此连同一个库
     )
     if result.returncode != 0:

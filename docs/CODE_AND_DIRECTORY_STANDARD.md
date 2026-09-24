@@ -68,8 +68,10 @@ AI-电商ERP/
 │   │   │                           #   禁止任何测试模块跨文件 import 夹具（§8 T-2）
 │   │   └── test_*.py               # 按被测对象/业务域命名；深度对抗测试按域分文件
 │   ├── alembic.ini  pytest.ini  pyproject.toml
-│   ├── requirements.txt            # 运行时依赖
-│   └── requirements-dev.txt        # 开发依赖（lint/format）
+│   ├── requirements.txt            # 运行时依赖声明（兼容区间，给人看）
+│   ├── requirements.lock.txt       # 运行时精确锁定（Docker 用，构建可复现）
+│   ├── requirements-dev.txt        # 开发依赖声明
+│   └── requirements-dev.lock.txt   # 开发/CI 精确锁定（含 ruff / pytest）
 ├── docs/
 │   ├── adr/                        # 【Phase 2 目标】架构决策记录；当前决策在 DECISIONS.md
 │   ├── archive/                    # 一次性报告归档（14 篇，索引见 archive/README.md）
@@ -340,17 +342,27 @@ frontend/node_modules/  frontend/dist/     frontend/.zcode/
 ### 9.1 已配置
 
 - `backend/pyproject.toml`：ruff 规则集（`E` `F` `W` `I` `UP` `B`；行宽 100；`E501` 关闭以兼容存量）
-- `backend/requirements-dev.txt`：开发依赖
+- `backend/requirements-dev.txt`：开发依赖声明（人读）
+- `backend/requirements-dev.lock.txt`：开发依赖**精确锁定**（CI 与本地实际安装用）
+- `backend/requirements.lock.txt`：运行时依赖**精确锁定**（Docker 镜像用）
 
 ### 9.2 使用方式
 
 ```bash
 cd backend
-pip install -r requirements-dev.txt
+# 推荐：用锁定清单，保证与他人/CI/镜像完全一致
+pip install -r requirements-dev.lock.txt
 python -m ruff check .          # 只检查，不改动
 python -m ruff check --fix .    # 自动修复可安全修复项
 python -m ruff format .         # 格式化
 ```
+
+> **依赖锁定规则（D-9）**：`requirements*.txt` 是「声明」，`requirements*.lock.txt` 是「锁定」。
+> - 新增/升级依赖 → 改**声明**文件，然后重新生成锁文件，**重跑全量测试**，测试通过才提交；
+> - 禁止只改锁文件不跑测试；禁止手工编辑锁文件（会被下次生成覆盖）；
+> - 锁文件含中文注释时，**首行 `# -*- coding: utf-8 -*-` 不可删**：旧版 pip（实测 23.2.1）在中文
+>   Windows 上按 GBK 解码，缺声明会直接 `UnicodeDecodeError` 崩溃，表现为「安装依赖失败」；
+> - `pytest` / `ruff` **只属于开发依赖**，禁止放回运行时声明（会把测试框架装进生产镜像）。
 
 ### 9.3 风格约定
 
@@ -416,7 +428,7 @@ python -m ruff format .         # 格式化
 | DEBT-19 | ~~删店铺直接物理删除，撞 5 张表外键 → 500~~ | ~~P0~~ | `app/routers/shops.py` | ✅ 已完成：改为归档式软删除（`shops.archived_at`，Revision E），凭证即时失效 |
 | DEBT-20 | ~~`purge_demo_data` 未按外键拓扑序删除 → 必然 500~~ | ~~P0~~ | `app/routers/shops.py` | ✅ 已完成：抽出 `services/tenant_data_purge.py`，子表在前、父表在后 |
 | DEBT-21 | 店铺可见性守卫散落在各路由，靠人肉记得排除归档行 | **P2** | `app/services/shop_scope.py` | 已提供统一入口 `active_shop()`；`routers/orders.py` 已改用，其余 3 处为内联判断，Phase 2 统一 |
-| DEBT-22 | `requirements.txt` 全为 `>=`，构建不可复现 | **P1** | `backend/requirements.txt` | 待锁定版本（`pip freeze` 或 uv lock） |
+| DEBT-22 | ~~`requirements.txt` 全为 `>=`，构建不可复现~~ | ~~**P1**~~ | `backend/requirements*.txt` | ✅ **已完成（2026-09-24）**：新增 `requirements.lock.txt`（运行时 31 包）+ `requirements-dev.lock.txt`（开发 38 包），Docker 与 CI 改用锁定清单；`requirements.txt` 补齐兼容上限。实测：全新 venv 仅装运行锁可**真启动服务**（`/api/health` 200、静态前端 945 字节），开发锁下 `pytest` 231 passed |
 | DEBT-23 | 无 HTTPS / 反向代理配置 | **P0** | 部署层 | 待出方案（见 `docs/DECISIONS.md` D8）；代码侧已就绪 |
 | DEBT-24 | ~~`ERP_ADMIN_PASSWORD` 门禁形同虚设：`auth.admin_bootstrap_password()` 从未被调用，生产环境仍可用 `admin123` 登录~~ | ~~**P0**~~ | `app/seed.py`、`app/main.py` | ✅ **已完成**：新增 `seed._ensure_admin_password()` 并在 lifespan 调用（见 `docs/DECISIONS.md` D10.1），回归测试 3 项 |
 | DEBT-25 | 测试共享夹具跨文件 import，存在收集顺序依赖 | **P2** | `tests/` | ✅ **已完成**：夹具下沉 `tests/conftest.py`，`auth_headers` 自愈 + 用例级状态还原（见 D10.2） |

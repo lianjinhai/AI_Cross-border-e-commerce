@@ -213,8 +213,10 @@ python scripts\backup_restore_drill.py drill --db erp.db --json > D:\phase1-back
 
 数据库回滚后，应用代码必须回到与备份匹配的版本，否则新代码会访问不存在的表/列。
 
-- 项目目录当前**不是 Git 工作区**，因此迁移前必须另外保存不可变的应用源码快照或构建清单
-  与依赖锁文件（`backend/requirements.txt` 的实际安装版本）；
+- 项目已纳入 Git（2026-09-24 起），迁移前必须记录**当前提交哈希**（`git rev-parse HEAD`）
+  与依赖锁文件（`backend/requirements.lock.txt`）；回滚代码即 `git checkout <该哈希>`；
+- 若迁移发生在提交前（工作区有未提交改动），仍须另外保存不可变的应用源码快照
+  或构建清单，不可依赖「最新代码」；
 - 回滚时用该快照替换 `backend/app`、`backend/migrations` 与前端构建产物；
 - 确认 `alembic.ini` 与 `migrations/versions/` 目录内容与备份时点一致；
 - 不要使用"最新代码 + 旧数据库"的组合，这是最常见的二次故障来源。

@@ -11,8 +11,9 @@ RUN npm run build
 # 命名该阶段：可用 `docker build --target runtime .` 在前端不可构建时独立验证后端镜像
 FROM python:3.11-slim AS runtime
 WORKDIR /app/backend
-COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# 使用精确锁定清单（DEBT-22）：保证镜像内版本 = 本地验证过的版本
+COPY backend/requirements.lock.txt . 
+RUN pip install --no-cache-dir -r requirements.lock.txt
 COPY backend/ . 
 COPY --from=frontend-build /build/dist /app/frontend/dist
 # 启动脚本负责先跑迁移再拉起服务（见 docker-entrypoint.sh）
