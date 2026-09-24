@@ -2,13 +2,24 @@ services:
   erp:
     build: .
     container_name: ai-commerce-erp
+    # 只绑回环：本 compose 是「无 TLS」基线，配合下面的
+    # ERP_TLS_TERMINATED_ELSEWHERE=1 声明使用——即由**宿主机上的**
+    # TLS 代理（nginx / traefik / Caddy 均可）转发到 127.0.0.1:8000。
+    # 绑 0.0.0.0 会让 8000 直接暴露到网络，那条声明就变成了橡皮图章：
+    # 谁都能用 http 直连，而应用还以为前面有 TLS。
+    # 需要对外提供 https 时请用 TLS 覆盖层（自带 Caddy 并自动清空此端口映射）：
+    #   docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       ERP_DB_URL: sqlite:////data/erp.db
       # 生产模式：启用 config.validate_production_settings() 的全部门禁
       # （弱 JWT 密钥 / 默认管理员口令 / 缺凭证加密密钥 / 空 CORS 都会拒绝启动）
       ERP_ENV: production
+      # 显式声明 TLS 终止位置（生产门禁要求二选一，见 app/config.py）：
+      # 本基线不含 TLS，TLS 必须由宿主机代理或上游负载均衡终止。
+      # 应用自己终止 TLS 的场景请改用 docker-compose.tls.yml。
+      ERP_TLS_TERMINATED_ELSEWHERE: "1"
       # 以下四项必填，故意不给默认值：未在 .env 中配置则 compose 直接报错，
       # 避免"带着开发默认密钥上线"这种静默危险状态。
       ERP_JWT_SECRET: ${ERP_JWT_SECRET:?必须设置 ERP_JWT_SECRET（至少 32 字节）}

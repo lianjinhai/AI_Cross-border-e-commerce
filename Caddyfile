@@ -1,0 +1,72 @@
+# AI-电商ERP 反向代理配置（Caddy）
+#
+# 为什么用 Caddy：自动申请并续期 Let's Encrypt 证书，配置量最小，
+# 且默认开启 HTTP/2 与现代 TLS 套件——符合 DEBT-23 的"代码侧已就绪，
+# 缺部署层 TLS 终止"的补齐目标。
+#
+# 用法：
+#   1. 把下方 ERP_DOMAIN 换成真实域名，并确保该域名 A 记录已指向本机公网 IP；
+#   2. 开放 80 / 443 端口（80 用于 ACME 校验，会自动跳转到 443）；
+#   3. docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+#
+# 注意：
+#   - Caddy 需要能访问公网以完成 ACME 校验；纯内网环境请改用自签证书方案；
+#   - 应用容器**不再直接暴露 8000**（见 docker-compose.tls.yml 的覆盖），
+#     只允许经本代理访问，避免绕过 TLS 直连后端。
+#
+#   - 应用侧需同时设置 ERP_TRUST_PROXY_HEADERS=1 与
+#     ERP_TRUSTED_PROXY_HOSTS=<compose 内代理容器网段>，才会采信转发头。
+#     compose 覆盖层已配好这两项。
+#
+# 证书与配置持久化在命名卷中，容器重建不会重复申请证书（Let's Encrypt 有速率限制）。
+{
+	# ACME 账号邮箱：证书到期提醒会发到这里
+	email {$ACME_EMAIL}
+	# 生产环境不暴露内部管理端点
+	admin off
+}
+
+{$ERP_DOMAIN} {
+	encode zstd gzip
+
+	# 反向代理到应用容器（compose 服务名解析）
+	reverse_proxy erp:8000 {
+		# X-Real-IP：Caddy 默认**不**设置，需显式补上（便于日志与排障）。
+		header_up X-Real-IP {remote_host}
+
+		# 注意：**不要**再写 `header_up X-Forwarded-For/-Proto/-Host`。
+		# 实测（D22，真容器抓包对比）：Caddy 默认就会把这三个头设成正确值，
+		# 且会**忽略**客户端伪造的 X-Forwarded-For（实测发送 1.2.3.4，
+		# 上游收到的是真实客户端地址）——显式重写属多余，
+		# `caddy validate` 也会对这三行逐条告警 "Unnecessary header_up ..."。
+		# 冗余行本身无害，但会掩盖「Caddy 已内置该保护」这一事实，
+		# 让后来者误以为不写就没有转发头，故此处删除。
+	}
+
+	# 安全响应头（应用未设置，由代理统一补齐）
+	header {
+		# 防 MIME 嗅探
+		X-Content-Type-Options "nosniff"
+		# 防点击劫持：本应用不需要被 iframe 嵌入
+		X-Frame-Options "DENY"
+		# 不泄漏完整 URL 给第三方
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# 禁用不需要的浏览器能力
+		Permissions-Policy "geolocation=(), microphone=(), camera=()"
+		# HSTS：确认全站 HTTPS 稳定后再启用（先用 1 天观察，再逐步加长）
+		# Strict-Transport-Security "max-age=86400"
+		-Server
+	}
+
+	# 健康检查不写访问日志，避免噪音
+	@health path /api/health
+	log_skip @health
+
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+		format json
+	}
+}

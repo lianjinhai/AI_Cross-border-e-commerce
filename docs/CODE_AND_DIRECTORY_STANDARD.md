@@ -69,6 +69,7 @@ AI-电商ERP/
 │   │   ├── live_acceptance.py           # 真服务业务闭环验收（7 步）
 │   │   ├── e2e_feasibility.py           # 端到端可行性（真启动 + 隔离性校验）
 │   │   ├── docker_feasibility.py        # Docker 镜像可行性（真构建 + 真运行 + 真登录）
+│   │   ├── tls_feasibility.py           # HTTPS 链路可行性（真 Caddy + 真应用，8 项）
 │   │   └── security_data_audit.py       # 权限矩阵与数据一致性审计
 │   ├── tests/                      # 测试
 │   │   ├── conftest.py             # 共享夹具（库隔离 + client + auth_headers + 状态自愈），
@@ -281,6 +282,9 @@ frontend/node_modules/  frontend/dist/     frontend/.zcode/
 | T-16 | **审计/校验脚本禁止抽样**：抽样得出的「无问题」结论不成立。实测主库订单 518 条而脚本只取 500 条，最后 18 条从未被审计却仍打印「已全覆盖」 |
 | T-17 | 测试**禁止**在业务库创建 `schedules` 记录；确需验证调度逻辑必须用测试库并断言清理。**排查主库异常时必须检查 `schedules.enabled`**——残留任务会持续运行，不会被「不查询」规避（见 D20） |
 | T-18 | **新增验证脚本后必须逐项用回退法验证每个检查点的判别力**：「整体通过」不代表每个检查点都有效。实测 `docker_feasibility.py` 首版的「依赖版本比对」就检不出「Dockerfile 没引用锁定清单」（兼容区间恰好解析出相同版本），补结构检查后才有效（见 D21） |
+| T-19 | **修复安全缺陷时必须验证「开关打开」的路径**：只在默认（关闭）态验证等于没验证。实测 DEBT-23 上一版把 `starlette.middleware.proxy_headers`（starlette 1.x 已移除）当可用模块，开关关闭时全绿、打开即崩——**负向交付**，只有真部署才触发（见 D22） |
+| T-20 | **部署类配置必须真跑端到端并断言链路效果**，不能只验「容器起来了」。TLS 要断言应用侧**真的看到了 https**——Caddy 无条件转发，即使应用没开信任开关也返回 200（见 D22 第 5 项） |
+| T-21 | **安全开关必须配「来源限定」**：只给「信任/不信任」布尔开关，实际会退化成信任所有来源。实测 `FORWARDED_ALLOW_IPS=*` 下直连即可把客户端 IP 伪造成任意值（见 D22 第三节） |
 
 > **T-4 说明**：本轮修复中，`test_security.py` 曾把「superadmin 可访问租户业务 API」固化为正确行为，`test_api.py` 曾把「租户停用」误断言为「租户到期」。两者都是断言与语义脱节，属于**测试在保护错误行为**，比缺测试更危险。
 
@@ -340,8 +344,8 @@ frontend/node_modules/  frontend/dist/     frontend/.zcode/
 > 是**假失败**（浪费排查时间）或**假通过**（掩盖真缺陷），两者都比没有脚本更危险。
 > 修正后 7 步全 PASS（`exit=0`），并保留 `SKIP` 语义用于"数据前提缺失"。
 
-**当前基线（2026-09-24 13:10 实测）**：后端 `pytest -q` → **231 passed**；
-后端**反序文件列表**跑 → **231 passed**（顺序依赖已消除）；前端 `npm test` → **67 passed**；
+**当前基线（2026-09-24 17:05 实测）**：后端 `pytest -q` → **244 passed**；
+后端**反序文件列表**跑 → **244 passed**（顺序依赖已消除）；前端 `npm test` → **67 passed**；
 `ruff check` → All checks passed；`migration_preflight.py` → 12 项全 PASS（主库 `20260924_15`）；
 **真启动服务端到端验收** → `scripts/live_acceptance.py` **7 步全 PASS / exit=0**。
 **任何提交不得低于此基线**。
@@ -412,7 +416,7 @@ python -m ruff format .         # 格式化
 | 下一步 | 逐步收紧规则集（先移除 `B008` 例外，再启用 `E501`） | 待存量格式化 |
 | 长期 | 追加 `mypy` 关键模块类型检查 | 规划中 |
 
-**当前基线（2026-09-24 12:40 实测）**：`ruff check` → All checks passed；后端 `pytest -q` → **231 passed**（反序同样 231 passed）；前端 `npm test` → **67 passed**；`migration_preflight.py` → 12 项全 PASS（`P0_fail=0`）。
+**当前基线（2026-09-24 17:05 实测）**：`ruff check` → All checks passed；后端 `pytest -q` → **244 passed**（反序同样 244 passed）；前端 `npm test` → **67 passed**；`migration_preflight.py` → 12 项全 PASS（`P0_fail=0`）；`docker_feasibility.py` → 12 项全 PASS；`tls_feasibility.py` → 8 项全 PASS。
 
 > **规则集说明**：首轮启用时出现 509 条告警，其中 `B008`（FastAPI `Depends()` 必须写在默认参数）等属框架惯用法误报，已按「只报功能性缺陷」原则显式豁免。豁免项均在 `pyproject.toml` 中标注原因与「只减不增」约束，不允许无理由扩大豁免。
 
@@ -458,7 +462,7 @@ python -m ruff format .         # 格式化
 | DEBT-20 | ~~`purge_demo_data` 未按外键拓扑序删除 → 必然 500~~ | ~~P0~~ | `app/routers/shops.py` | ✅ 已完成：抽出 `services/tenant_data_purge.py`，子表在前、父表在后 |
 | DEBT-21 | 店铺可见性守卫散落在各路由，靠人肉记得排除归档行 | **P2** | `app/services/shop_scope.py` | 已提供统一入口 `active_shop()`；`routers/orders.py` 已改用，其余 3 处为内联判断，Phase 2 统一 |
 | DEBT-22 | ~~`requirements.txt` 全为 `>=`，构建不可复现~~ | ~~**P1**~~ | `backend/requirements*.txt` | ✅ **已完成（2026-09-24）**：新增 `requirements.lock.txt`（运行时 31 包）+ `requirements-dev.lock.txt`（开发 38 包），Docker 与 CI 改用锁定清单；`requirements.txt` 补齐兼容上限。实测：全新 venv 仅装运行锁可**真启动服务**（`/api/health` 200、静态前端 945 字节），开发锁下 `pytest` 231 passed |
-| DEBT-23 | 无 HTTPS / 反向代理配置 | **P0** | 部署层 | 待出方案（见 `docs/DECISIONS.md` D8）；代码侧已就绪 |
+| DEBT-23 | ~~无 HTTPS / 反向代理配置~~ | ~~**P0**~~ | 部署层 | ✅ **已完成（2026-09-24）**：Caddy 反向代理（自动 ACME）+ TLS 覆盖层 `docker-compose.tls.yml`；应用侧 `ERP_TRUST_PROXY_HEADERS` + `ERP_TRUSTED_PROXY_HOSTS` 两道闸；基础 compose 绑定收紧为 `127.0.0.1:8000` 并显式声明「TLS 在外部」。新增 `scripts/tls_feasibility.py`（**真 HTTPS 端到端** 8 项全 PASS）+ `tests/test_tls_proxy_config.py`（13 项）。**上一版改动藏 3 个真实缺陷已修**（starlette 模块已移除导致开关一开就崩、`=0` 被误判为已声明、基础 compose 漏声明打断既有部署）——详见 `docs/DECISIONS.md` D22 |
 | DEBT-24 | ~~`ERP_ADMIN_PASSWORD` 门禁形同虚设：`auth.admin_bootstrap_password()` 从未被调用，生产环境仍可用 `admin123` 登录~~ | ~~**P0**~~ | `app/seed.py`、`app/main.py` | ✅ **已完成**：新增 `seed._ensure_admin_password()` 并在 lifespan 调用（见 `docs/DECISIONS.md` D10.1），回归测试 3 项 |
 | DEBT-25 | 测试共享夹具跨文件 import，存在收集顺序依赖 | **P2** | `tests/` | ✅ **已完成**：夹具下沉 `tests/conftest.py`，`auth_headers` 自愈 + 用例级状态还原（见 D10.2） |
 | DEBT-26 | ~~`_seed()` 对全局唯一的 `settings` 表不幂等~~；~~测试库单实例（固定名 + WAL 旁文件残留）~~ | ~~**P1**~~ | `app/seed.py`、`tests/conftest.py`、`.gitignore` | ✅ **已完成**：抽出 `DEFAULT_SETTINGS` + `_ensure_default_settings()`（缺什么补什么）；测试库 PID 隔离 + `ERP_TEST_DB` 覆盖 + WAL 旁文件统一清理；`.gitignore` 补齐旁文件与 PID 库名（见 `docs/DECISIONS.md` D11） |
@@ -476,11 +480,12 @@ python -m ruff format .         # 格式化
 - [ ] 文件与函数规模未超 §5 阈值
 - [ ] 结构变更走 Alembic 迁移且 `downgrade()` 可用（§6）
 - [ ] 新增能力带测试；权限改动已更新 `test_security.py`（§8）
-- [ ] `ruff check` 全绿；`pytest -q` ≥ 231 passed；反序跑同样 ≥ 231 passed；`npm test` ≥ 67 passed
+- [ ] `ruff check` 全绿；`pytest -q` ≥ 244 passed；反序跑同样 ≥ 244 passed；`npm test` ≥ 67 passed
 - [ ] 测试可重复（同一库连跑两次全绿）且可并发（多进程各自独立库）
 - [ ] 涉及结构变更时 `scripts/migration_preflight.py` 12 项全 PASS（P0 未清零不得执行）
 - [ ] 涉及"可运行/可部署"的结论时，已真启动服务跑过 `scripts/live_acceptance.py` 且全 PASS（T-13）
-- [ ] 改动构建链路（`Dockerfile` / 依赖文件 / `.gitattributes` / 入口脚本）后，已跑 `scripts/docker_feasibility.py` 且 11 项全 PASS（DP-1 / DP-2）
+- [ ] 改动构建链路（`Dockerfile` / 依赖文件 / `.gitattributes` / 入口脚本）后，已跑 `scripts/docker_feasibility.py` 且 12 项全 PASS（DP-1 / DP-2）
+- [ ] 改动 TLS / 反向代理 / compose 端口映射后，已跑 `scripts/tls_feasibility.py` 且 8 项全 PASS（DP-7）
 - [ ] 偏离规范的实现已在 `docs/DECISIONS.md` 记录
 - [ ] 相关文档已同步（`CONTRACT.md` / Agent OS 架构 / 本文件）
 

@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import config
 from .db import init_db
+from .proxy_headers import install_proxy_headers_middleware
 from .routers import (
     admin,
     ads,
@@ -66,6 +67,9 @@ def create_app() -> FastAPI:
         allow_origins=config.settings.cors_origins, allow_credentials=True,
         allow_methods=["*"], allow_headers=["*"],
     )
+    # 转发头处理（安全边界，实现与前提见 app/proxy_headers.py）。
+    # 放在 CORS 之后 = 成为最外层，信任边界贴在最边缘。
+    install_proxy_headers_middleware(app)
 
     for m in (auth, products, discovery, suppliers, listings, compliance,
               pricing, ads, orders, support, bi, workflows, knowledge, ai,

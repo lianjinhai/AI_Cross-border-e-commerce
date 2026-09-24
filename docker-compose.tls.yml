@@ -1,0 +1,85 @@
+# TLS 覆盖层：与 docker-compose.yml 叠加使用，补齐 DEBT-23（HTTPS 终止）。
+#
+# 用法：
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+#
+# 与基础 compose 的关键差异：
+#   1. 应用容器**不再映射 8000 到宿主机**（用 `!reset` 清空 ports）——
+#      否则可绕过 TLS 直连后端，等于没做 HTTPS；
+#   2. 新增 Caddy 反向代理，自动申请/续期 Let's Encrypt 证书；
+#   3. 代理暴露 80 / 443，并把真实客户端信息透传给应用。
+#
+# 必填环境变量（未配置则 compose 直接报错，避免静默降级）：
+#   ERP_DOMAIN   真实域名，A 记录须指向本机公网 IP
+#   ACME_EMAIL   证书到期提醒邮箱
+#
+# 应用侧配套（本文件已自动配好，无需手工设置）：
+#   ERP_TRUST_PROXY_HEADERS=1        采信 X-Forwarded-*
+#   ERP_TRUSTED_PROXY_HOSTS=<代理网段> 仅采信来自该网段的转发头
+#   ERP_PUBLIC_BASE_URL=https://$ERP_DOMAIN  OAuth 回调走公网 https
+#
+# 说明：本文件用 `!reset`（Compose Spec 支持）。若你的 Docker Compose 版本较旧
+# 不支持该标签，请改为手工注释掉基础文件里的 ports 段。
+
+services:
+  erp:
+    # !reset 清空继承来的端口映射：应用只应经代理访问
+    ports: !reset []
+    # 代理容器需要能连到应用；同一 compose 网络内按服务名解析，无需额外配置
+    environment:
+      # 采信转发头。**前提是外部无法直连本服务**——上面的 ports: !reset 保证了这点。
+      # 若漏掉 !reset，任何人都能伪造 X-Forwarded-For 污染审计信息。
+      ERP_TRUST_PROXY_HEADERS: "1"
+      # 清空基础文件继承来的「TLS 由外部终止」声明——本层**自带** Caddy 终止 TLS，
+      # 留着它会造成语义矛盾（应用同时被告知「前面有 TLS」和「TLS 在别处」）。
+      # 用 !reset 置空字符串：config.py 的 _env_flag 只认 "1"，空串即视为未声明。
+      ERP_TLS_TERMINATED_ELSEWHERE: !reset ""
+      # 只采信来自代理网段的转发头（容器内 127.0.0.1 无意义）。
+      ERP_TRUSTED_PROXY_HOSTS: ${ERP_PROXY_NETWORK_PREFIX:-172.31.240}.0/24
+      # OAuth 回调必须是 https，否则平台/浏览器按不安全连接处理。
+      ERP_PUBLIC_BASE_URL: https://${ERP_DOMAIN:?必须设置 ERP_DOMAIN（真实域名，A 记录须指向本机公网 IP）}
+    networks:
+      - proxy
+
+  # 固定网段：让 ERP_TRUSTED_PROXY_HOSTS 能确定地指向代理容器。
+  # 不固定时 Docker 从地址池动态分配（实测出现过 172.26.x/172.17.x 等），
+  # 应用侧无法预先写死可信来源，只能退化成「信任所有来源」——那等于没有防护。
+  # 240 段用于避开 Docker 默认池（通常从 172.17/172.18 起分配）以降低冲突概率。
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: ai-commerce-erp-proxy
+    depends_on:
+      erp:
+        condition: service_healthy
+    networks:
+      - proxy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    environment:
+      ERP_DOMAIN: ${ERP_DOMAIN:?必须设置 ERP_DOMAIN（真实域名，A 记录须指向本机公网 IP）}
+      ACME_EMAIL: ${ACME_EMAIL:?必须设置 ACME_EMAIL（证书到期提醒邮箱）}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data        # 证书与 ACME 账号，必须持久化（避免重复申请触发速率限制）
+      - caddy-config:/config
+      - caddy-logs:/var/log/caddy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  caddy-data:
+  caddy-config:
+  caddy-logs:
+
+networks:
+  proxy:
+    ipam:
+      config:
+        - subnet: ${ERP_PROXY_NETWORK_PREFIX:-172.31.240}.0/24

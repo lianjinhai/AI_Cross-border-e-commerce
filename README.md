@@ -104,7 +104,34 @@ docker compose up -d --build           # SQLite 版，数据持久化在 erp-dat
 
 容器启动时会自动执行 `alembic upgrade head` 再拉起服务；迁移失败则容器不启动（宁可起不来，也不让旧 schema 带新代码对外服务）。
 
-> **生产前置条件**：`ERP_ENV=production` 已由 compose 固定，`validate_production_settings()` 会拒绝弱 JWT 密钥、默认管理员口令、缺失凭证密钥与空 CORS。**TLS 未包含在本仓库内**：对外暴露前必须置于 HTTPS 反向代理（nginx/traefik）之后。
+> **生产前置条件**：`ERP_ENV=production` 已由 compose 固定，`validate_production_settings()` 会拒绝弱 JWT 密钥、默认管理员口令、缺失凭证密钥、空 CORS，并要求**明确声明 TLS 终止位置**（见下）。
+
+#### HTTPS 部署（二选一）
+
+生产门禁要求显式声明 TLS 位置，否则拒绝启动——这是为了避免「静默以 http 对外服务」。
+
+**方案 A：自带 Caddy 反向代理（推荐，自动申请续期证书）**
+
+    # .env 追加：
+    #   ERP_DOMAIN=erp.your-domain.com    # A 记录须指向本机公网 IP
+    #   ACME_EMAIL=ops@your-domain.com    # 证书到期提醒
+    docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+
+Caddy 自动申请 Let's Encrypt 证书，暴露 80/443，并把真实客户端信息透传给应用。
+**应用容器不再映射 8000**（覆盖层用 `!reset` 清空），确保外部无法绕过 TLS 直连。
+
+**方案 B：复用已有的 nginx / traefik / 云负载均衡**
+
+基础 compose 已声明「TLS 由外部终止」，并把端口绑定收紧为 **`127.0.0.1:8000`**
+（只允许本机代理转发，避免 8000 直接暴露到网络）。在宿主机代理里转发到
+`http://127.0.0.1:8000` 即可，无需额外配置。
+
+> 若代理**不在本机**（如独立网关），需自行设置 `ERP_TRUST_PROXY_HEADERS=1` 与
+> `ERP_TRUSTED_PROXY_HOSTS=<代理 IP 段>`，并确保外部无法直连应用端口——
+> 否则任何人都能伪造 `X-Forwarded-For` 污染审计信息。
+
+> **验证 TLS 链路**（真起 Caddy + 真应用容器，8 项检查；离线可用自签证书）：
+> `cd backend && python scripts/tls_feasibility.py`
 
 > MySQL 切换：`docker-compose.yml` 的 mysql profile 尚未接入（缺驱动与 `depends_on`），需先补 `pymysql` 依赖并把 `ERP_DB_URL` 指向 mysql 服务，详见 `docs/CODE_AND_DIRECTORY_STANDARD.md` DEBT-22。
 

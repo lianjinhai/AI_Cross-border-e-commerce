@@ -4,7 +4,7 @@
 #
 # 生成方式：`pip install --dry-run --ignore-installed --report -r requirements.txt`
 #           解析 report 得到完整依赖闭包（含间接依赖），按名称排序。
-# 已验证：该版本组合下 `pytest -q` = 231 passed（2026-09-24 / Python 3.11.6 / Windows）。
+# 已验证：该版本组合下 `pytest -q` = 244 passed（2026-09-24 / Python 3.11.6 / Windows）。
 #
 # 用途：Docker 生产镜像安装本文件，保证「镜像内版本 = 本地验证过的版本」。
 # 升级方式：改 requirements.txt 后重新生成，并**重跑全量测试**；测试通过才提交。

@@ -19,7 +19,7 @@
 ### 常用命令
 
 ```bash
-# 后端测试（基线：231 passed）
+# 后端测试（基线：244 passed）
 cd backend && python -m pytest -q
 
 # 前端测试（基线：67 passed）与构建
@@ -36,6 +36,9 @@ cd backend && python scripts/e2e_feasibility.py
 
 # Docker 生产镜像可行性验证（真构建 + 真运行 + 真登录，需 docker）
 cd backend && python scripts/docker_feasibility.py
+
+# HTTPS 链路可行性验证（真 Caddy + 真应用容器，8 项；离线可用自签证书）
+cd backend && python scripts/tls_feasibility.py
 ```
 
 ## 2. 开工前必做
@@ -136,8 +139,9 @@ routers/ -> agents/ -> tools/ -> services/ -> models.py
 - [ ] 文件与函数规模未超阈值
 - [ ] 结构变更走迁移且 `downgrade()` 可用
 - [ ] 新增能力带测试；权限改动已更新权限矩阵
-- [ ] `pytest -q` 不低于 231 passed（反序跑同样）；`npm test` 不低于 67 passed；`ruff check` 全绿
+- [ ] `pytest -q` 不低于 244 passed（反序跑同样）；`npm test` 不低于 67 passed；`ruff check` 全绿
 - [ ] 涉及「可运行/可部署」结论时，已跑 `scripts/e2e_feasibility.py` 且全 PASS（T-13）
+- [ ] 涉及容器 / TLS / 代理配置改动时，已跑 `scripts/docker_feasibility.py`（12 项）与 `scripts/tls_feasibility.py`（8 项）
 - [ ] 改动构建链路（Dockerfile / 依赖文件 / .gitattributes / 入口脚本）后，已跑 `scripts/docker_feasibility.py` 且全 PASS（DP-1）
 - [ ] 工作区已提交（§3）；提交前用 `git add --dry-run` 核对无 `.db` / 冷备 / 日志 / 临时脚本混入
 - [ ] 偏离规范的实现已在 `docs/DECISIONS.md` 记录

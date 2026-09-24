@@ -31,6 +31,15 @@ def _load_dotenv() -> None:
 _load_dotenv()
 
 
+def _env_flag(name: str) -> bool:
+    """严格布尔环境变量：仅显式 `1` 为真。
+
+    为什么不用 `bool(os.getenv(name))`：非空即真会把 `ERP_X=0`
+    （运维本意是「关闭」）当成「开启」，门禁形同虚设（DEBT-23 实测发现）。
+    """
+    return os.getenv(name, "").strip() == "1"
+
+
 class Settings:
     app_name = "AI-Commerce ERP"
     # 数据库：默认 SQLite（开发），可用 ERP_DB_URL 切换 MySQL 等
@@ -61,6 +70,27 @@ class Settings:
     # 前端构建产物目录（存在时由后端托管）
     frontend_dist: str = os.path.join(os.path.dirname(_BACKEND_DIR), "frontend", "dist")
 
+    # 反向代理信任开关（见 Caddyfile / docker-compose.tls.yml）
+    #
+    # 启用后应用采信 X-Forwarded-For / -Proto，使访问日志与 request.url 反映
+    # 真实客户端与协议，而不是代理容器地址与 http。
+    #
+    # **默认关闭**：若应用可被绕过代理直连，任何人都能伪造 X-Forwarded-For
+    # 污染审计信息（实测：uvicorn 在 `FORWARDED_ALLOW_IPS=*` 下无条件采信，
+    # 直连即可把客户端 IP 伪装成任意值）。
+    # 只有确认「外部无法直连后端」时才开启——docker-compose.tls.yml 已用
+    # `!reset` 清空 8000 端口映射来保证这一点。
+    trust_proxy_headers: bool = _env_flag("ERP_TRUST_PROXY_HEADERS")
+
+    # 可信代理来源（IP / CIDR，逗号分隔）。
+    #
+    # 只有来自这些地址的转发头才被采信——这是「信任开关」之外的第二道闸：
+    # 即便开了 trust_proxy_headers，来自非可信地址的 X-Forwarded-For 依然被忽略。
+    # 默认 `127.0.0.1`（与 uvicorn 默认一致，即「本机反代」）。
+    # Docker 部署需覆盖为容器网段（见 docker-compose.tls.yml）。
+    trusted_proxy_hosts: list[str] = [x.strip() for x in os.getenv(
+        "ERP_TRUSTED_PROXY_HOSTS", "127.0.0.1").split(",") if x.strip()]
+
     host: str = os.getenv("ERP_HOST", "127.0.0.1")
     port: int = int(os.getenv("ERP_PORT", "8000"))
 
@@ -82,3 +112,21 @@ def validate_production_settings() -> None:
         raise RuntimeError("生产环境启用 ERP_RULES_URL 时必须配置 ERP_RULES_SIGNING_KEY")
     if not settings.cors_origins or "*" in settings.cors_origins:
         raise RuntimeError("生产环境 ERP_CORS_ORIGINS 必须是明确域名白名单")
+    # 生产环境必须明确表态：要么在 TLS 代理之后（采信转发头），
+    # 要么由外部设施负责 TLS。未表态时拒绝启动，而不是静默以 http 对外服务。
+    #
+    # 严格比对 `== "1"`：写成 `ERP_TLS_TERMINATED_ELSEWHERE=0`
+    # （本意是「关闭」）不得被当成「已声明」而放行（DEBT-23 实测发现）。
+    if not settings.trust_proxy_headers and not _env_flag("ERP_TLS_TERMINATED_ELSEWHERE"):
+        raise RuntimeError(
+            "生产环境必须明确 TLS 终止位置：置于反向代理后请设置 ERP_TRUST_PROXY_HEADERS=1"
+            "（参考 Caddyfile / docker-compose.tls.yml）；"
+            "若 TLS 由外部设施终止，请设置 ERP_TLS_TERMINATED_ELSEWHERE=1")
+    # 公网回调地址必须是 https：平台 OAuth 回跳与前端跳转都依赖它，
+    # 留 http 会让浏览器/平台判定为不安全连接（混合内容），授权链路直接失败。
+    if settings.trust_proxy_headers and not settings.trusted_proxy_hosts:
+        raise RuntimeError("生产环境启用 ERP_TRUST_PROXY_HEADERS 时必须配置 ERP_TRUSTED_PROXY_HOSTS")
+    public_base = os.getenv("ERP_PUBLIC_BASE_URL", "").strip()
+    if public_base and not public_base.startswith("https://"):
+        raise RuntimeError(
+            f"生产环境 ERP_PUBLIC_BASE_URL 必须是 https（当前：{public_base}）")

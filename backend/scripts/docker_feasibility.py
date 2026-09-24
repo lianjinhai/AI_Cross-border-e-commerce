@@ -18,6 +18,7 @@
     5. 入口脚本为 **LF** 行尾（CRLF 会让容器报 bad interpreter）
     6. 容器真实启动：健康检查 200 + 静态前端可访问
     7. 真实登录 + 真实业务接口调用（不是只看进程活着）
+    8. compose 两个部署形态都显式声明了 TLS 位置（DEBT-23）
 
 安全保证：
     - 端口**动态取空闲端口**（不写死）——本机并行跑着多个项目，
@@ -130,6 +131,19 @@ def main(argv=None) -> int:
     if not uses_lock:
         return 1
 
+    # DEBT-23：生产门禁要求显式声明 TLS 位置（见 app/config.py）。
+    # 这里做**结构检查**而非运行检查：两个 compose 形态必须各自声明，
+    # 否则对应部署路径会在容器启动时被门禁拒绝（实测：基础 compose 漏声明时
+    # 本脚本第 6/7 项 FAIL，即 README 的「一键部署」实际不可用）。
+    # 与 DP-4 同理——只验「容器能起来」不足以证明「配置声明是对的」。
+    base_compose = (_ROOT_DIR / "docker-compose.yml").read_text(encoding="utf-8")
+    tls_compose = (_ROOT_DIR / "docker-compose.tls.yml").read_text(encoding="utf-8")
+    base_declares = "ERP_TLS_TERMINATED_ELSEWHERE" in base_compose
+    tls_declares = "ERP_TRUST_PROXY_HEADERS" in tls_compose
+    record("compose 声明 TLS 位置", base_declares and tls_declares,
+           "基础=外部终止 / TLS 层=代理后" if (base_declares and tls_declares)
+           else f"缺失声明：基础={base_declares} TLS层={tls_declares}")
+
     _run(["docker", "rm", "-f", _CONTAINER])
 
     if not args.skip_build:
@@ -179,6 +193,11 @@ def main(argv=None) -> int:
               "-p", f"{port}:8000",
               "-v", f"{tmpdir}:/data",
               "-e", "ERP_ENV=production",
+              # 与 docker-compose.yml 的声明保持一致：本脚本验证的是
+              # **无 TLS 基线**（容器自己起、宿主机直连 8000），TLS 由外部终止。
+              # 不声明则生产门禁拒绝启动（DEBT-23 新增校验）——
+              # 实测漏掉这一项时，本脚本第 6/7 项会 FAIL。
+              "-e", "ERP_TLS_TERMINATED_ELSEWHERE=1",
               "-e", "ERP_JWT_SECRET=" + "x" * 48,
               "-e", "ERP_ADMIN_PASSWORD=Docker-Feasibility-Pass-2026",
               "-e", "ERP_CREDENTIAL_KEY=" + "A" * 43 + "=",

@@ -1123,3 +1123,124 @@ cd backend && python scripts/docker_feasibility.py --skip-build  # 复用镜像
 |---|---|
 | DP-4 | 验证"是否使用了锁定清单"必须做**结构检查**（如 grep Dockerfile），不能只比对安装结果——兼容区间可能恰好解析出相同版本 |
 | DP-5 | 新增任何验证脚本后，必须用**回退法逐项验证每个检查点的判别力**；"整体通过"不代表每个检查点都有效 |
+## D22：TLS 落地 —— 并把「修复」里藏的 3 个缺陷挖出来（2026-09-24）
+
+**背景**：DEBT-23（无 HTTPS / 反向代理）是唯一未清的 **P0**。上一轮已加了配置开关、
+Caddyfile 与 TLS compose 覆盖层，但**一行都没验证过**。本轮先跑验证，结果：
+改动本身带来 **3 个真实缺陷**，其中 1 个是 P0 级「比不改更糟」。
+
+### 一、上一版改动的三个真实缺陷
+
+| # | 缺陷 | 后果 | 证据 |
+|---|---|---|---|
+| 1 | `main.py` 直接 `from starlette.middleware.proxy_headers import ...` | **开关一打开就崩**（import 阶段 `ModuleNotFoundError`） | 该模块在 starlette 1.x **已被移除**；实测本机 1.3.1、镜像内 1.7.0 均 `ModuleNotFoundError`。关着时一切正常，**只有真部署才触发** |
+| 2 | `ERP_TLS_TERMINATED_ELSEWHERE` 用「非空即真」判断 | 写 `=0`（本意关闭）被当成「已声明 TLS」→ 门禁放行 | `bool(os.getenv(...))` 对 `"0"` 为真 |
+| 3 | 门禁要求声明 TLS 位置，但基础 `docker-compose.yml` 没声明 | **README 的「Docker 一键部署」实际不可用** | `docker_feasibility.py` 实测 FAIL 2 项（容器启动即被门禁拒绝） |
+
+第 1 条的性质值得单独说明：它不是「功能没做完」，而是**负向交付**——
+缺陷只在开关打开时出现，而开关默认关闭，因此**本地测试全绿、CI 全绿**，
+直到有人在生产上启用它。这正是 T-13（「可运行/可部署」结论必须真跑）存在的理由。
+
+### 二、修复方案
+
+1. **转发头实现换成 uvicorn 的**（`uvicorn.middleware.proxy_headers`）：
+   它在依赖树内、版本受锁文件约束，且是 uvicorn 自身处理 `--proxy-headers`
+   的同一份代码。抽到 `app/proxy_headers.py` 集中管理，**并写明为什么不能用
+   starlette 的**——否则后来者很容易「顺手改回去」。
+2. **门禁严格比对 `== "1"`**（抽出 `_env_flag()`），`0/false/no/空` 一律视为未声明。
+3. **两个 compose 形态各自显式声明**：
+   - 基础层：`ERP_TLS_TERMINATED_ELSEWHERE=1`（TLS 由宿主机代理终止），
+     同时把端口绑定从 `8000:8000` 收紧为 **`127.0.0.1:8000:8000`**——
+     否则「TLS 在别处」这条声明就是橡皮图章：谁都能用 http 直连，
+     而应用还以为前面有 TLS。
+   - TLS 层：`ERP_TRUST_PROXY_HEADERS=1` + `ERP_TRUSTED_PROXY_HOSTS=<代理网段>`，
+     并用 `!reset` **清空**继承来的「TLS 在别处」声明（两层同时声明是语义矛盾）。
+
+### 三、新增的第二道闸：可信代理来源
+
+`ERP_TRUST_PROXY_HEADERS=1` 单独**不足以**安全。实测证据：
+
+```
+FORWARDED_ALLOW_IPS=* 时，直连应用发送 X-Forwarded-For: 203.0.113.77
+→ uvicorn 日志记录 `203.0.113.77:0 - "GET /api/health"`（客户端 IP 被完全伪造）
+```
+
+因此新增 `ERP_TRUSTED_PROXY_HOSTS`（默认 `127.0.0.1`），只有来自可信地址的
+转发头才被采信。Docker 下代理源地址是容器网段，故 TLS 覆盖层**固定了专用网段**
+（`172.31.240.0/24`，可用 `ERP_PROXY_NETWORK_PREFIX` 覆盖）——
+不固定时 Docker 从地址池动态分配，应用侧无法预先写死可信来源，
+只能退化成「信任所有来源」，等于没有防护。
+
+### 四、Caddyfile 的一处实测纠错
+
+初版写了三行 `header_up X-Forwarded-For/-Proto/-Host`，注释声称「传递真实客户端信息」。
+实测（真 Caddy 容器 + 回显上游，逐个变体对比）：
+
+- Caddy **默认就会**把这三个头设为正确值；
+- 且会**忽略**客户端伪造的 `X-Forwarded-For`（实测发 `1.2.3.4`，上游收到真实地址）；
+- `caddy validate` 对这三行逐条告警 `Unnecessary header_up ...`。
+
+> **中途我下过一个错结论**：先看到某个变体的输出里没有 `x-forwarded-proto`，
+> 就判断「`{remote_host}` 求值为空 → Caddy 删除了该头」。重测（逐行归因）后
+> 发现是自己读错了输出——头一直都在。**已删除那段错误注释。**
+> 教训：读工具输出也要用「逐项归因」的方式，不能凭一次整体观感下结论。
+
+三行已删除（冗余行本身无害，但会掩盖「Caddy 已内置该保护」这一事实，
+让后来者误以为不写就没有转发头）。`X-Real-IP` 保留——Caddy **不**默认设置它。
+
+### 五、新增验证：真 HTTPS 端到端（`scripts/tls_feasibility.py`）
+
+`docker_feasibility.py` 验的是**无 TLS 基线**（直连 8000）。TLS 链路
+**只有真跑一遍才算验证过**。新脚本 8 项检查，实测全 PASS：
+
+| # | 检查项 | 实测结果 |
+|---|---|---|
+| 1 | Caddyfile 语法有效 | Valid configuration |
+| 2 | 镜像就绪 | ai-erp-tls-verify:latest |
+| 3 | 应用容器内健康检查 | 200 |
+| 4 | **应用未暴露到宿主机**（`ports: !reset` 语义） | 未映射任何端口 |
+| 5 | 代理证书签发 | 已签发（tls internal 自签 CA） |
+| 6 | **真 HTTPS 请求** | HTTP/2 200 + `{"ok":true}` |
+| 7 | **应用真的采信转发头** | 日志中的真实客户端 `172.31.241.2`（非代理地址） |
+| 8 | 宿主机 8000 不可直连 | 已拒绝 |
+
+设计要点：
+
+- **保真**：临时 Caddyfile 与生产**逐字一致**，只加一行 `tls internal`
+  （离线自签所需），域名/邮箱仍走环境变量——验证的是生产同一份模板；
+- **第 7 项是关键**：只证明「HTTPS 能通」**不够**。Caddy 无条件转发，
+  即使应用**没开**信任开关也能返回 200，那样应用仍以为自己在 http 之后，
+  生成的回调地址与审计日志全是错的。故必须直接观察应用侧的解析结果。
+- **第 4/8 项**把「外部无法绕过 TLS」变成可执行证据，而不是只看配置文件。
+
+### 六、回退法验证（逐项确认判别力，DP-5）
+
+| 变异 | 期望 | 实测 |
+|---|---|---|
+| `ERP_TLS_TERMINATED_ELSEWHERE=0`（非空即真） | 被抓 | ✅ 3 项 FAIL |
+| `proxy_headers.py` 改回 starlette import | 被抓 | ✅ 2 项 FAIL（ModuleNotFoundError） |
+| 应用侧 `ERP_TRUST_PROXY_HEADERS=0` | 被抓 | ✅ 门禁先拦（判别链有效） |
+| 应用侧改声明 `ERP_TLS_TERMINATED_ELSEWHERE=1` | 被抓 | ✅ **仅第 7 项 FAIL**（HTTPS 通但转发头未采信——精确命中） |
+| 应用容器额外映射 8000 到宿主机 | 被抓 | ✅ 第 4 项 FAIL |
+| 脚本漏传 `ACME_EMAIL` 给 `caddy run` | 被抓 | ✅ 第 5 项 FAIL（`wrong argument count ... after 'email'`） |
+
+第四行最能说明问题：**其他 7 项全 PASS，只有第 7 项抓住**——
+如果当初只写「HTTPS 能通」这一条断言，这个缺陷会完整漏过去。
+
+### 七、脚本自身踩的两个坑（已修）
+
+1. `--skip-build` 未检查镜像是否存在 → `docker run` 去 registry 拉同名镜像，
+   把「本地无镜像」误报成「registry 连不上」（报错指错方向）；
+2. 断言 `"200 OK" in out` 在 **HTTP/2** 下误判——HTTP/2 状态行是 `HTTP/2 200`，
+   没有 `OK` 字样。真成功了却报 FAIL。改为分别校验状态行与响应体。
+
+### 八、补充规范
+
+| 编号 | 规则 |
+|---|---|
+| DP-6 | 「修复安全缺陷」的改动必须验证**开关打开时**的路径——只在默认（关闭）态验证，等于没验证 |
+| DP-7 | 部署类配置（TLS / 代理 / 网段）必须**真跑端到端**并断言**链路效果**（如应用侧真的看到了 https），不能只验「容器起来了」 |
+| DP-8 | 安全开关必须配「来源限定」（如可信 IP 段）；只给「信任/不信任」布尔开关，实际会退化成信任所有来源 |
+
+**关联**：`docs/CODE_AND_DIRECTORY_STANDARD.md` DEBT-23；
+新增文件 `app/proxy_headers.py`、`scripts/tls_feasibility.py`、`tests/test_tls_proxy_config.py`。
