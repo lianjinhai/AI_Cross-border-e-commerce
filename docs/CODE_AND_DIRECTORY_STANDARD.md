@@ -52,6 +52,13 @@ AI-电商ERP/
 │   │   ├── ai/                     # LLM / RAG 基础设施
 │   │   ├── routers/                # HTTP 边界层
 │   │   ├── services/               # 业务能力层
+│   │   │   ├── adapters/                # 平台适配器包（DEBT-05 拆包；见 D28）
+│   │   │   │   ├── contract.py          # 契约层：常量/环境开关/重试/异常/归一化数据结构
+│   │   │   │   ├── catmap.py            # 类目映射查询与提示
+│   │   │   │   ├── base.py              # BaseAdapter（发布三道关、平台限流）
+│   │   │   │   ├── registry.py          # ADAPTERS 注册表 + get_adapter + platform_meta
+│   │   │   │   └── <platform>.py        # 各平台适配器（ali1688/shopee/tiktok/ebay/walmart/lazada/planned）
+│   │   │   ├── platform_adapters.py     # **兼容门面**：重新导出 + 可打补丁点代理（唯一对外入口）
 │   │   │   ├── settings_service.py      # 配置三级回退（P1-10 隔离）
 │   │   │   ├── shop_scope.py            # 店铺可见性守卫（归档店铺一律视为不存在）
 │   │   │   ├── tenant_data_purge.py     # 演示数据清理（按外键拓扑序）
@@ -186,16 +193,22 @@ models.py     数据定义
 
 | 文件 | 行数 | 阈值 | 说明 |
 |---|---|---|---|
-| `app/services/platform_adapters.py` | 1158 | 500 | DEBT-05：Phase 2 拆为 `services/adapters/` 包 |
-| `tests/test_api.py` | 857 | 600 | DEBT-11：按业务域拆分 |
+| ~~`app/services/platform_adapters.py`~~ | ~~1158~~ | ~~500~~ | ✅ **已完成**：已拆为 `services/adapters/` 包（12 模块，最大 309 行），DEBT-05 关闭 |
+| `tests/test_api.py` | **1041** | 600 | DEBT-11：按业务域拆分（2026-09-24 复测：原记 857，已涨 184） |
 | `scripts/backup_restore_drill.py` | 805 | 500 | 运维脚本，允许放宽（三段式 CLI，逻辑内聚） |
-| `app/models.py` | 716 | 500 | **例外**：见下方说明 |
+| `app/models.py` | **848** | 500 | **例外**：见下方说明 |
 | `scripts/migration_preflight.py` | 672 | 500 | 运维脚本，12 项检查各自独立，拆分收益低 |
-| `app/seed.py` | 413 | 300（警戒） | 演示数据构造，Phase 2 可拆 `seed/` 包 |
-| `tests/test_deep_domains.py` | 352 | 400（警戒） | 四域对抗测试，按域分文件即可 |
-| `app/services/workspace_context.py` | 321 | 300（警戒） | 身份 Context 唯一入口，保持单文件便于审计 |
-| `app/routers/purchases.py` | 318 | 300（警戒） | 采购 + 代发同域 |
-| `frontend/src/views/PlatformAdmin.vue` | 518 | 400 | DEBT-12 |
+| `app/seed.py` | **420** | 300（警戒） | 演示数据构造，Phase 2 可拆 `seed/` 包 |
+| `tests/test_deep_domains.py` | **458** | 400（警戒） | 四域对抗测试，按域分文件即可（原记 352，已涨 106） |
+| `app/services/workspace_context.py` | **343** | 300（警戒） | 身份 Context 唯一入口，保持单文件便于审计 |
+| `app/services/alerting.py` | 341 | 300（警戒） | **新登记**（此前漏登） |
+| `app/auth.py` | 331 | 300（警戒） | **新登记** |
+| `app/routers/shops.py` | 328 | 300（警戒） | **新登记** |
+| `app/services/knowledge_learning.py` | 326 | 300（警戒） | **新登记** |
+| `app/agents/discovery.py` | 326 | 300（警戒） | **新登记** |
+| `app/routers/purchases.py` | **319** | 300（警戒） | 采购 + 代发同域 |
+| `tests/test_ai_native_p2.py` | 392 | 400（警戒） | **新登记** |
+| `frontend/src/views/PlatformAdmin.vue` | **528** | 400 | DEBT-12（原记 518） |
 | `frontend/src/views/Shops.vue` | 473 | 400 | DEBT-12 |
 | `frontend/src/views/Suppliers.vue` | 380 | 300（警戒） | DEBT-12 |
 | `frontend/src/views/Listings.vue` | 358 | 300（警戒） | DEBT-12 |
@@ -303,6 +316,10 @@ frontend/node_modules/  frontend/dist/     frontend/.zcode/
 | T-34 | **SQLite 加外键只能重建表，且外键必须具名**。匿名外键既无法创建（`Constraint must have a name`），反射出的 `name` 也是 `None`，`downgrade()` 无法安全删除（见 D27） |
 | T-35 | **表重建类迁移必须做前后快照比对并硬性断言**（列 / 索引 / 既有外键 / 行数）。SQLite 重建会静默重建索引与既有外键，不做比对就无法发现丢失（见 D27） |
 | T-36 | **测试库与生产库建库路径不同时，结构断言可能对迁移缺陷免疫**。测试库走 `create_all`（按模型建表）时，迁移清单的遗漏会被完全掩盖——必须额外加「清单 vs 清单」的直接比对，并用回退法验证判别力（见 D27） |
+| T-37 | **拆包/搬移代码后必须验证 monkeypatch 点仍指向真实调用点**。补丁落在「门面」而调用点在「子模块」时会**静默失效**（测试全绿但实际没测到目标代码）；验证方式：断言 `facade.X is 调用点模块.X` + 判别力测试证明补丁改变了行为（见 D28） |
+| T-38 | **按块搬移源码必须显式带上装饰器**。AST 的 `node.lineno` 不含 `decorator_list` 行，漏掉后 `@dataclass` / `@property` / `@staticmethod` 全部丢失，且只在运行时才暴露（见 D28） |
+| T-39 | **模块搬进子包后相对导入层级必须重算**。`from ..X` 在 `a/b/c.py` 与 `a/b/pkg/c.py` 中指向不同模块（见 D28） |
+| T-40 | **拆包不得改变对外导入路径**：保留兼容门面，把「路径不变」变成硬约束，避免测试补丁点与应用导入同时漂移（见 D28） |
 
 > **T-4 说明**：本轮修复中，`test_security.py` 曾把「superadmin 可访问租户业务 API」固化为正确行为，`test_api.py` 曾把「租户停用」误断言为「租户到期」。两者都是断言与语义脱节，属于**测试在保护错误行为**，比缺测试更危险。
 
@@ -462,7 +479,7 @@ python -m ruff format .         # 格式化
 | DEBT-02 | ~~`tenant_id=0` 孤儿业务数据 37 行 / 12 张表~~ | ~~P0~~ | `backend/erp.db` | ✅ **已完成**：已清零（含根因修复：superadmin 越权写入 + 审计脚本护栏） |
 | DEBT-03 | ~~45 张含 `tenant_id` 的表缺外键约束~~ | ~~**P1**~~ | `migrations/` | ✅ **已完成（2026-09-24）**：迁移 `20260924_16` 补齐 45 张表外键，主库 48/48 张含 `tenant_id` 的表全部受约束（执行前实测缺口是 **45 张**，文档原写「40 张」已过期）。施工中挖出关键阻塞：`platform_rule_packs` 用 `tenant_id=0` 作**平台级哨兵值**（`platform_rules.py:235`），直接加外键会让 `check_updates()` 写入路径崩——按 `users` 先例改为 **nullable + 写 NULL**（见 `docs/DECISIONS.md` D27）。**并发现一个测试盲区**：测试库走 `create_all` 会掩盖迁移清单遗漏（删掉 `products` 后其余用例全绿），已补「清单 vs 清单」直接比对 + 回退法验证 |
 | DEBT-04 | ~~无 lint/format 配置与门禁~~ | ~~P1~~ | 全仓 | ✅ **已完成**：已配 `backend/pyproject.toml` + `requirements-dev.txt`，`ruff check` 全绿并接入 CI |
-| DEBT-05 | `platform_adapters.py` 1158 行单文件承载 15 个适配器 | **P1** | `app/services/platform_adapters.py` | Phase 2 拆为 `services/adapters/` 包 |
+| DEBT-05 | ~~`platform_adapters.py` 1303 行单文件承载 13 个适配器~~ | ~~**P1**~~ | `app/services/platform_adapters.py` | ✅ **已完成（2026-09-24）**：拆为 `services/adapters/` 包（contract / catmap / base / registry + 7 个平台模块，共 12 文件，最大 309 行）；`platform_adapters.py` 缩为 **131 行兼容门面**，对外导入路径与全部 monkeypatch 点保持不变。**拆包中挖出并修掉 3 个真实缺陷**：① 测试 monkeypatch 只落在门面、适配器调用点收不到 → 补丁**静默失效**（实测打到真实 api.sandbox.ebay.com 抛 401）；② `@dataclass` 装饰器在按块搬移时丢失；③ 包内相对导入层级少一层。已加 10 项守护测试 + 回退法验证（见 D28） |
 | DEBT-06 | ~~`backend/` 根目录混放 3 个 `.db`，其中 2 个无引用~~ | ~~P1~~ | `backend/*.db` | ✅ 已完成：`test_dbg.db`、`project_goal_acceptance.db` 已冷备后清理，仅留 `erp.db` |
 | DEBT-07 | ~~缺 `AGENTS.md` / `CONTRIBUTING.md` / ADR 目录~~ | ~~P1~~ | 仓库根、`docs/` | ✅ **已完成（2026-09-24）三件套齐全**：① `AGENTS.md`（面向 AI 助手，协作红线）；② 仓库根 `CONTRIBUTING.md`（面向人：环境搭建 / 开发循环 / 测试基线 / 迁移流程 / 提交与评审 / Windows 陷阱，与 `AGENTS.md` 互补不重复）；③ `docs/adr/README.md`（权威源 `DECISIONS.md` 的镜像/索引层，含 D1~D26 全量索引表 + 状态定义 + 新增流程）并拆出 7 篇自包含 ADR（`0003`/`0007`/`0018`/`0022`/`0023`/`0024`/`0026`，判定标准=改变架构边界或安全模型） |
 | DEBT-08 | `agents/base.py` 自建 `SessionLocal`，绕过依赖注入 | **P2** | `app/agents/base.py:10,19` | Phase 2 Tool Layer 落地时一并解决 |

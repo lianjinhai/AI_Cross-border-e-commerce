@@ -1673,3 +1673,93 @@ D18/`20260923_09`（users nullable 先例）、`docs/CODE_AND_DIRECTORY_STANDARD
 新增 `migrations/versions/20260924_16_tenant_id_foreign_keys.py`、
 `tests/test_tenant_id_foreign_keys.py`；
 修改 `app/models.py`（45 处）、`app/services/platform_rules.py`。
+
+---
+
+## D28：平台适配器拆包 —— 并挖出「monkeypatch 静默失效」这个拆包头号陷阱（2026-09-24）
+
+**背景**：`services/platform_adapters.py` 实测 **1303 行**（规范硬上限 500），
+单文件承载 13 个平台适配器（DEBT-05，P1）。
+
+### 一、拆包结构
+
+按「契约 → 基类 → 各平台 → 注册表」分层，共 12 个模块，最大 309 行：
+
+| 模块 | 行数 | 职责 |
+|---|---|---|
+| `adapters/contract.py` | 93 | 常量 / 环境开关 / 统一重试 / 异常 / 三个归一化数据结构 |
+| `adapters/catmap.py` | 27 | 类目映射查询与提示 |
+| `adapters/base.py` | 109 | `BaseAdapter`（发布三道关、平台限流） |
+| `adapters/ali1688.py` / `shopee.py` / `tiktok.py` / `ebay.py` / `walmart.py` / `lazada.py` / `planned.py` | 93 / 238 / 309 / 192 / 113 / 95 / 69 | 各平台适配器 |
+| `adapters/registry.py` | 53 | `ADAPTERS` 注册表 + `get_adapter` + `platform_meta` |
+| `platform_adapters.py`（门面） | 131 | 重新导出 + 可打补丁点代理 |
+
+**为什么保留门面而不是让调用方改 import**：全仓有 7 个测试文件 + 4 个应用模块
+按 `app.services.platform_adapters` 导入，且其中 **8 处是 monkeypatch 点**。
+改 import 路径意味着同时改测试的补丁目标——一旦漏改就是**静默失效**（见下）。
+保留门面把「导入路径不变」变成硬约束，风险面从 11 个文件收敛到 1 个。
+
+### 二、头号陷阱：monkeypatch 会**静默失效**
+
+**问题**：拆包后适配器内部调用的是 `contract.request_with_retry(...)`，
+而测试写的是 `monkeypatch.setattr("app.services.platform_adapters.request_with_retry", ...)`
+——只改**门面模块**的属性。两者不是同一个对象时：
+
+- 补丁落在空处，被测代码仍走真实实现；
+- **测试照旧全绿**（因为真实实现也"能跑"），实际却发出真实网络请求。
+
+**实测复现**（第一版实现）：`test_ebay_offset_pagination` 打到
+`api.sandbox.ebay.com` 并抛 `401 Unauthorized`——如果那次调用恰好返回 200，
+缺陷就会**完全不可见**。这与 T-29（探测门禁对 `create_all` 表静默 no-op）同类。
+
+**解法**：门面用**模块级属性代理**，让「门面属性」与「调用点属性」是同一个对象：
+
+```python
+class _ForwardingModule(types.ModuleType):
+    def __getattr__(self, name):      # 读：始终读 contract / catmap 的当前值
+        ...
+    def __setattr__(self, name, value):  # 写：直接写 contract / catmap
+        ...
+```
+
+**为什么不能用 `setattr` 装转发器（第一版做法，已废弃）**：那只在导入时装一次；
+之后 `monkeypatch.setattr` 会把门面属性**重新绑定成普通值**，代理关系即被破坏。
+
+### 三、按块搬移代码的三个真实缺陷（都不是"看起来对"就能发现的）
+
+1. **`@dataclass` 装饰器丢失**：用 AST 按 `node.lineno` 取块时，装饰器行在
+   `lineno` **之前**，搬移后变成普通类 → `NormalizedOrder() takes no arguments`。
+   **教训**：按块搬移必须显式带上 `decorator_list` 对应的源码行。
+2. **包内相对导入层级少一层**：`adapters/` 比 `services/` 深一层，
+   `from ..models` 指向不存在的 `app.services.models`。原单文件的
+   `from ..models` 搬进包后必须变 `from ...models`。
+3. **`category_mapping_for` 被限定到错误模块**：批量把可打补丁函数改成
+   `contract.xxx` 时，它其实归属 `catmap` 模块 → `AttributeError`。
+
+### 四、验证
+
+| 验证 | 结果 |
+|---|---|
+| 公共 API 面 | ✅ 原 29 个顶层名全部可用（3 个私有名 `_TIMEOUT`/`_UA`/`_shop_role_default` 不导出，实测无外部引用；其中 `_shop_role_default` 是**死代码**） |
+| 14 个类的方法集合（含 property） | ✅ 逐一比对一致 |
+| 类属性（能力清单 14 项 × 14 类） | ✅ 全部一致 |
+| `platform_meta()` 输出 | ✅ 12 平台 × 14 字段 |
+| **判别力 1** | ✅ patch 门面 → eBay 适配器捕获到 `offsets=[0,1]`（补丁到达调用点） |
+| **判别力 2** | ✅ patch `category_mapping_for` → 发布前置校验结果随之改变（有/无映射两种语义都对） |
+| **判别力 3** | ✅ 5 个可打补丁名全部 `facade.X is 调用点模块.X` |
+| **判别力 4** | ✅ 补丁还原无残留 |
+| **回退法** | ✅ 去掉模块代理 → 新增的 10 项守护测试中 **2 项精确变红** |
+| 回归 | ✅ 后端 **274 passed**（264 + 10 新增）；`ruff check app/ tests/` 全绿 |
+
+### 五、补充规范
+
+| 编号 | 规则 |
+|---|---|
+| T-37 | **拆包/搬移代码后，必须验证 monkeypatch 点仍指向真实调用点**。补丁落在「门面」而调用点在「子模块」时会**静默失效**——测试全绿但实际没测到目标代码。验证方式是断言 `facade.X is 调用点模块.X`，并用判别力测试证明补丁确实改变了行为 |
+| T-38 | **按块搬移源码必须显式带上装饰器**。AST 的 `node.lineno` 不含 `decorator_list` 行，漏掉后 `@dataclass`/`@property`/`@staticmethod` 全部丢失，且只在**运行时**才暴露 |
+| T-39 | **模块搬进子包后相对导入层级必须重算**。`from ..X` 在 `a/b/c.py` 与 `a/b/pkg/c.py` 中指向不同模块 |
+| T-40 | **拆包不得改变对外导入路径**：保留兼容门面，把「路径不变」变成硬约束，避免测试补丁点与应用导入同时漂移 |
+
+**关联**：DEBT-05（关闭）、T-29（同类静默失效）、`docs/CODE_AND_DIRECTORY_STANDARD.md` §2/§5；
+新增 `app/services/adapters/`（12 模块）、`tests/test_platform_adapters_split.py`（10 用例）；
+改写 `app/services/platform_adapters.py`（1303 → 131 行门面）。
