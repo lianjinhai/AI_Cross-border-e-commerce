@@ -125,7 +125,7 @@ describe('can() — Context 路径（权威）', () => {
   })
 })
 
-describe('can() — legacy 兜底路径（工厂账号/Context 不可用）', () => {
+describe('can() — legacy 兜底路径（Context 不可用）', () => {
   it('legacy admin 映射为 OWNER 能力', () => {
     legacyUser('admin')
     expect(can('product:write')).toBe(true)
@@ -193,5 +193,44 @@ describe('Context 优先于 legacy', () => {
     // Context 权威：不能因 legacy 是 admin 而放开写权限
     expect(can('product:write')).toBe(false)
     expect(can('compliance:check')).toBe(true)
+  })
+})
+
+/**
+ * G-3：工厂账号的 Context 通道（真实缺陷回归）。
+ *
+ * 背景：`app/auth.py` 曾把工厂账号挡在 `/api/me/*` 之外（403），工厂 Context
+ * 永远为空 —— 前端只能用 legacy 兜底判断权限，这是 Phase 1.8「删除旧入口」
+ * 卡住的唯一前置。现已放行只读端点（`/switch` 仍拒，工厂无可切换项）。
+ *
+ * 本组用例锁死「工厂账号拿 Context 时，权限判定必须走 Context 权威源」：
+ * 后端 `ROLE_PERMISSIONS[FACTORY_COLLABORATOR] = {supply:read, supply:write}`。
+ * 若有人误把该分支改回 legacy 兜底（或让 legacy 压过 Context），
+ * 权限判定会漂移，本用例即失败。
+ */
+describe('G-3 factory collaborator via context', () => {
+  it('从 Context 取得 supply 权限，且拿不到任何业务写权限', async () => {
+    client.get.mockResolvedValueOnce({
+      data: {
+        user_id: 7,
+        workspace_id: 3,
+        workspace_name: 'api-ctx-factory',
+        workspace_kind: 'FACTORY',
+        role: 'FACTORY_COLLABORATOR',
+        permissions: ['supply:read', 'supply:write'],
+        data_scope: 'FACTORY_SELF',
+        source: 'FACTORY',
+        is_impersonating: false,
+        trace_id: 't',
+      },
+    })
+    await loadWorkspaceContext()
+    expect(can('supply:write')).toBe(true)
+    expect(can('supply:read')).toBe(true)
+    // 工厂身份的边界：除 supply 外一律不得授权
+    for (const key of ['order:write', 'product:write', 'finance:write',
+      'workspace:member:admin', 'compliance:approve']) {
+      expect(can(key), `${key} 不应授予工厂账号`).toBe(false)
+    }
   })
 })

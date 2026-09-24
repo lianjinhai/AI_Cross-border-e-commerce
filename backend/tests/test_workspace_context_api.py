@@ -198,11 +198,18 @@ def test_failed_switch_does_not_change_context(client, auth_headers):
     assert after["role"] == before["role"]
 
 
-def test_factory_portal_account_is_gated_before_me_routes(client, auth_headers):
-    """Factory Collaborator 当前被 auth 路径门禁挡在 /api/me/* 之外（403）。
+def test_factory_portal_account_reaches_read_only_context(client, auth_headers):
+    """工厂门户账号可读自己的 Context，但拿不到写语义端点（G-3）。
 
-    Router 内的 FACTORY 分支已按契约实现（kind=FACTORY / role=FACTORY_COLLABORATOR /
-    source=FACTORY）；此断言固化的是兼容期 auth 门禁的既有行为，改动需走评审。
+    背景（本用例前身固化的是 403）：Phase 1.8 的身份解析以 Context 为权威源、
+    legacy `localStorage` 仅作兜底。工厂账号此前被 auth 路径门禁挡在 `/api/me/*`
+    之外，Context 永远为空 —— 这使前端**只能**依赖 legacy 兜底，成为
+    「删除旧入口」卡住的唯一前置。
+
+    现在放行**只读**端点（`/api/me/workspaces`、`/api/me/workspace-context`），
+    同时刻意**不放行** `/switch`（写语义）：工厂的活动 Workspace 由
+    `SupplierPortalMember` 唯一确定，不存在可切换的第二个 Workspace，
+    放行只会扩大攻击面。三条断言一起锁死这个边界。
     """
     from app.auth import hash_password
     from app.models import Supplier, SupplierPortalMember
@@ -245,11 +252,22 @@ def test_factory_portal_account_is_gated_before_me_routes(client, auth_headers):
 
     try:
         headers = _login(client, "api_ctx_portal", "portal-pass-123")
+        # 1) 只读端点放行：列表与 Context 都能取到（前端身份解析的权威源）
         r = client.get("/api/me/workspaces", headers=headers)
-        assert r.status_code == 403, r.text
+        assert r.status_code == 200, r.text
+        assert r.json()["total"] == 1
+        assert r.json()["items"][0]["source"] == "FACTORY"
+        ctx_resp = client.get("/api/me/workspace-context", headers=headers)
+        assert ctx_resp.status_code == 200, ctx_resp.text
+        assert ctx_resp.json()["role"] == "FACTORY_COLLABORATOR"
+        assert ctx_resp.json()["source"] == "FACTORY"
+        assert ctx_resp.json()["permissions"] == ["supply:read", "supply:write"]
+        # 2) 写语义端点仍被拒（工厂无「可切换」的 Workspace）
         switch = client.post(
             f"/api/me/workspaces/{factory_ctx.workspace_id}/switch", headers=headers)
         assert switch.status_code == 403, switch.text
+        # 3) 业务 API 边界未被放宽：工厂账号依旧进不去
+        assert client.get("/api/suppliers", headers=headers).status_code == 403
     finally:
         with SessionLocal() as db:
             db.query(SupplierPortalMember).filter(

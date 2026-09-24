@@ -14,10 +14,11 @@ import {
  *   2. **legacy localStorage `erp_user`**（兜底）：仅在 Context 不可用时使用。
  *
  * 为什么必须保留 legacy 兜底（不能全删）：
- *   - **工厂账号拿不到 Context**：`app/auth.py` 的路径门禁只放行
- *     `/api/factory-network/portal/*` 与 `/api/auth/me`，`/api/me/*` 一律 403
- *     （既有契约，`test_workspace_context_api.py` 已固化）。工厂账号的 Context
- *     永远为空，删掉兜底会让工厂门户直接不可用。
+ *   - **工厂账号**：G-3 之后 `app/auth.py` 已放行 `/api/me/workspaces` 与
+ *     `/api/me/workspace-context`（只读），工厂账号**能**取到 Context
+ *     （`source=FACTORY`、`role=FACTORY_COLLABORATOR`）。但 `/switch` 仍被拒
+ *     ——工厂的活动 Workspace 由 `SupplierPortalMember` 唯一确定，无可切换项。
+ *     保留兜底是为了应对下一类场景。
  *   - **Context 请求失败**（网络抖动/后端 5xx）时用户至少还能用。
  *   兜底的存在由 `tests/permissions.test.js` 的 legacy 用例固化。
  *
@@ -43,8 +44,9 @@ const LEGACY_ROLE_MAP = {
 /**
  * 能力判断：Context 权限目录优先，Context 不可用时回退 legacy 角色。
  *
- * 为什么保留回退而不是直接 fail-closed：工厂账号拿不到 Context（见文件头
- * 说明），直接 fail-closed 会让工厂门户的所有按钮消失。回退分支与
+ * 为什么保留回退而不是直接 fail-closed：Context 请求可能失败（网络抖动、
+ * 后端 5xx、F5 刷新瞬间），直接 fail-closed 会让所有按钮消失。
+ * 回退分支与
  * `LEGACY_ROLE_MAP` 一起，构成 Phase 1.8 之后**唯一**允许的 legacy 依赖点；
  * 待工厂门户单独规划 Context 入口后，这几处可一并删除。
  */
@@ -63,7 +65,7 @@ export const canApprove = () => hasPermission('compliance:approve') ?? ['admin',
  * key 命名见 docs/页面操作权限对照表.md（如 product:write / listing:write /
  * settlement:write / compliance:check / supply:write）。
  *
- * Context 不可用时（工厂账号、请求失败）按 `LEGACY_ROLE_MAP` 推导的角色
+ * Context 不可用时（请求失败、未登录）按 `LEGACY_ROLE_MAP` 推导的角色
  * 回退到 `LEGACY_CAPABILITIES`，保证工厂门户等场景按钮不消失。
  */
 const LEGACY_CAPABILITIES = {

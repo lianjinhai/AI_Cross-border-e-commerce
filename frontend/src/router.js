@@ -57,7 +57,7 @@ router.beforeEach(async (to) => {
     path: to.path,
     authenticated,
     // Phase 1.8：身份以 Context 为准（角色/来源/代客标记），legacy 仅在
-    // Context 不可用时兜底（工厂账号与请求失败场景，见 permissions.js 说明）。
+    // Context 不可用时兜底（请求失败 / 网络异常场景，见 permissions.js 说明）。
     // 两者都要传：`routeRedirect` 内部保证 Context 胜出，legacy 只做兜底。
     // 漏传 `user` 会让兜底分支拿到空角色——工厂账号进不去门户、管理员进不去
     // `/users`、合规审批员反而被放行到 `/orders`（越权）。

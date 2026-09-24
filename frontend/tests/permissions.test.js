@@ -157,7 +157,9 @@ describe('Phase 1.8 workspace context routing', () => {
   })
 
   it('falls back to legacy identity when the context is unavailable', () => {
-    // 工厂账号拿不到 Context（/api/me/* 对其 403），必须仍能正确分流
+    // Context 不可用（网络抖动 / 后端 5xx / 未登录）时仍必须能正确分流。
+    // 注：G-3 之后工厂账号已能取到 Context（source=FACTORY），此用例覆盖的是
+    // 通用的「Context 缺失」兜底，不再特指工厂场景。
     const identity = identityFrom({ user: { role: 'supplier' } })
     expect(identity.fromContext).toBe(false)
     expect(identity.source).toBe('LEGACY_FALLBACK')
@@ -210,7 +212,8 @@ describe('Phase 1.8 guard argument contract', () => {
   })
 
   it('uses the legacy fallback when context is unavailable', () => {
-    // 工厂账号拿不到 Context（/api/me/* 对其 403），守卫必须传 user 兜底
+    // 守卫必须始终传 `user`：Context 缺失时它是唯一的身份来源。
+    // （G-3 之前工厂账号恒无 Context；现在该分支覆盖的是请求失败等场景。）
     const guardArgs = (legacyRole) => ({
       path: '/factory-portal', authenticated: true,
       user: { role: legacyRole }, context: null,

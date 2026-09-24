@@ -394,18 +394,19 @@ context 存在 → 用 context（权威）
 
 ### 二、为什么 legacy 兜底**不能删**（R-07 只做收口、不做删除）
 
-1. **工厂账号拿不到 Context**：`app/auth.py` 的路径门禁只放行
-   `/api/factory-network/portal/*` 与 `/api/auth/me`，`/api/me/*` 一律 403。
-   这是**既有契约**（`test_workspace_context_api.py::test_factory_portal_account_is_gated_before_me_routes`
-   已固化）。删掉兜底 → 工厂门户所有按钮消失、路由把用户踢出 `/factory-portal`。
+1. ~~**工厂账号拿不到 Context**~~ → **已由 D23（G-3）解决**：`/api/me/workspaces`
+   与 `/api/me/workspace-context` 已对工厂账号放行（只读），`/switch` 仍拒。
+   本节以下论述保留为**决策历史**，当时的判断与修复均以此为据；
+   现行状态请看 D23。
 2. **Context 请求失败**（网络抖动 / 后端 5xx）时用户至少还能用。
 
 **收口做法**：legacy 读取集中在 `permissions.js` 的三个常量
 （`currentUser()` / `role()` / `LEGACY_ROLE_MAP`），文件头显式声明为**唯一允许处**。
 `isSupplier()` / `isSuperadmin()` 也改走 `roleKey()`，不再直接读 localStorage。
 
-**删除前置条件**：先为工厂账号开通 Context 通道（或明确其永不使用 Context），
-再整体删除三个常量与兜底分支。
+**删除前置条件**（D23 更新）：原前置「先为工厂账号开通 Context 通道」
+**已完成**。现剩余前置是「Context 请求失败时的降级策略」——兜底需从
+「身份来源之一」降级为「异常降级路径」，建议与 Phase 2 Tool Layer 一并处理。
 
 ### 三、代客会话的一致性要求
 
@@ -455,7 +456,7 @@ Context 缓存。三条路径必须清理一致：
 
 ### 六、审计发现但**判定为既有契约、本轮不改**
 
-1. **工厂账号 `/api/me/*` 403**（G-3）：既有契约，需单独规划工厂 Context 入口。
+1. ~~**工厂账号 `/api/me/*` 403**（G-3）~~：**已由 D23 解决**（放行只读端点）。
 2. **`FACTORY_COLLABORATOR` 在 `role_permissions` 表无行**：迁移 `20260923_08`
    的 `ROLES` 常量**有意只 seed 4 个 workspace 角色**（工厂走独立 FACTORY 分支、
    不落 Membership），读取时经 `_permissions_from_db() → None` 回退代码常量。
@@ -1246,3 +1247,103 @@ FORWARDED_ALLOW_IPS=* 时，直连应用发送 X-Forwarded-For: 203.0.113.77
 
 **关联**：`docs/CODE_AND_DIRECTORY_STANDARD.md` DEBT-23；
 新增文件 `app/proxy_headers.py`、`scripts/tls_feasibility.py`、`tests/test_tls_proxy_config.py`。
+
+## D23：G-3 工厂账号 Context 通道 —— Phase 1.8「删除旧入口」的唯一前置（2026-09-24）
+
+**背景**：Phase 1.8 的「删除 legacy 入口」此前**暂缓**，理由写在 D15 第二节：
+工厂账号拿不到 Context，删掉 legacy 兜底会让工厂门户直接不可用。
+本轮打通该通道，并顺带挖出一个**真实的 fail-open 缺陷**。
+
+### 一、G-3 打通：放行只读端点，不放行写语义端点
+
+`app/auth.py` 原先把工厂账号挡在 `/api/me/*` 之外（403）。现在改为
+**精确白名单**（`_FACTORY_SCOPE_PATHS`）：
+
+| 路径 | 放行 | 理由 |
+|---|---|---|
+| `/api/factory-network/portal/*` | ✅ | 门户资料（原有） |
+| `/api/auth/me` | ✅ | 原有 |
+| `/api/me/workspaces` | ✅ **新增** | 只读：让工厂身份可被前端解析 |
+| `/api/me/workspace-context` | ✅ **新增** | 只读：Context 权威源 |
+| `/api/me/workspaces/{id}/switch` | ❌ **刻意拒绝** | **写语义**（审计 + 未来持久化）；工厂的活动 Workspace 由 `SupplierPortalMember` 唯一确定，**不存在可切换的第二个 Workspace**，放行只会扩大攻击面 |
+
+**为什么用精确白名单而不是前缀匹配**：`path.startswith("/api/me/")` 会把
+`/switch` 一并放行。这不是假想风险——回退法实测（把白名单改成前缀匹配）
+立刻被 `test_factory_portal_account_reaches_read_only_context` 抓住。
+
+### 二、顺带挖出的真实缺陷：门户绑定不校验 status（fail-open）
+
+`build_factory_context()` 查询 `SupplierPortalMember` 时**只按 user_id 过滤、
+未校验 `status`**，而路由层 `_portal_scope` 一直带 `status == "active"`。
+
+两条路径判定不一致 → **绑定停用后门户 API 拒绝（403），但 Context 仍宣称
+`supply:read/supply:write`**。
+
+**影响面**（这是它值得当缺陷而非小瑕疵的原因）：
+
+1. `/api/me/workspace-context` 现已对工厂开放，Context 是前端**权威**权限来源
+   （`permissions.js` 的 legacy 仅兜底）→ 表现为「界面按钮可点、实际请求 403」，
+   用户可见的不一致；
+2. `require_permission()` 的**后端鉴权**也以 Context 为权威判定路径
+   （`auth.py:221-229`），不只是显示问题；
+3. **MEMBERSHIP 路径一直带 `status='ACTIVE'`**（`_MEMBERSHIP_QUERY`），
+   工厂路径是**唯一**漏检的分支——属实现疏漏，非有意设计。
+
+**修法**：补 `status == "active"`，停用绑定的处理与「未绑定」一致
+（`permissions=∅`、`workspace_id=None`），仍可访问门户自身资料。
+
+### 三、验证
+
+**端到端真实链路**（真启动 uvicorn + 真登录 + 真调 API，副本库）：
+
+```
+[OK] 服务已启动
+开通门户账号: 200 g3_verify_portal
+工厂登录: 200
+GET /api/me/workspaces         -> 200 {"items":[{"id":1,"name":"义乌市华晨日用品厂",
+                                     "kind":"FACTORY","role":"FACTORY_COLLABORATOR",
+                                     "source":"FACTORY","is_active":true}],"total":1}
+GET /api/me/workspace-context  -> 200 {"role":"FACTORY_COLLABORATOR",
+                                     "permissions":["supply:read","supply:write"],
+                                     "data_scope":"FACTORY_SELF","source":"FACTORY"}
+POST /switch（应 403）         -> 403 工厂门户账号仅可维护本厂资料
+GET /api/suppliers（应 403）   -> 403
+==== G-3 端到端: 全部通过 ====
+```
+
+**回退法逐项验证判别力**：
+
+| 变异 | 期望 | 实测 |
+|---|---|---|
+| 白名单改成 `startswith("/api/me/")` | 被抓 | ✅ `/switch` 403 断言失败 |
+| 去掉 `build_factory_context` 的 status 条件 | 被抓 | ✅ `test_inactive_portal_binding_grants_no_permissions` 失败 |
+
+**回归**：`pytest` 246 passed（原 244 + 新增 2）；前端 68 passed（+1）；
+`ruff` 全绿；`npm run build` 成功。
+
+### 四、对 Phase 1.8 的影响
+
+`permissions.js` 文件头原写「工厂账号拿不到 Context」——**该前提已不成立**，
+本轮同步更新注释（否则后来者会依据过时前提做判断）。
+
+**注意：legacy 兜底仍不能删**，但理由已变：
+- ~~工厂账号拿不到 Context~~ → **已解决**；
+- **Context 请求可能失败**（网络抖动、后端 5xx、F5 刷新瞬间）→ 仍需兜底，
+  否则这些场景下所有按钮会消失。
+
+即「删除旧入口」的**阻塞项已清除**，剩余工作是把兜底从「身份来源之一」
+降级为「异常降级路径」——这需要单独评估（建议在 Phase 2 与 Agent Tool Layer
+一起做，因为两者都涉及权限判定入口的统一）。
+
+### 五、补充规范
+
+| 编号 | 规则 |
+|---|---|
+| T-22 | **放行路径白名单必须用精确匹配，不用前缀匹配**——前缀会把同前缀下的写语义端点一并放行。改白名单后必须用回退法验证边界仍被拒 |
+| T-23 | **同一实体在不同层（Service / Router）的查询条件必须一致**。实测 `SupplierPortalMember` 的 `status` 校验在 Router 有、Service 无，形成 fail-open；且 MEMBERSHIP 路径有同等校验时，缺它的分支就是疏漏而非设计 |
+
+**关联**：D15（Phase 1.8 优先级与 legacy 保留依据）、`docs/phase1_interfaces.md` §6/§7、
+`docs/WORKSPACE_MIGRATION_PROGRESS.md` Phase 1.8 表；
+修改文件 `app/auth.py`、`app/services/workspace_context.py`、
+`tests/test_workspace_context_api.py`、`tests/test_workspace_context.py`、
+`frontend/src/permissions.js`、`frontend/src/router.js`、`frontend/tests/permissions*.test.js`。

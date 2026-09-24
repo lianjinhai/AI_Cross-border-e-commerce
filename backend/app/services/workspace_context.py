@@ -199,16 +199,30 @@ def build_platform_context(user: User, trace_id: str | None = None) -> Workspace
 
 
 def build_factory_context(db, user: User, trace_id: str | None = None) -> WorkspaceContext:
-    """Factory Collaborator：由 SupplierPortalMember 生成严格受限 Context。"""
+    """Factory Collaborator：由 SupplierPortalMember 生成严格受限 Context。
+
+    **必须只认 `status='active'` 的绑定关系**（与路由层 `_portal_scope` 一致）。
+    曾漏掉该条件，导致已停用的门户绑定仍拿到 `supply:read/supply:write`：
+    - MEMBERSHIP 路径（`_load_active_membership`）一直带 `status='ACTIVE'`，
+      工厂路径是唯一漏检的分支，属实现疏漏而非有意设计；
+    - G-3 之后 `/api/me/workspace-context` 对工厂账号开放，Context 成为前端
+      **权威**权限来源（`permissions.js` 的 legacy 仅兜底），漏检会直接表现为
+      「界面按钮可点、实际请求 403」——用户可见的不一致。
+
+    停用绑定的处理与「未绑定」保持一致：不授予任何业务权限
+    （`permissions=∅`、`workspace_id=None`），仍可访问门户自身资料。
+    """
     from ..models import Supplier, SupplierPortalMember
 
     trace = trace_id or new_trace_id()
     member = (db.query(SupplierPortalMember)
-              .filter(SupplierPortalMember.user_id == user.id)
+              .filter(SupplierPortalMember.user_id == user.id,
+                      SupplierPortalMember.status == "active")
               .first())
     supplier = db.get(Supplier, member.supplier_id) if member else None
     if supplier is None:
-        # 无绑定关系：不授予任何业务数据权限，但仍可访问门户自身资料
+        # 无有效绑定关系（未绑定 / 绑定已停用）：不授予任何业务数据权限，
+        # 但仍可访问门户自身资料。
         logger.warning("factory collaborator without supplier binding", extra={
             "trace_id": trace, "user_id": user.id, "reason": "no_portal_member"})
         return WorkspaceContext(

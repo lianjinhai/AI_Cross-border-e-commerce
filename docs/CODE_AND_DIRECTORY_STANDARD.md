@@ -285,6 +285,8 @@ frontend/node_modules/  frontend/dist/     frontend/.zcode/
 | T-19 | **修复安全缺陷时必须验证「开关打开」的路径**：只在默认（关闭）态验证等于没验证。实测 DEBT-23 上一版把 `starlette.middleware.proxy_headers`（starlette 1.x 已移除）当可用模块，开关关闭时全绿、打开即崩——**负向交付**，只有真部署才触发（见 D22） |
 | T-20 | **部署类配置必须真跑端到端并断言链路效果**，不能只验「容器起来了」。TLS 要断言应用侧**真的看到了 https**——Caddy 无条件转发，即使应用没开信任开关也返回 200（见 D22 第 5 项） |
 | T-21 | **安全开关必须配「来源限定」**：只给「信任/不信任」布尔开关，实际会退化成信任所有来源。实测 `FORWARDED_ALLOW_IPS=*` 下直连即可把客户端 IP 伪造成任意值（见 D22 第三节） |
+| T-22 | **放行路径白名单必须用精确匹配，不用前缀匹配**——前缀会把同前缀下的写语义端点一并放行。改白名单后必须用回退法验证边界仍被拒（见 D23 第一节） |
+| T-23 | **同一实体在不同层（Service / Router）的查询条件必须一致**。实测 `SupplierPortalMember.status` 校验 Router 有、Service 无，形成 fail-open；当同类路径已有同等校验时，缺它的分支即疏漏而非设计（见 D23 第二节） |
 
 > **T-4 说明**：本轮修复中，`test_security.py` 曾把「superadmin 可访问租户业务 API」固化为正确行为，`test_api.py` 曾把「租户停用」误断言为「租户到期」。两者都是断言与语义脱节，属于**测试在保护错误行为**，比缺测试更危险。
 
@@ -344,8 +346,8 @@ frontend/node_modules/  frontend/dist/     frontend/.zcode/
 > 是**假失败**（浪费排查时间）或**假通过**（掩盖真缺陷），两者都比没有脚本更危险。
 > 修正后 7 步全 PASS（`exit=0`），并保留 `SKIP` 语义用于"数据前提缺失"。
 
-**当前基线（2026-09-24 17:05 实测）**：后端 `pytest -q` → **244 passed**；
-后端**反序文件列表**跑 → **244 passed**（顺序依赖已消除）；前端 `npm test` → **67 passed**；
+**当前基线（2026-09-24 18:2x 实测）**：后端 `pytest -q` → **246 passed**；
+后端**反序文件列表**跑 → **246 passed**（顺序依赖已消除）；前端 `npm test` → **68 passed**；
 `ruff check` → All checks passed；`migration_preflight.py` → 12 项全 PASS（主库 `20260924_15`）；
 **真启动服务端到端验收** → `scripts/live_acceptance.py` **7 步全 PASS / exit=0**。
 **任何提交不得低于此基线**。
@@ -416,7 +418,7 @@ python -m ruff format .         # 格式化
 | 下一步 | 逐步收紧规则集（先移除 `B008` 例外，再启用 `E501`） | 待存量格式化 |
 | 长期 | 追加 `mypy` 关键模块类型检查 | 规划中 |
 
-**当前基线（2026-09-24 17:05 实测）**：`ruff check` → All checks passed；后端 `pytest -q` → **244 passed**（反序同样 244 passed）；前端 `npm test` → **67 passed**；`migration_preflight.py` → 12 项全 PASS（`P0_fail=0`）；`docker_feasibility.py` → 12 项全 PASS；`tls_feasibility.py` → 8 项全 PASS。
+**当前基线（2026-09-24 18:2x 实测）**：`ruff check` → All checks passed；后端 `pytest -q` → **246 passed**（反序同样 246 passed）；前端 `npm test` → **68 passed**；`migration_preflight.py` → 12 项全 PASS（`P0_fail=0`）；`docker_feasibility.py` → 12 项全 PASS；`tls_feasibility.py` → 8 项全 PASS。
 
 > **规则集说明**：首轮启用时出现 509 条告警，其中 `B008`（FastAPI `Depends()` 必须写在默认参数）等属框架惯用法误报，已按「只报功能性缺陷」原则显式豁免。豁免项均在 `pyproject.toml` 中标注原因与「只减不增」约束，不允许无理由扩大豁免。
 
@@ -480,7 +482,7 @@ python -m ruff format .         # 格式化
 - [ ] 文件与函数规模未超 §5 阈值
 - [ ] 结构变更走 Alembic 迁移且 `downgrade()` 可用（§6）
 - [ ] 新增能力带测试；权限改动已更新 `test_security.py`（§8）
-- [ ] `ruff check` 全绿；`pytest -q` ≥ 244 passed；反序跑同样 ≥ 244 passed；`npm test` ≥ 67 passed
+- [ ] `ruff check` 全绿；`pytest -q` ≥ 246 passed；反序跑同样 ≥ 246 passed；`npm test` ≥ 68 passed
 - [ ] 测试可重复（同一库连跑两次全绿）且可并发（多进程各自独立库）
 - [ ] 涉及结构变更时 `scripts/migration_preflight.py` 12 项全 PASS（P0 未清零不得执行）
 - [ ] 涉及"可运行/可部署"的结论时，已真启动服务跑过 `scripts/live_acceptance.py` 且全 PASS（T-13）

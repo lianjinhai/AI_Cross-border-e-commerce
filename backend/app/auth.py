@@ -117,10 +117,7 @@ def get_current_user(
             raise HTTPException(status_code=403, detail="该租户服务授权已到期，请续期后代客访问")
         return _ImpersonatedUser(operator, tid)
     user = operator
-    if user.role == "supplier" and not (
-            request.url.path.startswith("/api/factory-network/portal/") or
-            request.url.path == "/api/factory-network/portal/me" or
-            request.url.path == "/api/auth/me"):
+    if user.role == "supplier" and not _is_factory_scope_path(request.url.path):
         raise HTTPException(status_code=403, detail="工厂门户账号仅可维护本厂资料")
     if user.role == "superadmin":
         # 平台身份没有业务 Workspace：直接调用租户业务 API 会以空 tenant 写入，
@@ -157,6 +154,33 @@ def _is_platform_scope_path(path: str) -> bool:
     if path.startswith("/api/shops/platform_rules"):
         return True
     return any(path.startswith(prefix) for prefix in _PLATFORM_SCOPE_PREFIXES)
+
+
+# 工厂门户账号允许直接访问的端点。
+#
+# G-3（工厂 Context 通道）：在原有「门户资料」之外，额外放行 `/api/me/*`
+# 的**只读**端点，让工厂账号能取到自己的 Workspace Context。
+#
+# 为什么必须放行：前端 `permissions.js` 的身份解析以 Context 为权威源、
+# legacy `localStorage` 仅作兜底。工厂账号取不到 Context 时，其全部权限判断
+# 都只能落在 legacy 分支上——这正是 Phase 1.8「删除旧入口」卡住的唯一前置。
+#
+# 为什么**只放行读**：`/api/me/workspaces/{id}/switch` 是写语义端点
+# （会审计 + 未来会持久化活动 Workspace）。工厂账号的活动 Workspace 由
+# `SupplierPortalMember` 唯一确定，不存在「可切换」的第二个 Workspace，
+# 放行它既无业务意义，又会扩大攻击面。因此这里用**精确白名单**而非前缀匹配。
+_FACTORY_SCOPE_PATHS = {
+    "/api/auth/me",
+    "/api/me/workspaces",
+    "/api/me/workspace-context",
+}
+
+
+def _is_factory_scope_path(path: str) -> bool:
+    """工厂门户账号的可达路径判定（门户资料 + 只读身份查询）。"""
+    if path.startswith("/api/factory-network/portal/"):
+        return True
+    return path in _FACTORY_SCOPE_PATHS
 
 
 def require_write(user: User = Depends(get_current_user)) -> User:

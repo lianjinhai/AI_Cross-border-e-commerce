@@ -248,3 +248,82 @@ def test_trace_id_is_unique_per_resolution(client):
         second = wc.resolve_workspace_context(db, admin)
     assert first.trace_id and second.trace_id
     assert first.trace_id != second.trace_id
+
+
+def test_inactive_portal_binding_grants_no_permissions(client):
+    """已停用的门户绑定不得授予任何业务权限（fail-closed）。
+
+    真实缺陷（G-3 排查中发现）：`build_factory_context()` 查询
+    `SupplierPortalMember` 时**只按 user_id 过滤、未校验 status**，而路由层
+    `_portal_scope` 一直带 `status == "active"`。两条路径判定不一致，形成
+    fail-open：绑定停用后，门户 API 拒绝（403），但 Context 仍宣称
+    `supply:read/supply:write`。
+
+    影响面随 G-3 放大：`/api/me/workspace-context` 现已对工厂账号开放，
+    Context 是前端**权威**权限来源（`permissions.js` 的 legacy 仅兜底），
+    于是表现为「界面按钮可点、实际请求 403」；且 `require_permission`
+    也以 Context 为权威判定路径，属后端鉴权面。
+
+    对照断言：MEMBERSHIP 路径（`_load_active_membership`）一直带
+    `status='ACTIVE'`，本条只补工厂路径的同等校验。
+    """
+    from app.auth import hash_password
+    from app.models import Supplier, SupplierPortalMember
+
+    with SessionLocal() as db:
+        tenant = _user(db, "admin").tenant_id
+        supplier = Supplier(tenant_id=tenant, name="ctx-inactive-supplier")
+        db.add(supplier)
+        db.flush()
+        account = User(tenant_id=tenant, username="ctx-inactive-portal",
+                       password_hash=hash_password("x"), display_name="停用门户",
+                       role="supplier", status="active")
+        db.add(account)
+        db.flush()
+        member = SupplierPortalMember(tenant_id=tenant, supplier_id=supplier.id,
+                                      user_id=account.id, status="inactive")
+        db.add(member)
+        db.commit()
+        try:
+            ctx = wc.resolve_workspace_context(db, account)
+            # 绑定已停用 → 与「未绑定」同等对待：无权限、无 Workspace
+            assert ctx.source == wc.SOURCE_FACTORY
+            assert ctx.permissions == frozenset(), "停用绑定不得授予权限"
+            assert ctx.workspace_id is None, "停用绑定不得暴露 Workspace"
+            assert ctx.is_factory_collaborator() is True
+        finally:
+            db.query(SupplierPortalMember).filter(
+                SupplierPortalMember.user_id == account.id).delete()
+            db.delete(account)
+            db.delete(supplier)
+            db.commit()
+
+
+def test_active_portal_binding_still_grants_permissions(client):
+    """对照组：status='active' 的绑定必须正常授权（防止把校验改过头）。"""
+    from app.auth import hash_password
+    from app.models import Supplier, SupplierPortalMember
+
+    with SessionLocal() as db:
+        tenant = _user(db, "admin").tenant_id
+        supplier = Supplier(tenant_id=tenant, name="ctx-active-supplier")
+        db.add(supplier)
+        db.flush()
+        account = User(tenant_id=tenant, username="ctx-active-portal",
+                       password_hash=hash_password("x"), display_name="有效门户",
+                       role="supplier", status="active")
+        db.add(account)
+        db.flush()
+        db.add(SupplierPortalMember(tenant_id=tenant, supplier_id=supplier.id,
+                                    user_id=account.id, status="active"))
+        db.commit()
+        try:
+            ctx = wc.resolve_workspace_context(db, account)
+            assert ctx.permissions == frozenset({"supply:read", "supply:write"})
+            assert ctx.workspace_id == supplier.tenant_id
+        finally:
+            db.query(SupplierPortalMember).filter(
+                SupplierPortalMember.user_id == account.id).delete()
+            db.delete(account)
+            db.delete(supplier)
+            db.commit()

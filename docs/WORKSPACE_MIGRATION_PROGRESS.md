@@ -183,7 +183,8 @@ Phase 1 解除条件核对：
 | 菜单与权限判断切 Context | ✅ 完成 | `Layout.vue` 全部走 `roleKey()`/`canAdmin()`；`ROLE_LABELS` 覆盖新枚举 |
 | 页面身份来源收口 | ✅ 完成 | `Users.vue`→`contextUserId()`；`PlatformAdmin.vue`→`roleKey()`；代客不再伪造角色 |
 | 代客会话一致性 | ✅ 完成 | 进入/退出/401 三条路径统一清 Context + 代客标记；`me.py` 三端点透传 `is_impersonating` |
-| 删除 legacy 入口 | ⏸ **暂缓（有依据）** | 工厂账号 `/api/me/*` 返回 403 是**既有契约**（`test_workspace_context_api.py` 固化，G-3）。删 legacy 兜底会让工厂门户直接不可用。**前置条件**：先为工厂账号开通 Context 通道，再删除 |
+| 工厂账号 Context 通道（G-3） | ✅ **已完成（2026-09-24）** | `/api/me/workspaces` 与 `/api/me/workspace-context` 已对工厂账号放行（**只读**，`/switch` 仍拒——工厂无可切换项）。真启动服务端到端实测通过：工厂真登录后取到 `source=FACTORY` 的 Context。**顺带修掉一个 fail-open 缺陷**（`build_factory_context` 未校验绑定 `status`，见 `docs/DECISIONS.md` D23） |
+| 删除 legacy 入口 | ⏳ **阻塞项已清除，待评估** | 原阻塞理由「工厂账号拿不到 Context」**已解决**。剩余理由是「Context 请求可能失败（网络抖动/5xx）」——即兜底从「身份来源之一」降级为「异常降级路径」。建议与 Phase 2 的 Agent Tool Layer 一起做（两者都涉及权限判定入口统一） |
 
 > **legacy 依赖点已收敛到 3 处**（`permissions.js` 文件头声明的 `currentUser()`/`role()`/
 > `LEGACY_ROLE_MAP`），其余代码禁止再读 `localStorage.erp_user.role`。
