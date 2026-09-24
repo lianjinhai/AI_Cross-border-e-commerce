@@ -84,7 +84,8 @@
 ① 删店铺物理删除撞 5 张表外键（改为归档，见 `DECISIONS.md` D7）；
 ② `purge_demo_data` 未按外键拓扑序删除（抽出 `services/tenant_data_purge.py`）。
 新增回归测试 `tests/test_shop_archive_and_purge.py`（3 项）。
-**当前测试基线（2026-09-24 实测）：后端 199 passed / 前端 51 passed / ruff 全绿 / 预检器 12 项全 PASS。**
+**当前测试基线以 `docs/baseline.json` 为单一事实源**（由 `backend/scripts/refresh_test_baseline.py`
+采集，禁止手工编辑）；另有 `ruff` 全绿 / 预检器 12 项全 PASS。
 
 ## 本轮新增交付物
 
@@ -117,8 +118,8 @@
 
 | 验证项 | 结果 |
 |---|---|
-| 后端全量回归 | **131 passed** |
-| 前端测试 | **32 passed** |
+| 后端全量回归 | **131 passed** <!-- docs-ok: 2026-09-23 当次实测史实 --> |
+| 前端测试 | **32 passed** <!-- docs-ok: 2026-09-23 当次实测史实 --> |
 | 代码检查 | `ruff check` → **All checks passed** |
 | 预检器 | 12 项全 PASS，`exit_code=0` |
 | 主库迁移执行 | `20260922_01` → `20260923_09`，退出码 0 |
@@ -163,7 +164,7 @@ Phase 1 解除条件核对：
 |---|---|---|---|---|
 | R-01 | ~~仓库未纳入 Git~~ | ~~**P0**~~ | ✅ **已完成（2026-09-24）** | 已 `git init -b main` + 首次提交 `6215d49`（208 文件 / 0.87 MB / `fsck` 干净）；提交前补齐 `.gitignore` 冷备目录与临时脚本缺口，新增 `.gitattributes` 锁定 LF 行尾（防 `docker-entrypoint.sh` 变 CRLF 导致容器 `bad interpreter`） |
 | R-02 | ~~P1-10 Setting 隔离未实施~~ | ~~P1~~ | ✅ **已完成** | 迁移 `20260923_10_setting_scope.py` 已执行；`services/settings_service.py` 三级回退 + 写入按 key 分流；5 项测试通过 |
-| R-03 | 40 张含 `tenant_id` 的表缺外键 | P1 | **未完成** | 实测：43 张含 `tenant_id`，仅 3 张声明 `FK → tenants`，**缺 40 张**。导致 `foreign_key_check=0` 不能作为租户隔离合规证明（DEBT-03） |
+| R-03 | ~~40 张含 `tenant_id` 的表缺外键~~ | ~~P1~~ | ✅ **已完成（2026-09-24）** | 迁移 `20260924_16` 补齐；**2026-09-24 复测：48 张含 `tenant_id` 的表，48 张全部声明 `FK → tenants`，缺口 0**（原写「43 张 / 缺 40 张」是迁移前快照）。对应 DEBT-03 已关闭 |
 | R-04 | `workspace_profiles.owner_user_id` 全为 NULL | P2 | **未完成** | 实测：2 行，`owner_user_id` **均为 NULL**（未回填）。Workspace 所有者字段在 Phase 1 未被写入，Phase 2 引入 Workspace 管理界面时补齐 |
 | R-05 | `membership_data_scopes` 0 行 | P2 | **未完成** | 实测 0 行。Guardrail 第二道闸（数据范围）暂无数据支撑，Phase 2 落地时填充 |
 | R-06 | ~~tenants 中 5 个 `probe tenant` 测试残留（id 2,3,4,5,7）~~ | ~~P2~~ | ✅ **已完成（2026-09-24）** | 实测仅剩 2 个租户（id 1 演示商家、id 6 隔离测试租户）；5 个 probe tenant 及其 25 行关联数据已清理（清理前冷备 `_erp_backups/erp-20260924-010314-pre-probe-cleanup.db`）。**残余**：`users` 2 / `products` 13 / `schedules` 11 行仍是 probe 命名，见下方「主库残余测试数据」 |
@@ -171,7 +172,7 @@ Phase 1 解除条件核对：
 | R-08 | ~~`backend/` 根目录 3 个 `.db`（其中 2 个无引用）~~ | ~~P2~~ | ✅ **已完成** | 实测仅剩 `erp.db`；测试库已改 PID 隔离并自动清理 |
 | R-09 | ~~`docs/` 活文档与一次性报告混放~~ | ~~P2~~ | ✅ **已完成** | 11 篇活文档 / 14 篇已归档（`docs/archive/`）；活跃文档失效引用已归零 |
 
-**剩余 3 项**：R-03（P1，Phase 2 结构收敛）、R-04 / R-05（P2，Phase 2 处理）。
+**剩余 2 项**：R-04 / R-05（均为 P2，Phase 2 处理）。
 **R-01 已于 2026-09-24 完成**（仓库纳入 Git，唯一 P0 债务清零）。
 **R-07 已于 2026-09-24 完成**（Phase 1.8 前端 Context 接入收口）。
 
@@ -184,7 +185,9 @@ Phase 1 解除条件核对：
 | 页面身份来源收口 | ✅ 完成 | `Users.vue`→`contextUserId()`；`PlatformAdmin.vue`→`roleKey()`；代客不再伪造角色 |
 | 代客会话一致性 | ✅ 完成 | 进入/退出/401 三条路径统一清 Context + 代客标记；`me.py` 三端点透传 `is_impersonating` |
 | 工厂账号 Context 通道（G-3） | ✅ **已完成（2026-09-24）** | `/api/me/workspaces` 与 `/api/me/workspace-context` 已对工厂账号放行（**只读**，`/switch` 仍拒——工厂无可切换项）。真启动服务端到端实测通过：工厂真登录后取到 `source=FACTORY` 的 Context。**顺带修掉一个 fail-open 缺陷**（`build_factory_context` 未校验绑定 `status`，见 `docs/DECISIONS.md` D23） |
-| 删除 legacy 入口 | ✅ **已完成（2026-09-24，D24）** | 采纳「写权限 fail-closed + 路由兜底保留」：canWrite/canAdmin/canApprove/can 在 Context 不可用时**一律 false**，LEGACY_CAPABILITIES 兜底表**整体删除**；oleKey/outeRedirect/defaultLanding 的 legacy 兜底保留（否则 Context 故障时平台/工厂账号会被弹到无权页面，且改跳登录页会引入重定向环）。**残留**：伪造 rp_user.role 仍能影响路由与菜单（UI 层，非数据越权，后端已实测兜住） |
+| 删除 legacy 入口 | ✅ **已完成（2026-09-24，D24）** | 采纳「写权限 fail-closed + 路由兜底保留」：canWrite/canAdmin/canApprove/can 在 Context 不可用时**一律 false**，LEGACY_CAPABILITIES 兜底表**整体删除**；
+oleKey/
+outeRedirect/defaultLanding 的 legacy 兜底保留（否则 Context 故障时平台/工厂账号会被弹到无权页面，且改跳登录页会引入重定向环）。**残留**：伪造 rp_user.role 仍能影响路由与菜单（UI 层，非数据越权，后端已实测兜住） |
 
 > **legacy 依赖点已收敛到 3 处**（`permissions.js` 文件头声明的 `currentUser()`/`role()`/
 > `LEGACY_ROLE_MAP`），其余代码禁止再读 `localStorage.erp_user.role`。

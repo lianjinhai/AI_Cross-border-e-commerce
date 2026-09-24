@@ -188,7 +188,8 @@ def gen_order(db, tenant_id: int, platform: str | None = None) -> Order         
 
 **覆盖范围**：登录/鉴权 401、商品列表与详情、采集、选品评分、供应商评分与预测、合规检测(product)、Listing 生成→发布、定价建议、订单同步、客服 auto_reply、工作流 auto_listing 运行至 success 且 steps 全 success、BI dashboard、知识库搜索、AI chat；另有安全矩阵（RBAC、跨租户隔离、JWT 撤销）、四域深度对抗（状态机/越权/财务口径/协议签名）、Phase 1 Workspace 系列、Supply/Sales 边界、店铺归档、配置作用域、生产口令生效、迁移预检与备份演练。断言核心字段存在与状态流转，不追求覆盖全部分支。
 
-**当前基线（2026-09-24 实测）**：`179 passed`。测试必须可重复（同库连跑两次）且可并发（多进程独立库）。
+**当前基线**：测试用例数以 `docs/baseline.json` 为单一事实源（由 `backend/scripts/refresh_test_baseline.py` 采集）。
+测试必须可重复（同库连跑两次）且可并发（多进程独立库）。
 
 ## 8. 前端契约（C1 名下框架+全部页面）
 

@@ -1834,3 +1834,83 @@ Orchestrator 编排**。
 Agent OS 架构文档 §3/§4/§11；新增 `app/services/costing.py`、
 `tests/test_agent_layer_boundaries.py`（7 用例）；改写 `app/agents/pricing.py`
 （委托共享实现）、`app/agents/factory_opportunity.py`（去 P2P）。
+
+---
+
+## D30：文档一致性治理 —— 把「文档与代码脱节」变成 CI 可拦的缺陷类别（2026-09-24）
+
+**背景**：规范 Doc-5 早就写着「禁止文档与代码脱节：文档中引用的路径、字段名、
+状态值必须可被检索验证」，但**从未有任何工具执行它**，全靠人工记忆。本轮做
+Phase 1 收尾核验时实测发现 **26 处真实漂移**，且都属于「数字/状态看起来合理、
+人工评审必然漏掉」的类型。
+
+### 一、实测漂移清单（26 处）
+
+| 类别 | 数量 | 典型实例 |
+|---|---|---|
+| A. 基线数字过期 | 17 | 同一时点 6 个文档并存 **199 / 257 / 264 / 179 / 165** 五个不同的「当前基线」，真实值 **291**；`AGENTS.md` 写 264、规范 §8 写 264、§9.4 写 257、`CONTRACT.md` 写 179、`WORKSPACE_MIGRATION_PROGRESS.md` 写 199、`项目介绍与功能地图.md` 写 165 |
+| B. 路径引用失效 | 8 | 历史叙述里引用的已删除临时文件（`_h.py`/`_w.py`/`_cm.txt`）；另有 2 处是**提案中的未来文件**（`app/roles.py`）被当成现有路径 <!-- docs-ok: 描述历史漂移本身 --> |
+| C. 台账状态矛盾 | 1 | `WORKSPACE_MIGRATION_PROGRESS.md` 的 R-03 写「40 张表缺外键 / **未完成**」，实测 **48/48 全部受约束**、DEBT-03 早已关闭 |
+
+**为什么人工评审必然漏掉**：这些数字都「在合理区间内」（199~291 都是可信的用例数），
+状态描述也都语法通顺。只有**拿工具去实测**才能发现不一致。
+
+### 二、根因
+
+**基线数字被手工抄写到 N 个地方**。任何一处更新时，其余 N-1 处不会自动跟着变；
+而「数字看起来合理」让漂移长期不可见。这是**结构性问题**，不是某次疏忽。
+
+### 三、治理方案：单一事实源 + 自动校验
+
+| 组件 | 作用 |
+|---|---|
+| `docs/baseline.json` | **单一事实源**（后端/前端用例数与文件数）。由脚本生成，**禁止手工编辑** |
+| `scripts/refresh_test_baseline.py` | 采集器：`pytest --collect-only`（**只收集不执行，零副作用**，实测 0.17s）+ vitest json reporter。支持 `--check` 只比对不写盘 |
+| `scripts/check_docs_consistency.py` | 校验器：A 基线数字一致 / B 路径引用有效 / C 台账状态自洽 |
+| CI（`.github/workflows/ci.yml`） | 新增 `baseline` job 跑 `refresh_test_baseline.py --check`；`backend` job 追加文档校验 |
+
+**活文档改为「引用」而非「写数字」**：`AGENTS.md`、`CONTRIBUTING.md`、规范 §8/§9.4/§12、
+`CONTRACT.md`、`WORKSPACE_MIGRATION_PROGRESS.md`、`项目介绍与功能地图.md` 全部
+改为「见 `docs/baseline.json`」。**这样数字变化时无需改任何文档**。
+
+**豁免机制（防止校验器沦为噪音后被整体关掉）**：
+- 行内 `<!-- docs-ok: 原因 -->`：豁免该行，用于**历史性记录**（如 DECISIONS 里
+  「当时实测 257 passed」这类不可改写的史实）。已用于 `WORKSPACE_MIGRATION_PROGRESS.md`
+  的「本轮验证证据」表与规范 DEBT-22 的当次实测值。
+- 文件级 `HISTORICAL_DOCS`：`docs/DECISIONS.md`、`docs/archive/`、`docs/子代理实施索引-*`、
+  `docs/adr/` 天然含历史数字，不参与基线数字校验。
+
+### 四、验证
+
+| 验证 | 结果 |
+|---|---|
+| 校验器判别力 A（塞回过期数字） | ✅ exit=2，精确报 `AGENTS.md:22 基线数字 264 与 docs/baseline.json 不一致（期望 [72, 291]）` |
+| 校验器判别力 B（注入失效路径） | ✅ exit=2，精确报出该路径 |
+| 校验器判别力 C（制造台账矛盾） | ✅ exit=2，精确报 `DEBT-03 ... 此处仍写「未完成」` |
+| 采集器判别力（篡改事实源为 999） | ✅ `--check` exit=2，打印「记录 999 / 实测 302」对照 |
+| 还原后 | ✅ 三项全 PASS，exit=0 |
+| 回归 | ✅ 后端 **302 passed**（291 + 11 新增）；`ruff check app/ tests/ scripts/` 全绿 |
+
+**测试自身挖出的 bug**：`check_paths` 用 `live_docs + glob(docs/*.md)` 拼接目标，
+两者重叠导致**同一问题报两遍**（实测重复率 100%）→ 改为按解析后绝对路径去重。
+这条已固化为 T-46——重复告警会让使用者对整个门禁失去信任。
+
+### 五、附带修复
+
+`docs/WORKSPACE_MIGRATION_PROGRESS.md` 实测 **171 处 CRLF**，违反 `.gitattributes`
+的 `* text=auto eol=lf` 策略（git 一度把它判定为 `-text`，行尾策略失效）。已统一为 LF，
+`git check-attr` 现为 `text: auto` / `eol: lf`。
+
+### 六、补充规范
+
+| 编号 | 规则 |
+|---|---|
+| Doc-6 | **测试用例数只有一个来源**：`docs/baseline.json`。活文档不得写具体数字，只写「见 docs/baseline.json」；历史性记录必须加 `docs-ok` 标记豁免 |
+| Doc-7 | **文档里的引用必须是「可解析路径」**，且**提案中的未来文件**要显式标注（如「提案，未创建」）——否则校验器无法区分「写错路径」与「规划中的文件」 |
+| T-45 | **守卫型工具（校验器/检查器）的测试重点是「判别力」而非「跑通」**。恒真通过的校验器比没有校验器更危险——它让人误以为被校验对象是自洽的。每个检查项都要有「构造违规 → 断言被抓到」+「合规输入不得误报」双向用例 |
+| T-46 | **同一份文档不得被扫描两遍**。集合拼接在重叠时会让同一问题重复上报；用解析后的绝对路径去重 |
+
+**关联**：Doc-5（首次有了执行工具）、Doc-6 / Doc-7、T-45 / T-46、
+`docs/WORKSPACE_MIGRATION_PROGRESS.md` R-03（状态纠正）；新增
+`docs/baseline.json`、`scripts/refresh_test_baseline.py`、`scripts/check_docs_consistency.py`、
+`tests/test_docs_consistency.py`（11 用例）；改写 7 个文档的基线段落 + CI 新增 baseline job。

@@ -19,10 +19,10 @@
 ### 常用命令
 
 ```bash
-# 后端测试（基线：264 passed）
+# 后端测试（基线见 docs/baseline.json）
 cd backend && python -m pytest -q
 
-# 前端测试（基线：72 passed）与构建
+# 前端测试（基线见 docs/baseline.json）与构建
 cd frontend && npm test && npm run build
 
 # 启动服务（开发）
@@ -139,7 +139,7 @@ routers/ -> agents/ -> tools/ -> services/ -> models.py
 - [ ] 文件与函数规模未超阈值
 - [ ] 结构变更走迁移且 `downgrade()` 可用
 - [ ] 新增能力带测试；权限改动已更新权限矩阵
-- [ ] `pytest -q` 不低于 264 passed（反序跑同样）；`npm test` 不低于 72 passed；`ruff check` 全绿
+- [ ] `pytest -q` 不低于 `docs/baseline.json` 的后端基线（反序跑同样）；`npm test` 不低于其前端基线；`ruff check` 全绿
 - [ ] 涉及「可运行/可部署」结论时，已跑 `scripts/e2e_feasibility.py` 且全 PASS（T-13）
 - [ ] 涉及容器 / TLS / 代理配置改动时，已跑 `scripts/docker_feasibility.py`（12 项）与 `scripts/tls_feasibility.py`（8 项）
 - [ ] 改动构建链路（Dockerfile / 依赖文件 / .gitattributes / 入口脚本）后，已跑 `scripts/docker_feasibility.py` 且全 PASS（DP-1）

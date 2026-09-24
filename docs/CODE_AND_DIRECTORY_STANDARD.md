@@ -329,6 +329,8 @@ frontend/node_modules/  frontend/dist/     frontend/.zcode/
 | T-42 | **静态扫描器必须区分相对导入层级**。`from .x`（level=1，包内同级）与 `from ..x`（level=2，跨层）语义完全不同；不区分会把 `.models` / `.db` 误报成 P2P，门禁沦为噪音后真正违规被淹没（实测第一版即如此）。扫描器同样需要**判别力样本**验证，否则「0 处违规」可能只是检测器失灵 |
 | T-43 | **已登记债务的豁免清单要反向断言「债务仍存在」**。只写「豁免」时，债务修好后豁免项会悄悄变成死代码，台账与实际长期脱节（规范 Doc-5）。`test_known_service_to_agent_debt_is_still_present` 即为此设——修好即变红，强制同步台账 |
 | T-44 | **测试夹具的表名必须与生产一致**。规则/清单类代码常按生产表名写死（如 `MARKER_RULES` 里的 users/products/...），玩具表名（`parents`/`children`）会让被测脚本一行都识别不到——测试「跑通却什么都没验证」，是最隐蔽的**恒真断言**。实测 `test_cleanup_probe_data.py` 首版 5 项红即由此而来 |
+| T-45 | **守卫型工具（校验器/检查器）的测试重点是「判别力」而非「跑通」**。恒真通过的校验器比没有校验器更危险——它让人误以为被校验对象是自洽的。每个检查项都必须有「构造违规 → 断言被抓到」的用例，外加「合规输入不得误报」的反向用例 |
+| T-46 | **同一份文档不得被扫描两遍**。集合拼接（`live_docs + glob(...)`）在两者重叠时会让同一问题重复上报（实测重复率 100%）。用解析后的绝对路径去重——重复告警会让使用者对整个门禁失去信任 |
 
 > **T-4 说明**：本轮修复中，`test_security.py` 曾把「superadmin 可访问租户业务 API」固化为正确行为，`test_api.py` 曾把「租户停用」误断言为「租户到期」。两者都是断言与语义脱节，属于**测试在保护错误行为**，比缺测试更危险。
 
@@ -388,11 +390,16 @@ frontend/node_modules/  frontend/dist/     frontend/.zcode/
 > 是**假失败**（浪费排查时间）或**假通过**（掩盖真缺陷），两者都比没有脚本更危险。
 > 修正后 7 步全 PASS（`exit=0`），并保留 `SKIP` 语义用于"数据前提缺失"。
 
-**当前基线（2026-09-24 19:1x 实测）**：后端 `pytest -q` → **264 passed**；
-后端**反序文件列表**跑 → **264 passed**（顺序依赖已消除）；前端 `npm test` → **72 passed**；
-`ruff check` → All checks passed；`migration_preflight.py` → 12 项全 PASS（主库 `20260924_16`）；
-**真启动服务端到端验收** → `scripts/live_acceptance.py` **7 步全 PASS / exit=0**。
-**任何提交不得低于此基线**。
+**当前基线以 `docs/baseline.json` 为单一事实源**（由 `backend/scripts/refresh_test_baseline.py`
+采集，**禁止手工编辑**）：后端 `pytest -q` 与**反序文件列表**跑均应达到其 `backend.tests`；
+前端 `npm test` 应达到其 `frontend.tests`。其余门禁：`ruff check` → All checks passed；
+`migration_preflight.py` → 12 项全 PASS；**真启动服务端到端验收** →
+`scripts/live_acceptance.py` 7 步全 PASS / exit=0。**任何提交不得低于此基线。**
+
+> **为什么不再写具体数字（2026-09-24 改）**：基线数字此前手工维护在 6 个文档里，
+> 实测**同时过期且互不一致**（并存 199 / 257 / 264 / 179 / 165 五个值，真实值 291）。
+> 现由 `scripts/check_docs_consistency.py` 在 CI 中强制校验，活文档里出现与事实源
+> 不符的 `N passed` 会直接判失败。
 
 > **反序跑是强制自检项（D16 新增）**：顺序依赖是"单跑绿、全量红"的唯一根因，而普通全量跑
 > 未必能暴露它（取决于文件名字典序）。提交涉及测试夹具/种子数据的改动前，必须额外跑一次
@@ -460,7 +467,7 @@ python -m ruff format .         # 格式化
 | 下一步 | 逐步收紧规则集（先移除 `B008` 例外，再启用 `E501`） | 待存量格式化 |
 | 长期 | 追加 `mypy` 关键模块类型检查 | 规划中 |
 
-**当前基线（2026-09-24 18:4x 实测）**：`ruff check` → All checks passed；后端 `pytest -q` → **257 passed**（反序同样 257 passed）；前端 `npm test` → **72 passed**；`migration_preflight.py` → 12 项全 PASS（`P0_fail=0`）；`docker_feasibility.py` → 12 项全 PASS；`tls_feasibility.py` → 8 项全 PASS。
+**当前基线**：测试用例数以 `docs/baseline.json` 为单一事实源；`ruff check` → All checks passed；`migration_preflight.py` → 12 项全 PASS（`P0_fail=0`）；`docker_feasibility.py` → 12 项全 PASS；`tls_feasibility.py` → 8 项全 PASS。
 
 > **规则集说明**：首轮启用时出现 509 条告警，其中 `B008`（FastAPI `Depends()` 必须写在默认参数）等属框架惯用法误报，已按「只报功能性缺陷」原则显式豁免。豁免项均在 `pyproject.toml` 中标注原因与「只减不增」约束，不允许无理由扩大豁免。
 
@@ -474,7 +481,9 @@ python -m ruff format .         # 格式化
 | Doc-2 | 一次性报告完成后移入 `docs/archive/`，文件名保留日期 |
 | Doc-3 | 活文档必须维护「最后更新」与「状态」字段 |
 | Doc-4 | 接口变更必须同步 `docs/CONTRACT.md`；Agent 相关变更必须同步 Agent OS 架构文档 |
-| Doc-5 | 禁止文档与代码脱节：文档中引用的路径、字段名、状态值必须可被检索验证 |
+| Doc-5 | 禁止文档与代码脱节：文档中引用的路径、字段名、状态值必须可被检索验证。**由 `scripts/check_docs_consistency.py` 在 CI 强制**（基线数字一致 / 路径引用有效 / 台账状态自洽） |
+| Doc-6 | **测试用例数只有一个来源**：`docs/baseline.json`（由 `scripts/refresh_test_baseline.py` 采集，禁止手工编辑）。活文档**不得写具体数字**，只写「见 `docs/baseline.json`」——数字会随施工变化，手工抄写到 N 个文档必然漂移。历史性记录（决策记录里的「当次实测」）必须加 `<!-- docs-ok: 原因 -->` 行内标记豁免 |
+| Doc-7 | **文档里的引用必须是「可解析路径」而非「裸文件名」**，且**提案中的未来文件**要显式标注（如「提案，未创建」）——否则校验器无法区分「写错路径」与「规划中的文件」 |
 
 ---
 
@@ -505,7 +514,7 @@ python -m ruff format .         # 格式化
 | DEBT-19 | ~~删店铺直接物理删除，撞 5 张表外键 → 500~~ | ~~P0~~ | `app/routers/shops.py` | ✅ 已完成：改为归档式软删除（`shops.archived_at`，Revision E），凭证即时失效 |
 | DEBT-20 | ~~`purge_demo_data` 未按外键拓扑序删除 → 必然 500~~ | ~~P0~~ | `app/routers/shops.py` | ✅ 已完成：抽出 `services/tenant_data_purge.py`，子表在前、父表在后 |
 | DEBT-21 | 店铺可见性守卫散落在各路由，靠人肉记得排除归档行 | **P2** | `app/services/shop_scope.py` | 已提供统一入口 `active_shop()`；`routers/orders.py` 已改用，其余 3 处为内联判断，Phase 2 统一 |
-| DEBT-22 | ~~`requirements.txt` 全为 `>=`，构建不可复现~~ | ~~**P1**~~ | `backend/requirements*.txt` | ✅ **已完成（2026-09-24）**：新增 `requirements.lock.txt`（运行时 31 包）+ `requirements-dev.lock.txt`（开发 38 包），Docker 与 CI 改用锁定清单；`requirements.txt` 补齐兼容上限。实测：全新 venv 仅装运行锁可**真启动服务**（`/api/health` 200、静态前端 945 字节），开发锁下 `pytest` 231 passed |
+| DEBT-22 | ~~`requirements.txt` 全为 `>=`，构建不可复现~~ | ~~**P1**~~ | `backend/requirements*.txt` | ✅ **已完成（2026-09-24）**：新增 `requirements.lock.txt`（运行时 31 包）+ `requirements-dev.lock.txt`（开发 38 包），Docker 与 CI 改用锁定清单；`requirements.txt` 补齐兼容上限。实测：全新 venv 仅装运行锁可**真启动服务**（`/api/health` 200、静态前端 945 字节），开发锁下 `pytest` 231 passed <!-- docs-ok: 2026-09-24 当次实测史实 --> |
 | DEBT-23 | ~~无 HTTPS / 反向代理配置~~ | ~~**P0**~~ | 部署层 | ✅ **已完成（2026-09-24）**：Caddy 反向代理（自动 ACME）+ TLS 覆盖层 `docker-compose.tls.yml`；应用侧 `ERP_TRUST_PROXY_HEADERS` + `ERP_TRUSTED_PROXY_HOSTS` 两道闸；基础 compose 绑定收紧为 `127.0.0.1:8000` 并显式声明「TLS 在外部」。新增 `scripts/tls_feasibility.py`（**真 HTTPS 端到端** 8 项全 PASS）+ `tests/test_tls_proxy_config.py`（13 项）。**上一版改动藏 3 个真实缺陷已修**（starlette 模块已移除导致开关一开就崩、`=0` 被误判为已声明、基础 compose 漏声明打断既有部署）——详见 `docs/DECISIONS.md` D22 |
 | DEBT-24 | ~~`ERP_ADMIN_PASSWORD` 门禁形同虚设：`auth.admin_bootstrap_password()` 从未被调用，生产环境仍可用 `admin123` 登录~~ | ~~**P0**~~ | `app/seed.py`、`app/main.py` | ✅ **已完成**：新增 `seed._ensure_admin_password()` 并在 lifespan 调用（见 `docs/DECISIONS.md` D10.1），回归测试 3 项 |
 | DEBT-25 | 测试共享夹具跨文件 import，存在收集顺序依赖 | **P2** | `tests/` | ✅ **已完成**：夹具下沉 `tests/conftest.py`，`auth_headers` 自愈 + 用例级状态还原（见 D10.2） |
@@ -530,7 +539,7 @@ python -m ruff format .         # 格式化
 - [ ] 文件与函数规模未超 §5 阈值
 - [ ] 结构变更走 Alembic 迁移且 `downgrade()` 可用（§6）
 - [ ] 新增能力带测试；权限改动已更新 `test_security.py`（§8）
-- [ ] `ruff check` 全绿；`pytest -q` ≥ 264 passed；反序跑同样 ≥ 264 passed；`npm test` ≥ 72 passed
+- [ ] `ruff check` 全绿；`pytest -q` 与反序跑均 ≥ `docs/baseline.json` 的后端基线；`npm test` ≥ 其前端基线
 - [ ] 测试可重复（同一库连跑两次全绿）且可并发（多进程各自独立库）
 - [ ] 涉及结构变更时 `scripts/migration_preflight.py` 12 项全 PASS（P0 未清零不得执行）
 - [ ] 涉及"可运行/可部署"的结论时，已真启动服务跑过 `scripts/live_acceptance.py` 且全 PASS（T-13）
@@ -538,6 +547,8 @@ python -m ruff format .         # 格式化
 - [ ] 改动 TLS / 反向代理 / compose 端口映射后，已跑 `scripts/tls_feasibility.py` 且 8 项全 PASS（DP-7）
 - [ ] 偏离规范的实现已在 `docs/DECISIONS.md` 记录
 - [ ] 相关文档已同步（`CONTRACT.md` / Agent OS 架构 / 本文件）
+- [ ] 文档一致性校验通过：`cd backend && python scripts/check_docs_consistency.py` 全 PASS（Doc-5/Doc-6）
+- [ ] 用例数变化时已刷新事实源：`python scripts/refresh_test_baseline.py`（禁止手工改 `docs/baseline.json`）
 
 ---
 

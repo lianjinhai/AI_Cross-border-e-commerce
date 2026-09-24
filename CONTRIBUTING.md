@@ -99,16 +99,24 @@ npm run build          # 提交前必须构建成功
 
 ## 4. 测试基线
 
-**当前基线（2026-09-24 实测）**：
+**当前基线以 `docs/baseline.json` 为单一事实源**（由 `backend/scripts/refresh_test_baseline.py`
+从真实测试采集，**禁止手工编辑该文件**）：
 
 | 项 | 基线 | 命令 |
 |---|---|---|
-| 后端 | **264 passed**（正序与反序均为 264） | `cd backend && python -m pytest -q` |
-| 前端 | **72 passed**（5 个测试文件） | `cd frontend && npm test` |
+| 后端 | 见 `docs/baseline.json` 的 `backend.tests`（正序与反序均应一致） | `cd backend && python -m pytest -q` |
+| 前端 | 见 `docs/baseline.json` 的 `frontend.tests` | `cd frontend && npm test` |
 | 静态检查 | All checks passed | `cd backend && python -m ruff check .` |
 
-**任何提交不得低于此基线。** 数字会随施工变化，**提交前以你自己实测的结果为准**，
-并在同一次提交中把 `docs/CODE_AND_DIRECTORY_STANDARD.md` §8 的基线一并更新。
+**任何提交不得低于此基线。** 施工导致用例数变化时：
+
+1. 运行 `cd backend && python scripts/refresh_test_baseline.py` 更新事实源；
+2. 运行 `python scripts/check_docs_consistency.py` 确认文档无漂移（CI 也会拦）。
+
+> **为什么改成引用而非直接写数字**：此前基线数字手工维护在 6 个文档里，实测
+> **同时过期且互不一致**——同一时点并存 199 / 257 / 264 / 179 / 165 五个不同的
+> 「当前基线」，真实值是 291。人工抄写必然漂移且无人察觉（数字看起来都合理）。
+> 收敛到单一事实源 + 自动校验后才可能长期保持一致（见规范 §10 Doc-5）。
 
 铁律（完整规则见规范 §8 的 `T-*` 编号）：
 
