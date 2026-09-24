@@ -331,7 +331,7 @@ M6 决策解释 `ai_decisions`，迁移 `20260924_12`）。按分工，**它引�
    比结果集最稳，新增维度无需再改缓存逻辑；聚合查询走 `tenant_id+product_id` 索引，代价可接受。
 2. **报价校验与 `_owned` 对齐**：`product.tenant_id != user.tenant_id` → 404（不泄露存在性）。
 3. **代客标记显式化**：`_ImpersonatedUser` 加类属性 `is_impersonated = True`，`me.py` 用
-   `getattr(user, "is_impersonated", False)` 透传。此前只能靠 `role == "operator"` 推断，
+   `getattr(user, "is_impersonated", False)` 透传（**注**：该字段名于第十七轮统一为 `is_impersonating` 以对齐 `docs/phase1_interfaces.md` §6 冻结契约，见 D25）。此前只能靠 `role == "operator"` 推断，
    而代客态与真 operator 的 role 字符串完全相同，无法区分。
 4. **启动引导抽成 `ensureWorkspaceContext()`** 并在路由守卫每次导航时调用（已缓存则直接返回）。
    抽成独立函数而非写在守卫里：守卫是路由库内部机制，测试只能靠真实导航触发（会连带加载
@@ -1347,3 +1347,219 @@ GET /api/suppliers（应 403）   -> 403
 修改文件 `app/auth.py`、`app/services/workspace_context.py`、
 `tests/test_workspace_context_api.py`、`tests/test_workspace_context.py`、
 `frontend/src/permissions.js`、`frontend/src/router.js`、`frontend/tests/permissions*.test.js`。
+
+## D24：前端 legacy 兜底降级为「只读」而非删除 —— 写权限 fail-closed（2026-09-24）
+
+**背景**：Phase 1.8「删除旧逻辑入口」的最后一个阻塞项。`permissions.js` 保留
+legacy `localStorage.erp_user` 兜底，此前它**会授予写权限**（`LEGACY_CAPABILITIES`
+手工维护的角色→权限表）。
+
+**为什么不能直接删**：Context 请求可能失败（网络抖动、后端 5xx、F5 刷新瞬间）。
+直接删会让所有按钮消失；而「Context 不可用 → 跳登录页」会引入**无限重定向环**
+（守卫的 `authenticated` 只判 token 存在，后端 5xx 时 token 仍有效 → 跳 `/login`
+→ `defaultLanding` 弹回 `/dashboard` → 循环）。
+
+### 一、采纳方案：写权限 fail-closed，路由兜底保留
+
+| 维度 | 处理 | 理由 |
+|---|---|---|
+| **写权限**（`canWrite`/`canAdmin`/`canApprove`/`can`） | ❌ **fail-closed**：Context 不可用时一律 `false`，`LEGACY_CAPABILITIES` 整体删除 | 写权限是安全边界，不能靠客户端兜底表授予 |
+| **路由/菜单/展示**（`roleKey`/`routeRedirect`/`defaultLanding`） | ✅ **保留 legacy 兜底** | 否则 Context 故障时平台管理员与工厂账号会被弹到无权页面 |
+
+**为什么这个切分是对的**：已核实 `can()` 在 8 个视图的用法**全部是写操作**
+（`*:write` + `compliance:approve`），**无任何读权限依赖它** → fail-closed
+不会导致「页面读不出来」，只会让写按钮消失，正好等于「只读降级」。
+
+### 二、残留风险（显式记录，勿当已解决）
+
+伪造 `localStorage.erp_user.role` **仍能影响路由与菜单**（可进 `/platform-admin`
+界面渲染，接口返回 403）。这是 A′ 的固有残留——路由兜底必须保留。
+
+**属 UI 层问题，非数据越权**：后端独立鉴权已实测兜住——viewer 写商品 403、
+viewer 读 `/api/admin/users` 404、viewer 进 `/api/admin/overview` 403、
+viewer 代客进入 403。
+
+**若后续要彻底去 legacy**：必须先为「Context 故障时的路由策略」单独设计
+（例如显式「身份加载失败」页），不能直接删 `routeRedirect` 兜底。
+
+### 三、验证
+
+| 验证 | 结果 |
+|---|---|
+| 回退法判别力（DP-5） | ✅ 临时恢复兜底表 → **13 个断言变红**（证明新断言有判别力） |
+| 前端回归 | ✅ 72 passed（原 68，净增 4）；`npm run build` 成功 |
+| 后端守护测试同步 | ✅ 改写为守护**新契约**（禁止重新引入兜底表；写权限 key 扫描范围扩到整个 `src/`）——**不是放宽断言** |
+| 死代码清理 | ✅ `identitySnapshot()` / `isSuperadmin()` / `workspaceSource()`（清理前 `rg` 确认零调用点） |
+
+### 四、补充规范
+
+| 编号 | 规则 |
+|---|---|
+| T-31 | **安全边界（写权限）与体验兜底（路由/展示）必须分开决策**。把两者绑在一起会导致「要么全删、要么全留」的伪二选一 |
+| T-32 | **前端权限兜底表一律视为缺陷**。权限事实源只能是后端 Context；前端手工维护第二份表必然漂移，且可被客户端伪造 |
+
+**关联**：D15/D23（Phase 1.8）、D25（代客身份序列化）、D26（Membership 写入侧）；
+修改文件 `frontend/src/permissions.js`、`frontend/src/workspace.js`、
+`frontend/tests/permissions*.test.js`、`frontend/tests/workspace.test.js`、
+`backend/tests/test_role_permissions.py`。
+## D25：代客态 `/api/auth/me` 500 —— 鸭子类型身份对象被当 ORM 行序列化（2026-09-24）
+
+**背景**：真启动服务走代客链路（root 登录 → 进入租户 → 调 `/api/auth/me`）时
+直接 500。`GET /api/auth/me` 是前端与多个测试的**高频基础端点**，
+它崩了意味着「代客进入租户后工作台首屏必挂」。
+
+### 一、根因
+
+`get_current_user` 在代客态返回 `_ImpersonatedUser`——一个**鸭子类型替身**
+（`app/auth.py`），它没有 `__table__`；而 `/api/auth/me` 直接把它喂给
+`serialize.to_dict()`，后者遍历 `obj.__table__.columns`：
+
+```
+File "backend/app/serialize.py", line 9, in to_dict
+    for col in obj.__table__.columns:
+AttributeError: '_ImpersonatedUser' object has no attribute '__table__'
+```
+
+**为什么长期没被发现**：普通登录态拿到的是真 ORM 行，路径完全正常；
+代客态此前**零测试覆盖**（`rg "auth/me" backend/tests/` 命中的全是普通用户态），
+而前端当时也不调该端点。这是一条「只有真启动服务 + 真代客才会走到」的路径。
+
+### 二、修法：收敛到唯一序列化入口，而不是逐点打补丁
+
+新增 `identity_snapshot(user)`（`app/auth.py`）作为**唯一**身份序列化入口：
+`_ImpersonatedUser` 提供 `to_public_dict()`，其余身份走 `to_dict()`。
+
+**为什么不让 `serialize.to_dict` 去兼容鸭子类型**：那样每个「非 ORM 身份对象」
+都要在通用序列化器里加分支，`to_dict` 会逐渐承担身份语义；而身份快照的字段
+是**安全契约**（不能泄露 `password_hash`、不能泄露平台角色），必须在身份层定义。
+
+**安全语义（勿改）**：`to_public_dict()` 把 `role` 与 `tenant_id` 钉成**目标租户**
+的值（`operator` + 目标租户 id）。若返回平台账号的 `superadmin`，前端 legacy
+兜底会把代客会话当平台本尊放行到 `/platform-admin`，代客隔离失效（D19）。
+
+### 三、顺带修的隐式耦合：代客标记的唯一判定点
+
+`require_permission` 内部调 `resolve_workspace_context(db, user)` **未透传代客标记**，
+代客态会被解析成 `PLATFORM_ADMIN` + `workspace_id=None` + `permissions={'platform:admin'}`。
+
+**当前不出事靠的是巧合**：代客替身的 `role` 恰好是 `operator`，漏传标记时会落到
+LEGACY 分支、算出同样的 OPERATOR 权限。实测把透传删掉后
+`POST /api/compliance/check` 仍返回 404，**端点断言抓不到差异**。
+
+因此新增 `is_impersonating_user(user)` 作为唯一判定点，并**把字段名统一为
+`is_impersonating`**（原为 `is_impersonated`，与冻结契约 `phase1_interfaces.md`
+第 6 节的 Context 字段只差一个后缀——同一会话里两个近似标记极易看错）。
+`me.py` 三个端点同时收敛到 `_current_context()`，新增端点不会再漏透传。
+
+### 四、验证
+
+| 验证 | 结果 |
+|---|---|
+| 缺陷复现（修复前） | ✅ 500 + `AttributeError`（探针实测） |
+| 全端点差分扫描（代客 token vs operator token，167/167 覆盖） | ✅ 修复前**恰好只有** `/api/auth/me` 报代客专属 500；修复后 **0 个** |
+| 泄露扫描 | ✅ 代客态响应无 `password_hash`、无 `superadmin` 字样；`role=operator`、`tenant_id` 钉成目标租户 |
+| 真服务复验（uvicorn + 真代客 token） | ✅ 代客 `/api/auth/me` 200；代客读商品 200；代客访问 `/api/admin/*` 403；平台本尊仍 `superadmin` 且无代客标记 |
+| 回退法判别力（DP-5） | ✅ 变异 1（序列化退化）→ 3 用例红；变异 2（角色不钉租户）→ 3 用例红；变异 3（漏传标记）→ 捕获到 `{'flag': False}` |
+| 回归 | ✅ 后端 250 passed；主库 sha256 前后一致 |
+
+**注意**：`test_require_permission_sees_impersonated_context` 的判别力**不能**靠端点
+状态码实现（端点返回值对漏传标记无差异，实测确认）。唯一有判别力的写法是
+拦截 `require_permission` 的解析调用并捕获实参——补丁必须在**创建依赖之前**打
+（该函数在自身函数体内 import 解析函数，名字在调用 `require_permission(...)` 时
+绑定为 `_dep` 的闭包变量）。
+
+### 五、补充规范
+
+| 编号 | 规则 |
+|---|---|
+| T-24 | **非 ORM 身份对象必须提供自己的序列化方法**，通用 `to_dict` 不得承担身份语义。新增身份形态时只改 `identity_snapshot`，不得在各端点分别做鸭子类型判断 |
+| T-25 | **「靠巧合正确」必须显式化**。当漏传某标记恰好不改变结果时，必须补「结构性断言」（拦截调用捕获实参），而非依赖端点行为——否则将来一次无关重构就会让它静默错乱 |
+| T-26 | **同一概念的标记名必须与冻结契约一致**。`is_impersonated` / `is_impersonating` 这类只差后缀的并存命名，是排查事故的经典陷阱 |
+
+**关联**：`docs/phase1_interfaces.md` §6、D19（代客隔离）、D23（G-3）；
+新增文件 `tests/test_identity_snapshot.py`；
+修改文件 `app/auth.py`、`app/routers/auth.py`、`app/routers/me.py`。
+
+## D26：Membership 只有读取侧、没有写入侧 —— 一次挖出三个同源缺陷（2026-09-24）
+
+**背景**：Phase 1.1~1.7 实现了 `resolve_workspace_context` 的**双读**（MEMBERSHIP
+优先、LEGACY 兜底），迁移 `20260923_08` 也回填了存量数据。但**写入侧从未实现**：
+全仓没有任何代码路径为新建租户/新建用户补身份行（`rg "INSERT INTO workspace"` 为空）。
+
+### 一、三个同源缺陷（均为真库实测）
+
+| # | 缺陷 | 实测证据 | 严重度 |
+|---|---|---|---|
+| 1 | `POST /api/admin/tenants` 不建 `workspace_profiles` | 新租户 admin 的 Context `source=LEGACY_FALLBACK`（演示租户是 `MEMBERSHIP`） | **中**：Phase 1.8 删旧入口后新租户会**失去身份来源** |
+| 2 | `POST /api/auth/users` 不建 `workspace_memberships` | 新用户 `source=LEGACY_FALLBACK`、membership 行数 0 | 中：同上 |
+| 3 | `PUT /api/auth/users/{id}` 改角色只写 `users.role` | operator 降为 viewer 后 Context **仍返回 OPERATOR**（MEMBERSHIP 是权威路径，旧 `role_key` 继续生效） | **高**：**降权被静默忽略**，属安全缺陷 |
+| 4 | `DELETE /api/auth/users/{id}` 未清身份行 | `IntegrityError: FOREIGN KEY constraint failed`（`PRAGMA foreign_keys=ON`） | 中：删账号直接 500 |
+
+缺陷 1/2 是「新数据拿不到身份」，3 是「旧数据改不动权限」，4 是「删不掉」——
+**根因完全相同**：身份表没有写入口。
+
+### 二、修法：新增唯一写入口，与读取侧共用同一张映射表
+
+新增 `app/services/membership_service.py`，四个函数对应四个场景：
+
+- `ensure_workspace_profile()`：幂等建 profile（**不覆盖已有名称**——租户改名
+  不应静默改写 Workspace 名称，改名属 Phase 2 的 Workspace 管理界面）；
+- `sync_membership()`：幂等 upsert，覆盖「新建」与「改角色」两种场景；
+- `remove_user_memberships()` / `remove_user_portal_bindings()`：删账号前清理。
+
+**为什么必须共用 `normalize_legacy_role`**：写侧若自己维护一份 legacy→role_key
+映射，就会出现「写进去的角色读不出来」（例如 `compliance_approver` 一边映射
+COMPLIANCE、另一边漏掉）。写侧与读侧必须同一张表。
+
+**渐进启用**：`workspace_profiles` / `workspace_memberships` 由 Alembic 创建，
+`models.py` 刻意不注册（否则 `create_all` 会绕过 Phase 1 的维护窗口门禁）。
+因此写侧表未落地时**全部 no-op**，行为与 Phase 1.1 完全一致。
+
+**一个反例（刻意不用探测门禁）**：`remove_user_portal_bindings` 操作的是
+`supplier_portal_members`——它是 ORM 模型，`create_all` 一定会建表。若也用
+`membership_table_available` 门禁，该函数会在迁移前静默 no-op，反而**漏掉清理、
+删账号时撞外键**。
+
+### 三、前端：写权限只读降级（D24 的 A′ 方案）
+
+`permissions.js` 的 legacy 兜底此前会**授予写权限**（`LEGACY_CAPABILITIES`），
+意味着前端伪造 `localStorage.erp_user.role` 即可让写按钮出现。现改为：
+
+- **写权限 fail-closed**：`canWrite` / `canAdmin` / `canApprove` / `can` 在
+  Context 不可用时**一律返回 false**，`LEGACY_CAPABILITIES` 整体删除；
+- **路由/菜单保留 legacy 兜底**：否则 Context 故障时平台管理员与工厂账号会被
+  弹到无权页面，体验更差（且需先解决重定向环问题）；
+- 清理死代码 `identitySnapshot()` / `isSuperadmin()` / `workspaceSource()`。
+
+**为什么不是「Context 不可用 → 跳登录页」**：守卫的 `authenticated` 只判 token
+存在，后端 5xx 时 token 仍有效 → 跳 `/login` → `defaultLanding` 弹回 `/dashboard`
+→ **无限重定向环**。必须同时改守卫契约 + 清 token + 加提示，代价远超收益。
+
+**残留风险（显式记录）**：伪造 `erp_user.role` 仍能影响**路由与菜单**（可进
+`/platform-admin` 界面渲染，接口返回 403）。这是 A′ 的固有残留——路由兜底必须
+保留。属 **UI 层问题，非数据越权**：后端独立鉴权已实测兜住（viewer 写商品 403、
+`/admin/users` 404、`/admin/overview` 403、代客进入 403）。
+
+### 四、验证
+
+| 验证 | 结果 |
+|---|---|
+| 缺陷复现（修复前） | ✅ 四项全部复现（含降权失效、删除 500） |
+| 回退法判别力（DP-5） | ✅ 移除后端写侧调用 → `test_membership_write.py` **5 用例全红**；前端临时恢复兜底表 → 13 个断言变红 |
+| 真服务复验（uvicorn，副本库） | ✅ 新租户 `MEMBERSHIP/OWNER`；新用户 `MEMBERSHIP/OPERATOR`；降权后 `READ_ONLY`；删用户 200；代客 `/auth/me` 200；**主库 sha256 前后一致** |
+| 回归 | ✅ 后端 257 passed；前端 72 passed；`ruff` 全绿；`npm run build` 成功；`migration_preflight` 12 项全 PASS |
+| 守护测试同步 | ✅ 两个前端权限契约测试改written为守护**新契约**（禁止重新引入兜底表；写权限 key 扫描范围扩到整个 `src/`）——**不是放宽断言** |
+
+### 五、补充规范
+
+| 编号 | 规则 |
+|---|---|
+| T-27 | **双读改造必须同时实现写入侧**。只做读取侧会让新数据掉到 legacy 分支，且**改权限不生效**（降权静默失败），这类缺陷在存量数据上完全不可见 |
+| T-28 | **写侧与读侧必须共用同一张映射表**（如 `normalize_legacy_role`）。两份手工维护的映射必然漂移 |
+| T-29 | **渐进启用的探测门禁只用于「由迁移创建的表」**。对 `create_all` 一定建表的 ORM 表使用探测门禁，会让清理逻辑静默 no-op、反而制造外键失败 |
+| T-30 | **设计变更推翻守护测试前提时，必须改写守护点而非放宽断言**。D24 删除前端兜底表后，「两张表一致」的守护失效——正确做法是改为「不存在第二份表」 |
+
+**关联**：D15/D23（Phase 1.8）、D24（前端 A′）、`docs/phase1_interfaces.md` §6/§7；
+新增文件 `app/services/membership_service.py`、`tests/test_membership_write.py`；
+修改文件 `app/routers/admin.py`、`app/routers/auth.py`、`tests/test_role_permissions.py`、
+`frontend/src/permissions.js`、`frontend/src/workspace.js`、`frontend/tests/permissions*.test.js`。

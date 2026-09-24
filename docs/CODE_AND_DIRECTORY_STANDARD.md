@@ -287,6 +287,15 @@ frontend/node_modules/  frontend/dist/     frontend/.zcode/
 | T-21 | **安全开关必须配「来源限定」**：只给「信任/不信任」布尔开关，实际会退化成信任所有来源。实测 `FORWARDED_ALLOW_IPS=*` 下直连即可把客户端 IP 伪造成任意值（见 D22 第三节） |
 | T-22 | **放行路径白名单必须用精确匹配，不用前缀匹配**——前缀会把同前缀下的写语义端点一并放行。改白名单后必须用回退法验证边界仍被拒（见 D23 第一节） |
 | T-23 | **同一实体在不同层（Service / Router）的查询条件必须一致**。实测 `SupplierPortalMember.status` 校验 Router 有、Service 无，形成 fail-open；当同类路径已有同等校验时，缺它的分支即疏漏而非设计（见 D23 第二节） |
+| T-24 | **非 ORM 身份对象必须提供自己的序列化方法**，通用 `to_dict` 不得承担身份语义。新增身份形态时只改 `identity_snapshot`，不得在各端点分别做鸭子类型判断（见 D25） |
+| T-25 | **「靠巧合正确」必须显式化**。当漏传某标记恰好不改变结果时，必须补「结构性断言」（拦截调用捕获实参），而非依赖端点行为——否则一次无关重构就会让它静默错乱（见 D25） |
+| T-26 | **同一概念的标记名必须与冻结契约一致**。`is_impersonated` / `is_impersonating` 这类只差后缀的并存命名，是排查事故的经典陷阱（见 D25） |
+| T-27 | **双读改造必须同时实现写入侧**。只做读取侧会让新数据掉到 legacy 分支，且**改权限不生效**（降权静默失败）——这类缺陷在存量数据上完全不可见（见 D26） |
+| T-28 | **写侧与读侧必须共用同一张映射表**（如 `normalize_legacy_role`）。两份手工维护的映射必然漂移（见 D26） |
+| T-29 | **渐进启用的探测门禁只用于「由迁移创建的表」**。对 `create_all` 一定建表的 ORM 表使用探测门禁，会让清理逻辑静默 no-op、反而制造外键失败（见 D26） |
+| T-30 | **设计变更推翻守护测试前提时，必须改写守护点而非放宽断言**。D24 删除前端兜底表后，「两张表一致」的守护失效——正确做法是改为「不存在第二份表」（见 D24/D26） |
+| T-31 | **安全边界（写权限）与体验兜底（路由/展示）必须分开决策**。把两者绑在一起会导致「要么全删、要么全留」的伪二选一（见 D24） |
+| T-32 | **前端权限兜底表一律视为缺陷**。权限事实源只能是后端 Context；前端手工维护第二份表必然漂移，且可被客户端伪造（见 D24） |
 
 > **T-4 说明**：本轮修复中，`test_security.py` 曾把「superadmin 可访问租户业务 API」固化为正确行为，`test_api.py` 曾把「租户停用」误断言为「租户到期」。两者都是断言与语义脱节，属于**测试在保护错误行为**，比缺测试更危险。
 
@@ -346,8 +355,8 @@ frontend/node_modules/  frontend/dist/     frontend/.zcode/
 > 是**假失败**（浪费排查时间）或**假通过**（掩盖真缺陷），两者都比没有脚本更危险。
 > 修正后 7 步全 PASS（`exit=0`），并保留 `SKIP` 语义用于"数据前提缺失"。
 
-**当前基线（2026-09-24 18:2x 实测）**：后端 `pytest -q` → **246 passed**；
-后端**反序文件列表**跑 → **246 passed**（顺序依赖已消除）；前端 `npm test` → **68 passed**；
+**当前基线（2026-09-24 18:4x 实测）**：后端 `pytest -q` → **257 passed**；
+后端**反序文件列表**跑 → **257 passed**（顺序依赖已消除）；前端 `npm test` → **72 passed**；
 `ruff check` → All checks passed；`migration_preflight.py` → 12 项全 PASS（主库 `20260924_15`）；
 **真启动服务端到端验收** → `scripts/live_acceptance.py` **7 步全 PASS / exit=0**。
 **任何提交不得低于此基线**。
@@ -418,7 +427,7 @@ python -m ruff format .         # 格式化
 | 下一步 | 逐步收紧规则集（先移除 `B008` 例外，再启用 `E501`） | 待存量格式化 |
 | 长期 | 追加 `mypy` 关键模块类型检查 | 规划中 |
 
-**当前基线（2026-09-24 18:2x 实测）**：`ruff check` → All checks passed；后端 `pytest -q` → **246 passed**（反序同样 246 passed）；前端 `npm test` → **68 passed**；`migration_preflight.py` → 12 项全 PASS（`P0_fail=0`）；`docker_feasibility.py` → 12 项全 PASS；`tls_feasibility.py` → 8 项全 PASS。
+**当前基线（2026-09-24 18:4x 实测）**：`ruff check` → All checks passed；后端 `pytest -q` → **257 passed**（反序同样 257 passed）；前端 `npm test` → **72 passed**；`migration_preflight.py` → 12 项全 PASS（`P0_fail=0`）；`docker_feasibility.py` → 12 项全 PASS；`tls_feasibility.py` → 8 项全 PASS。
 
 > **规则集说明**：首轮启用时出现 509 条告警，其中 `B008`（FastAPI `Depends()` 必须写在默认参数）等属框架惯用法误报，已按「只报功能性缺陷」原则显式豁免。豁免项均在 `pyproject.toml` 中标注原因与「只减不增」约束，不允许无理由扩大豁免。
 
@@ -482,7 +491,7 @@ python -m ruff format .         # 格式化
 - [ ] 文件与函数规模未超 §5 阈值
 - [ ] 结构变更走 Alembic 迁移且 `downgrade()` 可用（§6）
 - [ ] 新增能力带测试；权限改动已更新 `test_security.py`（§8）
-- [ ] `ruff check` 全绿；`pytest -q` ≥ 246 passed；反序跑同样 ≥ 246 passed；`npm test` ≥ 68 passed
+- [ ] `ruff check` 全绿；`pytest -q` ≥ 257 passed；反序跑同样 ≥ 257 passed；`npm test` ≥ 72 passed
 - [ ] 测试可重复（同一库连跑两次全绿）且可并发（多进程各自独立库）
 - [ ] 涉及结构变更时 `scripts/migration_preflight.py` 12 项全 PASS（P0 未清零不得执行）
 - [ ] 涉及"可运行/可部署"的结论时，已真启动服务跑过 `scripts/live_acceptance.py` 且全 PASS（T-13）
