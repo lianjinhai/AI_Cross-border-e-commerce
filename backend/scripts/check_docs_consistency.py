@@ -104,6 +104,11 @@ def _live_docs() -> list[Path]:
     return docs
 
 
+def _is_historical(rel: str) -> bool:
+    """该文档是否为「历史记录」类（其行号/数字是史实，不可改写）。"""
+    return any(rel.startswith(prefix) for prefix in HISTORICAL_DOCS)
+
+
 def _all_docs() -> list[Path]:
     """文本卫生检查的覆盖面：**所有**文档（含历史文档）。
 
@@ -362,7 +367,17 @@ def check_code_line_refs() -> list[str]:
     因为文件确实还在（131 行的兼容门面）。行号引用必须单独检查。
     """
     problems = []
-    for doc in _all_docs():
+    # **作用域与 B（路径引用）一致：只查「描述当前状态」的文档**。
+    # 历史文档（DECISIONS.md / archive/ / 子代理索引）本就要记录「当时引用的是
+    # 哪些行号」——例如 D32 的「旧行号 → 新位置」对照表。把它们纳入 F 会让
+    # 每条讨论重构的决策记录都变成永久红灯（实测：D32 一写入就报 7 处）。
+    # 这不是「放宽断言」，而是**判定职责的边界**：历史记录的正确性由 C（台账
+    # 状态自洽）与人工评审负责，不由行号有效性负责。
+    targets = {p.resolve() for p in _live_docs()}
+    targets |= {p.resolve() for p in (REPO_DIR / "docs").glob("*.md")}
+    targets = {t for t in targets
+               if not _is_historical(t.relative_to(REPO_DIR).as_posix())}
+    for doc in sorted(targets):
         rel = doc.relative_to(REPO_DIR).as_posix()
         for lineno, line in enumerate(doc.read_text(encoding="utf-8", errors="replace").split("\n"), 1):
             if "docs-ok" in line:
