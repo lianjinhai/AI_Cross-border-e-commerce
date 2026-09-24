@@ -1763,3 +1763,74 @@ class _ForwardingModule(types.ModuleType):
 **关联**：DEBT-05（关闭）、T-29（同类静默失效）、`docs/CODE_AND_DIRECTORY_STANDARD.md` §2/§5；
 新增 `app/services/adapters/`（12 模块）、`tests/test_platform_adapters_split.py`（10 用例）；
 改写 `app/services/platform_adapters.py`（1303 → 131 行门面）。
+
+
+---
+
+## D29：消除 Agent 间 P2P（L-3 红线）—— 把共享领域计算下沉到 `services/`（2026-09-24）
+
+**背景**：审计发现 `app/agents/factory_opportunity.py:30` 直接
+`from .pricing import PricingAgent`，并在 `:114-115` 真实调用 `calc_profit()`。
+这违反 Agent OS 架构冻结文档 §3 与规范 L-3：**Agent 之间的协作只能由
+Orchestrator 编排**。
+
+**为什么这条比其他债务更严重**：P2P 调用在功能上是「能跑通」的——利润照算、
+测试照绿。但被调 Agent 用**自己的会话与租户上下文**执行，调用方无从控制，
+于是权限、数据范围、审计三道闸全部失效，Agent Trace 也串不起来（一次业务
+动作被拆成两段互不相关的记录）。它破坏的是「可审计、可控」这个前提本身。
+
+### 一、为什么此前没被发现
+
+1. **违规藏在方法体内的延迟 import**。规范只登记了 scheduler / supplier 两处
+   越层依赖，这一处**从未登记**——说明「靠评审把关」对这类违规无效。
+2. **只扫顶层 import 的检查方式看不见它**。`from .pricing import ...` 在
+   `scan_private_supply_batch()` 函数体内，任何「扫文件头 import」的脚本都会漏掉。
+
+### 二、修法：下沉到 `services/costing.py`
+
+遵循分层 `agents/ -> tools/ -> services/`，把「成本要素 + 利润」这类**纯领域
+计算**下沉为 `app/services/costing.py`，两个 Agent 各自调用同一份实现：
+
+| 调用方 | 改动前 | 改动后 |
+|---|---|---|
+| `PricingAgent` | 自己实现 `cost_elements` / `calc_profit` | 委托 `costing.*`（保留同名私有方法避免破坏调用方） |
+| `FactoryOpportunityAgent` | `PricingAgent(tenant).calc_profit(id)`（P2P） | `costing.calc_profit(self.db, self.tenant_id, id)` |
+
+**顺带修掉的真实隐患**：原实现先 `self.db.commit()` 再开**独立会话**让定价 Agent
+读到最新报价（代码注释即为此）。改为同会话调用后，这个「靠提交时序跨会话传数据」
+的耦合自然消失。
+
+**为什么不选「让 Orchestrator 编排两个 Agent」**：这里需要的是**一次同步计算**
+（门禁要拿利润率决定 `decision` 是 `ready` 还是 `due_diligence`），拆成两个 Agent
+任务会把一个原子判断变成跨任务状态机，收益为零、复杂度陡增。共享计算属于
+领域服务，不是 Agent 协作——这才是分层的正确用法。
+
+### 三、代价与收益
+
+| 维度 | 说明 |
+|---|---|
+| 口径唯一 | 成本/利润只有一份实现。此前两处各写一遍，改一处（如汇率取法）就会漂移——门禁用的利润率与定价页展示的**可能不是同一个数**，且无人察觉 |
+| 可独立测试 | `costing.py` 不依赖任何 Agent，可被非 Agent 场景（报表、财务）直接复用 |
+| 上下文显式 | 必须传入 `Session` + `tenant_id`，杜绝「无上下文计算」 |
+
+### 四、验证
+
+| 验证 | 结果 |
+|---|---|
+| L-3 扫描 | ✅ `agents/` 内除 `base`（共同基类）与 `orchestrator`（架构规定的编排者）外，**0 处**同级引用 |
+| **回退法** | ✅ 把违规还原（改回 `from .pricing import PricingAgent`）→ 守护测试**精确命中 1 项**：`factory_opportunity.py:13 -> .pricing`；还原修复后 7 项全绿 |
+| 判别力（检测器自身） | ✅ 用真实违规样本（函数体内 import）验证能抓到；反向验证 `from ..models`（level=2）**不被误报**——第一版没区分层级，把 `.ai`/`.db`/`.models` 全报成 P2P |
+| 回归 | ✅ 后端 **291 passed**（284 + 7 新增）；`ruff check app/ tests/` 全绿 |
+
+### 五、补充规范
+
+| 编号 | 规则 |
+|---|---|
+| T-41 | **架构红线必须由静态扫描守护，不能靠评审**。违规在功能上「能跑通」，只有读源码才能发现；扫描须用 **AST** 且覆盖**函数体内延迟 import** |
+| T-42 | **静态扫描器必须区分相对导入层级**（`from .x` vs `from ..x`），否则误报淹没真违规；扫描器自身也要有判别力样本，否则「0 处」可能只是检测器失灵 |
+| T-43 | **已登记债务的豁免清单要反向断言「债务仍存在」**，债务修好即变红，强制同步台账（防豁免变死代码） |
+
+**关联**：DEBT-28（关闭）、DEBT-29 / DEBT-30（新登记）、T-41~T-43、
+Agent OS 架构文档 §3/§4/§11；新增 `app/services/costing.py`、
+`tests/test_agent_layer_boundaries.py`（7 用例）；改写 `app/agents/pricing.py`
+（委托共享实现）、`app/agents/factory_opportunity.py`（去 P2P）。

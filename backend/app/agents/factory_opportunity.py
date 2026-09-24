@@ -10,6 +10,7 @@ from ..models import (
     SupplierCatalogProduct,
     SupplierOffer,
 )
+from ..services import costing
 from .base import BaseAgent
 
 
@@ -27,7 +28,6 @@ class FactoryOpportunityAgent(BaseAgent):
         product_ids = params.get("product_ids") or context.get("product_ids") or []
         min_match = float(params.get("min_match_score", 50))
         min_margin = float(params.get("min_margin", 0.15))
-        from .pricing import PricingAgent
 
         ready_ids, candidates, blocked = [], [], []
         catalogs = (self.db.query(SupplierCatalogProduct, Supplier)
@@ -109,10 +109,12 @@ class FactoryOpportunityAgent(BaseAgent):
                 offer.price = float(catalog.unit_price); offer.currency = catalog.currency.upper()
                 offer.moq = catalog.moq
                 offer.ship_days = catalog.lead_days; offer.in_stock = catalog.available_qty > 0
-                self.db.commit()  # 让独立定价 Agent 会话读取到最新私域工厂报价
+                self.db.commit()  # 先落库报价，下面的成本计算据此取最低采购价
                 try:
-                    with PricingAgent(self.tenant_id) as pricing:
-                        economics = pricing.calc_profit(product_id)
+                    # 经 services/ 共享实现计算利润，而不是直接调用 PricingAgent：
+                    # Agent 间 P2P 违反 Agent OS §3 / 规范 L-3（协作只能由
+                    # Orchestrator 编排）。成本口径与定价页同源，避免两处漂移。
+                    economics = costing.calc_profit(self.db, self.tenant_id, product_id)
                 except ValueError as exc:
                     match.gaps = list(match.gaps) + [str(exc)]
                     economics = None

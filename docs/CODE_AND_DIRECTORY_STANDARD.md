@@ -59,6 +59,7 @@ AI-电商ERP/
 │   │   │   │   ├── registry.py          # ADAPTERS 注册表 + get_adapter + platform_meta
 │   │   │   │   └── <platform>.py        # 各平台适配器（ali1688/shopee/tiktok/ebay/walmart/lazada/planned）
 │   │   │   ├── platform_adapters.py     # **兼容门面**：重新导出 + 可打补丁点代理（唯一对外入口）
+│   │   │   ├── costing.py               # 成本/利润唯一实现（Agent 共享，不依赖 agents/）
 │   │   │   ├── settings_service.py      # 配置三级回退（P1-10 隔离）
 │   │   │   ├── shop_scope.py            # 店铺可见性守卫（归档店铺一律视为不存在）
 │   │   │   ├── tenant_data_purge.py     # 演示数据清理（按外键拓扑序）
@@ -320,6 +321,9 @@ frontend/node_modules/  frontend/dist/     frontend/.zcode/
 | T-38 | **按块搬移源码必须显式带上装饰器**。AST 的 `node.lineno` 不含 `decorator_list` 行，漏掉后 `@dataclass` / `@property` / `@staticmethod` 全部丢失，且只在运行时才暴露（见 D28） |
 | T-39 | **模块搬进子包后相对导入层级必须重算**。`from ..X` 在 `a/b/c.py` 与 `a/b/pkg/c.py` 中指向不同模块（见 D28） |
 | T-40 | **拆包不得改变对外导入路径**：保留兼容门面，把「路径不变」变成硬约束，避免测试补丁点与应用导入同时漂移（见 D28） |
+| T-41 | **架构红线必须由静态扫描守护，不能靠评审**。L-3（禁止 Agent 间 P2P）的违规在功能上是「能跑通」的——照算出利润、测试照绿，只有读源码才能发现。实测 `FactoryOpportunityAgent -> PricingAgent` 就是这样漏掉的。守护测试须用 **AST** 而非正则，且必须覆盖**函数体内的延迟 import**（违规的常见形态） |
+| T-42 | **静态扫描器必须区分相对导入层级**。`from .x`（level=1，包内同级）与 `from ..x`（level=2，跨层）语义完全不同；不区分会把 `.models` / `.db` 误报成 P2P，门禁沦为噪音后真正违规被淹没（实测第一版即如此）。扫描器同样需要**判别力样本**验证，否则「0 处违规」可能只是检测器失灵 |
+| T-43 | **已登记债务的豁免清单要反向断言「债务仍存在」**。只写「豁免」时，债务修好后豁免项会悄悄变成死代码，台账与实际长期脱节（规范 Doc-5）。`test_known_service_to_agent_debt_is_still_present` 即为此设——修好即变红，强制同步台账 |
 
 > **T-4 说明**：本轮修复中，`test_security.py` 曾把「superadmin 可访问租户业务 API」固化为正确行为，`test_api.py` 曾把「租户停用」误断言为「租户到期」。两者都是断言与语义脱节，属于**测试在保护错误行为**，比缺测试更危险。
 
@@ -502,6 +506,9 @@ python -m ruff format .         # 格式化
 | DEBT-25 | 测试共享夹具跨文件 import，存在收集顺序依赖 | **P2** | `tests/` | ✅ **已完成**：夹具下沉 `tests/conftest.py`，`auth_headers` 自愈 + 用例级状态还原（见 D10.2） |
 | DEBT-26 | ~~`_seed()` 对全局唯一的 `settings` 表不幂等~~；~~测试库单实例（固定名 + WAL 旁文件残留）~~ | ~~**P1**~~ | `app/seed.py`、`tests/conftest.py`、`.gitignore` | ✅ **已完成**：抽出 `DEFAULT_SETTINGS` + `_ensure_default_settings()`（缺什么补什么）；测试库 PID 隔离 + `ERP_TEST_DB` 覆盖 + WAL 旁文件统一清理；`.gitignore` 补齐旁文件与 PID 库名（见 `docs/DECISIONS.md` D11） |
 | DEBT-27 | ~~`page_size` 无上限；调用方用大 `page_size` 做集合比对会被静默截断~~ | ~~**P1**~~ | `app/pagination.py`、13 个 router、`tests/conftest.py`、`scripts/security_data_audit.py` | ✅ **已完成（2026-09-24）**：新增 `app/pagination.py`（`MAX_PAGE_SIZE=200`，越界 422）；13 个列表端点统一改用 `PageNum`/`PageSize`；新增 `fetch_all` 夹具与 `get_all` 辅助函数做**分页遍历取全量**；`test_pagination_edge` 收紧为「超上限必须 422」。回退法验证：去掉上限 → 被抓；`fetch_all` 只取首页 → 被抓 |
+| DEBT-28 | ~~`FactoryOpportunityAgent` 直接调用 `PricingAgent`（Agent 间 P2P），绕过 Orchestrator，且**未登记为债务**~~ | ~~**P0**~~ | `app/agents/factory_opportunity.py:30,114-115` | ✅ **已完成（2026-09-24）**：违反 Agent OS §3 / 规范 L-3（协作只能由 Orchestrator 编排）。修法：把成本/利润计算下沉到 `app/services/costing.py`，`PricingAgent` 与 `FactoryOpportunityAgent` 各自调用同一实现——既消除 P2P，又让成本口径**唯一**（两处各写一遍迟早漂移，门禁用的利润率会与定价页展示的不是同一个数）。**根因是「靠评审把关」失效**：该违规藏在方法体内的延迟 import，只扫顶层 import 的写法看不见它；现由 `tests/test_agent_layer_boundaries.py` 用 AST 扫描（覆盖函数体内 import）固化为门禁，并附判别力样本 |
+| DEBT-29 | `services/scheduler.py` 反向依赖 `agents/`（越层） | **P2** | `app/services/scheduler.py:88` | 已登记豁免（规范原文即有）；Phase 2 事件总线落地时解决。守护测试 `test_known_service_to_agent_debt_is_still_present` 反向断言其存在——债务修好后测试会红，提醒同步台账（防豁免清单变死代码） |
+| DEBT-30 | `services/` 缺「Agent 共享领域计算」层，导致 Agent 各自复制成本口径 | **P2** | `app/services/costing.py` | 本次仅抽出成本/利润；其余共享计算（销量预测口径、平台费率）Phase 2 评估 |
 
 ---
 

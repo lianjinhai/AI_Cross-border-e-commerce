@@ -3,36 +3,29 @@ from datetime import datetime
 
 from ..models import (
     AdCampaign,
-    ExchangeRate,
     Listing,
     PricingRecord,
     Product,
     ProductScore,
-    SupplierOffer,
 )
-from ..services import settings_service
+from ..services import costing
 from .base import BaseAgent
 
-_DEFAULT_RULES = {"min_margin": 0.15, "target_margin": 0.35,
-                  "logistics_base": 18.0, "logistics_per_kg": 8.0, "ads_default": 1.5}
-_DEFAULT_FEES = {"shopee": 0.06, "amazon": 0.15, "shopify": 0.02,
-                 "ebay": 0.12, "temu": 0.05, "tiktok": 0.08}
-_DEFAULT_FX = {"USD": 7.12}
+# 口径唯一来源：成本/利润实现已下沉到 services/costing.py（见该模块文档说明的
+# L-3 红线背景）。此处保留同名别名，避免存量调用方与测试因改名而失效。
+_DEFAULT_RULES = costing.DEFAULT_RULES
+_DEFAULT_FEES = costing.DEFAULT_FEES
+_DEFAULT_FX = costing.DEFAULT_FX
 
 
 def _setting(db, key: str, default: dict) -> dict:
     """兼容旧调用：无租户上下文时按平台级读取（保留供非租户场景使用）。"""
-    row = settings_service.get_setting(db, None, key)
-    v = dict(default)
-    v.update(row)
-    return v
+    return costing.setting_for(db, None, key, default)
 
 
 def _setting_for(db, tenant_id: int, key: str, default: dict) -> dict:
     """按租户读取配置（租户覆盖 → 平台默认 → 代码默认）。"""
-    v = dict(default)
-    v.update(settings_service.get_setting(db, tenant_id, key))
-    return v
+    return costing.setting_for(db, tenant_id, key, default)
 
 
 class PricingAgent(BaseAgent):
@@ -42,69 +35,20 @@ class PricingAgent(BaseAgent):
 
     # ---------- 成本要素 ----------
     def _latest_fx(self, base: str, quote: str) -> float | None:
-        if base == quote:
-            return 1.0
-        row = (self.db.query(ExchangeRate).filter(
-            ExchangeRate.tenant_id == self.tenant_id,
-            ExchangeRate.base_currency == base,
-            ExchangeRate.quote_currency == quote,
-            ExchangeRate.effective_at <= datetime.utcnow())
-            .order_by(ExchangeRate.effective_at.desc()).first())
-        return float(row.rate) if row else None
+        return costing.latest_fx(self.db, self.tenant_id, base, quote)
 
     def _to_cny(self, amount: float, currency: str) -> float:
-        currency = (currency or "CNY").upper()
-        direct = self._latest_fx(currency, "CNY")
-        if direct is not None:
-            return amount * direct
-        # 财务主口径通常维护兑 USD 汇率，允许通过 USD 安全交叉换算。
-        base_usd = self._latest_fx(currency, "USD")
-        cny_usd = self._latest_fx("CNY", "USD")
-        if base_usd is not None and cny_usd:
-            return amount * base_usd / cny_usd
-        raise ValueError(f"缺少 {currency}→CNY 的有效汇率，禁止计算利润")
+        return costing.to_cny(self.db, self.tenant_id, amount, currency)
 
     def _best_purchase(self, product: Product) -> tuple[float, int | None]:
-        offers = (self.db.query(SupplierOffer)
-                 .filter(SupplierOffer.tenant_id == self.tenant_id,
-                          SupplierOffer.product_id == product.id,
-                          SupplierOffer.in_stock.is_(True))
-                 .all())
-        converted = [(self._to_cny(float(o.price), o.currency), o.id) for o in offers]
-        if converted:
-            return min(converted, key=lambda x: x[0])
-        return float((product.attrs or {}).get("supplier_price") or 10.0), None
+        return costing.best_purchase(self.db, self.tenant_id, product)
 
     def cost_elements(self, product: Product, platform: str = "") -> dict:
-        rules = _setting_for(self.db, self.tenant_id, "rules", _DEFAULT_RULES)
-        fees = _setting_for(self.db, self.tenant_id, "platform_fees", _DEFAULT_FEES)
-        fx_map = _setting_for(self.db, self.tenant_id, "fx", _DEFAULT_FX)
-        attrs = product.attrs or {}
-        platform = platform or attrs.get("platform") or "shopee"
-        purchase_cny, offer_id = self._best_purchase(product)
-        weight = float(attrs.get("weight_kg") or 0.3)
-        return {
-            "purchase_cny": purchase_cny, "offer_id": offer_id,
-            "logistics_cny": round(rules["logistics_base"] + rules["logistics_per_kg"] * weight, 2),
-            "fee_rate": float(fees.get(platform, 0.06)),
-            "ads_cny": float(rules["ads_default"]),
-            "fx": float(fx_map.get("USD", 7.12)),
-        }
+        return costing.cost_elements(self.db, self.tenant_id, product, platform)
 
     # ---------- 利润计算 ----------
     def calc_profit(self, product_id: int, price: float | None = None) -> dict:
-        p = self.db.get(Product, product_id)
-        if not p or p.tenant_id != self.tenant_id:
-            raise ValueError(f"商品 {product_id} 不存在")
-        ce = self.cost_elements(p)
-        price = float(price or (p.attrs or {}).get("sale_price") or 19.99)
-        cost_total_cny = ce["purchase_cny"] + ce["logistics_cny"] + ce["ads_cny"] + ce["fee_rate"] * price * ce["fx"]
-        profit = round(price - cost_total_cny / ce["fx"], 2)
-        margin = round(profit / price, 4) if price else 0
-        return {"product_id": product_id, "purchase_cost": ce["purchase_cny"],
-                "logistics_cost": ce["logistics_cny"], "platform_fee_rate": ce["fee_rate"],
-                "ads_cost": ce["ads_cny"], "price": price, "profit": profit,
-                "margin": margin, "currency": "USD", "fx": ce["fx"]}
+        return costing.calc_profit(self.db, self.tenant_id, product_id, price)
 
     # ---------- 动态定价 ----------
     def suggest_price(self, product_id: int) -> dict:
