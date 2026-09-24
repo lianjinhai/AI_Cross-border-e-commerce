@@ -11,7 +11,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from ..auth import get_current_user
+from ..auth import get_current_user, is_impersonating_user
 from ..db import get_db
 from ..models import User
 from ..services.workspace_context import WorkspaceContext, resolve_workspace_context
@@ -31,6 +31,20 @@ def _workspace_item(context: WorkspaceContext) -> dict:
         "source": context.source,
         "is_active": True,   # 当前阶段只有一个活动 Workspace
     }
+
+
+def _current_context(db: Session, user: User) -> WorkspaceContext:
+    """解析当前请求的 Workspace Context（**所有** /api/me/* 端点必须走这里）。
+
+    为什么收敛成一个 helper：代客标记此前由三个端点各自 ``getattr`` 读取，
+    历史上就漏过（``/workspaces``、``/switch`` 未透传，导致代客态被误判为
+    Platform 身份、返回空集合）。把「读哪个标记、叫什么名字」的唯一知识
+    放在这里（判定函数在 ``app.auth.is_impersonating_user``），
+    新增端点时不可能再漏。
+    """
+    return resolve_workspace_context(
+        db, user, is_impersonating=is_impersonating_user(user)
+    )
 
 
 def _accessible_workspaces(context: WorkspaceContext) -> list[dict]:
@@ -59,11 +73,7 @@ def _audit_switch(context: WorkspaceContext, target_workspace_id: int, result: s
 @router.get("/workspaces")
 def list_workspaces(user: User = Depends(get_current_user),
                     db: Session = Depends(get_db)):
-    # 代客标记必须透传（同 /workspace-context）：不透传时代客账号会被解析成
-    # Platform 身份，列表会返回空集合，前端无法显示"当前代管的是哪个租户"。
-    context = resolve_workspace_context(
-        db, user, is_impersonating=getattr(user, "is_impersonated", False)
-    )
+    context = _current_context(db, user)
     items = _accessible_workspaces(context)
     return {"items": items, "total": len(items)}
 
@@ -71,22 +81,13 @@ def list_workspaces(user: User = Depends(get_current_user),
 @router.get("/workspace-context")
 def get_workspace_context(user: User = Depends(get_current_user),
                           db: Session = Depends(get_db)):
-    # 代客标记必须透传：resolve_workspace_context 的 Platform 分支靠它区分
-    # 「superadmin 本尊」与「superadmin 代客进入租户」。不透传时代客态会被判成
-    # Platform 身份（无业务 Workspace），Context 与真实租户身份不符。
-    return resolve_workspace_context(
-        db, user, is_impersonating=getattr(user, "is_impersonated", False)
-    ).to_public_dict()
+    return _current_context(db, user).to_public_dict()
 
 
 @router.post("/workspaces/{workspace_id}/switch")
 def switch_workspace(workspace_id: int, user: User = Depends(get_current_user),
                      db: Session = Depends(get_db)):
-    # 代客标记必须透传：否则代客账号会被判成 Platform 身份而直接 403
-    # （"平台身份无业务 Workspace"），平台服务商无法在自己的代管会话内切页。
-    context = resolve_workspace_context(
-        db, user, is_impersonating=getattr(user, "is_impersonated", False)
-    )
+    context = _current_context(db, user)
     # Platform Identity 优先判定：它没有业务 Workspace，不能落进"不可访问"分支
     if context.is_platform_identity():
         _audit_switch(context, workspace_id, "forbidden_platform_identity")

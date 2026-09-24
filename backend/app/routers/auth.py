@@ -6,11 +6,18 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..auth import create_token, get_current_user, hash_password, require_admin, verify_password
+from ..auth import (
+    create_token,
+    get_current_user,
+    hash_password,
+    identity_snapshot,
+    require_admin,
+    verify_password,
+)
 from ..db import get_db
 from ..models import LoginAttempt, User
 from ..pagination import PageNum, PageSize
-from ..serialize import page, to_dict
+from ..serialize import page
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -32,10 +39,6 @@ class UserUpdate(BaseModel):
     display_name: str | None = None
     password: str | None = None
     status: str | None = None
-
-
-def _safe(u: User) -> dict:
-    return to_dict(u, exclude=["password_hash"])
 
 
 @router.post("/login")
@@ -64,12 +67,14 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
     if not user.password_hash.startswith("pbkdf2_sha256$"):
         user.password_hash = hash_password(body.password)
     db.commit()
-    return {"token": create_token(user), "user": _safe(user)}
+    return {"token": create_token(user), "user": identity_snapshot(user)}
 
 
 @router.get("/me")
 def me(user: User = Depends(get_current_user)):
-    return _safe(user)
+    # 必须走 identity_snapshot：代客态下 user 是 _ImpersonatedUser 替身，
+    # 直接 to_dict 会 AttributeError（无 __table__）导致 500。
+    return identity_snapshot(user)
 
 
 @router.get("/users")
@@ -78,7 +83,7 @@ def list_users(page_num: int = PageNum, page_size: int = PageSize,
     q = db.query(User).filter(User.tenant_id == user.tenant_id)
     total = q.count()
     items = q.order_by(User.id).offset((page_num - 1) * page_size).limit(page_size).all()
-    return page([_safe(u) for u in items], total, page_num, page_size)
+    return page([identity_snapshot(u) for u in items], total, page_num, page_size)
 
 
 @router.post("/users")
@@ -92,7 +97,7 @@ def create_user(body: UserIn, user: User = Depends(require_admin), db: Session =
              display_name=body.display_name or body.username, role=body.role)
     db.add(u)
     db.commit()
-    return _safe(u)
+    return identity_snapshot(u)
 
 
 @router.put("/users/{user_id}")
@@ -117,7 +122,7 @@ def update_user(user_id: int, body: UserUpdate,
         if body.status == "disabled":
             u.token_version = int(u.token_version or 0) + 1
     db.commit()
-    return _safe(u)
+    return identity_snapshot(u)
 
 
 @router.delete("/users/{user_id}")

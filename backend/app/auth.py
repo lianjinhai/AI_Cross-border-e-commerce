@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from .db import get_db
 from .models import Tenant, User, utcnow
+from .serialize import to_dict
 
 _LEGACY_SALT = b"erp-static-salt-v1"
 _PBKDF2_ITERATIONS = 310_000
@@ -71,7 +72,11 @@ class _ImpersonatedUser:
     # 代客标记：下游（如 me.py 的 Workspace Context）靠它区分「真 operator」
     # 与「平台账号代客」。此前只能靠 role 字符串推断，两者都是 "operator"，
     # 导致 Context 的 is_impersonating 恒为 False，前端无法显示「返回平台控制台」。
-    is_impersonated = True
+    #
+    # 命名与冻结契约对齐：docs/phase1_interfaces.md 第 6 节的 Context 字段是
+    # ``is_impersonating``。内部标记若另起名（历史上的 ``is_impersonated``），
+    # 就会在同一会话里出现两个只差后缀的标记，排查时极易看错，故统一。
+    is_impersonating = True
 
     def __init__(self, operator: User, tenant_id: int):
         self.id = operator.id
@@ -80,6 +85,59 @@ class _ImpersonatedUser:
         self.display_name = f"{operator.display_name}(平台服务)"
         self.username = operator.username
         self._operator = operator
+
+    def to_public_dict(self) -> dict:
+        """对外身份快照（``/api/auth/login``、``/api/auth/me`` 的响应契约）。
+
+        为什么必须显式覆写：本对象是**鸭子类型替身**，没有 ``__table__``，
+        直接喂给 ``serialize.to_dict`` 会 AttributeError——历史缺陷就是代客态
+        ``GET /api/auth/me`` 直接 500（普通登录态测不出来，因为那时拿的是真 ORM 行）。
+
+        为什么在 ``to_dict(operator)`` 之上覆写而不是手写白名单：字段集与普通
+        登录响应**天然一致**，``users`` 表加列时不会漂移出两套身份快照。
+
+        安全语义（勿改）：``role`` 与 ``tenant_id`` 必须钉成**目标租户**的值。
+        若这里返回平台账号的 ``superadmin``，前端 legacy 兜底会把代客会话当平台
+        本尊放行到 ``/platform-admin``，代客隔离失效（见 docs/DECISIONS.md D19）。
+        """
+        data = to_dict(self._operator, exclude=["password_hash"])
+        data["tenant_id"] = self.tenant_id
+        data["role"] = self.role
+        data["display_name"] = self.display_name
+        data["is_impersonating"] = True
+        return data
+
+
+def identity_snapshot(user) -> dict:
+    """把「当前身份对象」序列化成对外快照（``password_hash`` 一律剔除）。
+
+    两种形态必须都能吃：
+      * ORM ``User`` 行——普通登录、用户管理列表；
+      * ``_ImpersonatedUser`` 替身——superadmin 代客访问。
+
+    统一收敛在这里的原因：调用点若各自做鸭子类型判断，就会重演「某个端点漏判、
+    代客态 500」这类只在代客链路上暴露的缺陷。新增身份形态时只改本函数。
+    """
+    to_public_dict = getattr(user, "to_public_dict", None)
+    if callable(to_public_dict):
+        return to_public_dict()
+    return to_dict(user, exclude=["password_hash"])
+
+
+def is_impersonating_user(user) -> bool:
+    """当前身份是否处于「平台代客」态（**唯一判定点**）。
+
+    为什么必须收敛成一个函数：代客标记此前散落在各调用点用
+    ``getattr(user, "is_impersonated", False)`` 手写，历史上漏过两次
+    （``me.py`` 的两个端点、``require_permission``），而漏传的后果很隐蔽——
+    ``resolve_workspace_context`` 会把代客态误判成 Platform 身份。
+
+    为什么是「脆弱」而非「已坏」：代客替身当前的 ``role`` 恰好是 ``operator``，
+    即使漏传标记也会走 LEGACY 分支拿到正确的租户 Workspace。但一旦替身角色
+    改为保留原角色（或改名），漏传就会解析成 ``PLATFORM_ADMIN`` +
+    ``workspace_id=None``，代客业务端点全线错乱。故显式判定，不依赖巧合。
+    """
+    return bool(getattr(user, "is_impersonating", False))
 
 
 def _decode(token: str) -> dict:
@@ -221,7 +279,8 @@ def require_permission(permission: str, legacy_roles: tuple[str, ...]):
     def _dep(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
         # 1) 解析 Workspace Context：按权限 key 判定（权威路径）
         try:
-            ctx = resolve_workspace_context(db, user)
+            ctx = resolve_workspace_context(
+                db, user, is_impersonating=is_impersonating_user(user))
         except Exception:
             ctx = None
         if ctx is not None and ctx.permissions:
