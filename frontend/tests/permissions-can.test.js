@@ -27,7 +27,7 @@ vi.mock('axios', () => ({
 }))
 
 const { clearWorkspaceContext, loadWorkspaceContext } = await import('../src/workspace')
-const { can, canAny } = await import('../src/permissions')
+const { can, canAdmin, canAny, canWrite } = await import('../src/permissions')
 
 const PERMISSIONS = {
   OWNER: ['workspace:read', 'product:read', 'supply:read', 'listing:read', 'order:read',
@@ -125,40 +125,36 @@ describe('can() — Context 路径（权威）', () => {
   })
 })
 
-describe('can() — legacy 兜底路径（Context 不可用）', () => {
-  it('legacy admin 映射为 OWNER 能力', () => {
+/**
+ * Phase 1.8 / D24：Context 不可用时 `can()` **一律 false**（fail-closed）。
+ *
+ * 本段此前的期望值是从 `LEGACY_CAPABILITIES` 抄下来的（admin→OWNER 全套写权限、
+ * supplier→supply:write 等）。那套映射已删除，理由：`erp_user` 在 localStorage
+ * 可被用户篡改，用它授权等于把写按钮的可见性交给伪造输入。真实写操作后端另有
+ * 独立鉴权（`require_write` 只放行 admin/operator），因此前端降级为只读不削弱安全。
+ *
+ * 注意这组用例的覆盖边界：它只证明「无 Context 不授权」。若有人把 `can()` 改成
+ * 恒返回 false，本段仍会全绿——真正的守护是上面「Context 路径（权威）」那组，
+ * 那里断言了 OWNER 拥有全部写权限。改代码时不要把两者之一删掉。
+ */
+describe('can() — Context 不可用时一律 false（fail-closed，D24）', () => {
+  it.each(['admin', 'owner', 'operator', 'viewer', 'compliance_approver', 'supplier', 'superadmin'])(
+    'legacy %s 不授予任何权限',
+    (legacyRole) => {
+      legacyUser(legacyRole)
+      for (const key of ['product:write', 'order:write', 'supply:write', 'finance:write',
+        'workspace:member:admin', 'compliance:check', 'compliance:approve', 'product:read']) {
+        expect(can(key), `${legacyRole} 不应因 legacy 身份获得 ${key}`).toBe(false)
+      }
+    },
+  )
+
+  it('伪造 legacy admin 也拿不到写权限（真实缺陷回归）', () => {
+    // 实测复现路径：改 localStorage.erp_user.role 从 viewer→admin，
+    // 旧实现会让 canWrite()/can() 变 true、写按钮出现。
     legacyUser('admin')
-    expect(can('product:write')).toBe(true)
-    expect(can('compliance:check')).toBe(true)
-    expect(can('workspace:member:admin')).toBe(true)
-  })
-
-  it('legacy operator 有业务写权限（含 compliance:check）但无管理权限', () => {
-    legacyUser('operator')
-    expect(can('product:write')).toBe(true)
-    expect(can('workspace:member:admin')).toBe(false)
-    // OPERATOR 拥有全部 _WRITE_PERMISSIONS，compliance:check 属其业务范围
-    // （与后端 ROLE_PERMISSIONS 对齐，见 backend/tests/test_role_permissions.py 契约测试）
-    expect(can('compliance:check')).toBe(true)
-    expect(can('compliance:approve')).toBe(false)
-  })
-
-  it('legacy viewer 零写权限', () => {
-    legacyUser('viewer')
-    expect(can('product:write')).toBe(false)
-    expect(can('order:write')).toBe(false)
-  })
-
-  it('legacy compliance_approver 可检测可审批，不能写业务', () => {
-    legacyUser('compliance_approver')
-    expect(can('compliance:check')).toBe(true)
-    expect(can('compliance:approve')).toBe(true)
-    expect(can('product:write')).toBe(false)
-  })
-
-  it('legacy supplier 仅 supply:write（工厂门户按钮可见）', () => {
-    legacyUser('supplier')
-    expect(can('supply:write')).toBe(true)
+    expect(canWrite()).toBe(false)
+    expect(canAdmin()).toBe(false)
     expect(can('product:write')).toBe(false)
   })
 

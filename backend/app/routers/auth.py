@@ -18,6 +18,11 @@ from ..db import get_db
 from ..models import LoginAttempt, User
 from ..pagination import PageNum, PageSize
 from ..serialize import page
+from ..services.membership_service import (
+    remove_user_memberships,
+    remove_user_portal_bindings,
+    sync_membership,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -96,6 +101,10 @@ def create_user(body: UserIn, user: User = Depends(require_admin), db: Session =
              password_hash=hash_password(body.password),
              display_name=body.display_name or body.username, role=body.role)
     db.add(u)
+    db.flush()
+    # 身份表写入：新用户必须有 ACTIVE Membership，否则 MEMBERSHIP 权威路径
+    # 读不到他，Phase 1.8 删旧入口后新账号会失去身份来源。
+    sync_membership(db, u)
     db.commit()
     return identity_snapshot(u)
 
@@ -110,6 +119,9 @@ def update_user(user_id: int, body: UserUpdate,
         if body.role not in ("admin", "compliance_approver", "operator", "viewer"):
             raise HTTPException(status_code=400, detail="角色不合法")
         u.role = body.role
+        # 关键：MEMBERSHIP 是**权威路径**，只改 users.role 而不改 role_key，
+        # 降权会被静默忽略（实测：operator 降为 viewer 后 Context 仍返回 OPERATOR）。
+        sync_membership(db, u)
     if body.display_name is not None:
         u.display_name = body.display_name
     if body.password:
@@ -132,6 +144,10 @@ def delete_user(user_id: int, user: User = Depends(require_admin), db: Session =
     u = db.get(User, user_id)
     if not u or u.tenant_id != user.tenant_id:
         raise HTTPException(status_code=404, detail="用户不存在")
+    # 身份行声明了 FK → users.id（且 PRAGMA foreign_keys=ON），必须先清理，
+    # 否则删除直接 IntegrityError（实测 500）。
+    remove_user_memberships(db, u.id)
+    remove_user_portal_bindings(db, u.id)
     db.delete(u)
     db.commit()
     return {"ok": True}

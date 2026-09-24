@@ -16,21 +16,28 @@ const access = (role, path, options = {}) => routeRedirect({
   impersonating: options.impersonating ?? false,
 })
 
-describe('role capability policy', () => {
+/**
+ * Phase 1.8 / D24：legacy `erp_user` **不再授予任何权限**（写权限 fail-closed）。
+ *
+ * 旧断言是 `['admin', true, true, true]` 这类「legacy 角色 → 写权限」的映射表，
+ * 它固化的是已被判为缺陷的行为：`erp_user` 存在 localStorage，改一行就能伪造
+ * `role`（实测 viewer→admin 即让写按钮出现）。现在 Context 不可用时一律只读。
+ *
+ * 判别力说明：本组只锁「不授予」这一半。另一半「Context 可用时确实按 Context
+ * 授权」由 `permissions-can.test.js` 的 Context 路径用例覆盖（OWNER 拥有全部
+ * 写权限、OPERATOR 有业务写权限但无管理权等）。两边合起来才能排除「实现恒返回
+ * false」也能通过的情况——只改本文件会把断言变弱。
+ */
+describe('role capability policy (legacy grants nothing)', () => {
   beforeEach(() => localStorage.clear())
 
   it.each([
-    ['admin', true, true, true],
-    ['operator', true, false, false],
-    ['viewer', false, false, false],
-    ['compliance_approver', false, false, true],
-    ['supplier', false, false, false],
-    ['superadmin', true, true, true],
-  ])('%s capabilities remain explicit', (role, write, admin, approve) => {
+    'admin', 'owner', 'operator', 'viewer', 'compliance_approver', 'supplier', 'superadmin',
+  ])('legacy %s grants no capability while the context is unavailable', (role) => {
     localStorage.setItem('erp_user', JSON.stringify({ role }))
-    expect(canWrite()).toBe(write)
-    expect(canAdmin()).toBe(admin)
-    expect(canApprove()).toBe(approve)
+    expect(canWrite()).toBe(false)
+    expect(canAdmin()).toBe(false)
+    expect(canApprove()).toBe(false)
   })
 
   it('fails closed when persisted identity is corrupted', () => {

@@ -22,6 +22,7 @@ from ..models import (
 )
 from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
+from ..services.membership_service import ensure_workspace_profile, sync_membership
 
 router = APIRouter(prefix="/admin", tags=["platform-admin"])
 
@@ -93,6 +94,11 @@ def create_tenant(body: TenantIn, user: User = Depends(_require_superadmin),
                  password_hash=hash_password(password),
                  display_name=f"{body.name} 管理员", role="admin")
     db.add(admin)
+    db.flush()
+    # 身份表写入：不建 profile 时该租户永远拿不到 MEMBERSHIP Context，
+    # Phase 1.8 删旧入口后新租户会失去身份来源（实测过 source=LEGACY_FALLBACK）。
+    ensure_workspace_profile(db, t.id, t.name)
+    sync_membership(db, admin, workspace_name=t.name)
     db.commit()
     return {**to_dict(t), "admin_username": username, "admin_password": password}
 

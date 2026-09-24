@@ -1,6 +1,5 @@
 import {
   contextRole,
-  contextSource,
   hasPermission,
 } from './workspace'
 
@@ -11,18 +10,29 @@ import {
  *   1. **Workspace Context**（目标态）：来自 `GET /api/me/workspace-context`，
  *      `role` 是大写新枚举（OWNER/OPERATOR/READ_ONLY/COMPLIANCE/
  *      PLATFORM_ADMIN/FACTORY_COLLABORATOR），`source` 标明来源。
- *   2. **legacy localStorage `erp_user`**（兜底）：仅在 Context 不可用时使用。
+ *      **这是权限判定的唯一权威源。**
+ *   2. **legacy localStorage `erp_user`**（兜底）：仅在 Context 不可用时使用，
+ *      **只用于路由分流与展示**（`roleKey`/`identityFrom`/`routeRedirect`/
+ *      `defaultLanding`），**不再授予任何权限**。
  *
  * 为什么必须保留 legacy 兜底（不能全删）：
+ *   - **Context 请求失败**（网络抖动/后端 5xx）时用户至少还能被送到自己的首页，
+ *     而不是被弹到无权访问的 `/dashboard`。平台管理员（→ `/platform-admin`）
+ *     与工厂账号（→ `/factory-portal`）尤其依赖这一点。
  *   - **工厂账号**：G-3 之后 `app/auth.py` 已放行 `/api/me/workspaces` 与
  *     `/api/me/workspace-context`（只读），工厂账号**能**取到 Context
  *     （`source=FACTORY`、`role=FACTORY_COLLABORATOR`）。但 `/switch` 仍被拒
  *     ——工厂的活动 Workspace 由 `SupplierPortalMember` 唯一确定，无可切换项。
- *     保留兜底是为了应对下一类场景。
- *   - **Context 请求失败**（网络抖动/后端 5xx）时用户至少还能用。
- *   兜底的存在由 `tests/permissions.test.js` 的 legacy 用例固化。
  *
- * 下面三个常量是**唯一允许读 legacy 角色的地方**，新增代码禁止再读
+ * 为什么写权限必须 fail-closed（不回退 legacy 角色名单）：
+ *   `erp_user` 存在 localStorage，改一行就能伪造 `role`（实测 viewer→admin 即可
+ *   让写按钮出现）。用它授予写权限，等于把「界面是否显示写操作」交给可篡改输入。
+ *   后端仍独立鉴权（`require_write` 只放行 admin/operator；实测 viewer 写商品
+ *   403、进平台总览 403），所以前端只做「不制造假授权界面」：Context 拿不到时
+ *   按**只读降级**。路由兜底保留、权限兜底删除，是权衡后的分工（见
+ *   docs/DECISIONS.md D24）。
+ *
+ * 下面两个导出是**唯一允许读 legacy 角色的地方**，新增代码禁止再读
  * `localStorage.erp_user.role`。
  */
 export const currentUser = () => {
@@ -42,47 +52,37 @@ const LEGACY_ROLE_MAP = {
 }
 
 /**
- * 能力判断：Context 权限目录优先，Context 不可用时回退 legacy 角色。
+ * 能力判断：Context 权限目录是唯一权威源；Context 不可用时**一律 false**。
  *
- * 为什么保留回退而不是直接 fail-closed：Context 请求可能失败（网络抖动、
- * 后端 5xx、F5 刷新瞬间），直接 fail-closed 会让所有按钮消失。
- * 回退分支与
- * `LEGACY_ROLE_MAP` 一起，构成 Phase 1.8 之后**唯一**允许的 legacy 依赖点；
- * 待工厂门户单独规划 Context 入口后，这几处可一并删除。
+ * 为什么 fail-closed（A′，见 docs/DECISIONS.md D24）：Context 请求可能失败
+ * （网络抖动、后端 5xx、F5 刷新瞬间），此时**不授予任何写权限**，退化为只读
+ * 界面。旧实现回退 legacy 角色名单，等于让可篡改的 `localStorage.erp_user`
+ * 决定写按钮是否出现（实测 viewer→admin 即可让写按钮显示）——前端不该制造
+ * 这种假授权。代价是 Context 故障期写按钮消失，属预期的只读降级。
  */
-export const canWrite = () => hasPermission('order:write') ?? ['admin', 'operator', 'superadmin'].includes(role())
-export const canAdmin = () => hasPermission('workspace:member:admin') ?? ['admin', 'superadmin'].includes(role())
-export const canApprove = () => hasPermission('compliance:approve') ?? ['admin', 'compliance_approver', 'superadmin'].includes(role())
+export const canWrite = () => hasPermission('order:write') ?? false
+export const canAdmin = () => hasPermission('workspace:member:admin') ?? false
+export const canApprove = () => hasPermission('compliance:approve') ?? false
 
 /**
  * 按权限 key 判断能力（页面按钮级权限的统一入口）。
  *
  * 权威事实源是**后端** `workspace_context.ROLE_PERMISSIONS`：它经
- * `GET /api/me/workspace-context` 下发 `permissions[]`，此处只做查询 +
- * legacy 兜底映射——**前端不重新定义角色-权限矩阵**（那会造成双事实源漂移，
+ * `GET /api/me/workspace-context` 下发 `permissions[]`，此处**只做查询**，
+ * 不重新定义角色-权限矩阵（那会造成双事实源漂移，
  * 见 docs/角色权限体系梳理方案.md §7-修正 8）。
  *
  * key 命名见 docs/页面操作权限对照表.md（如 product:write / listing:write /
  * settlement:write / compliance:check / supply:write）。
  *
- * Context 不可用时（请求失败、未登录）按 `LEGACY_ROLE_MAP` 推导的角色
- * 回退到 `LEGACY_CAPABILITIES`，保证工厂门户等场景按钮不消失。
+ * Context 不可用时（请求失败、未登录）**一律返回 false**（fail-closed，D24）：
+ * 前端不再用 legacy 角色推导权限，避免「改 localStorage 就出现写按钮」。
+ * 真实写操作后端仍会独立鉴权，故这里只影响按钮可见性。
  */
-const LEGACY_CAPABILITIES = {
-  OWNER: ['product:write', 'supply:write', 'listing:write', 'order:write', 'finance:write',
-    'purchase:write', 'settlement:write', 'refund:write', 'ai:write', 'workspace:write',
-    'workspace:member:admin', 'compliance:approve', 'compliance:check'],
-  OPERATOR: ['product:write', 'supply:write', 'listing:write', 'order:write', 'finance:write',
-    'purchase:write', 'settlement:write', 'refund:write', 'ai:write', 'workspace:write',
-    'compliance:check'],
-  COMPLIANCE: ['compliance:approve', 'compliance:check'],
-  FACTORY_COLLABORATOR: ['supply:write'],
-}
-
 export function can(capability) {
   const fromContext = hasPermission(capability)
   if (fromContext !== null) return fromContext
-  return (LEGACY_CAPABILITIES[roleKey()] || []).includes(capability)
+  return false
 }
 
 /** 任一能力满足即通过（用于「多个写操作任一有权」的场景）。 */
@@ -90,7 +90,12 @@ export function canAny(...capabilities) {
   return capabilities.some((c) => can(c))
 }
 
-/** 新角色枚举（大写）：有 Context 用 Context，否则由 legacy role 映射。 */
+/**
+ * 新角色枚举（大写）：有 Context 用 Context，否则由 legacy role 映射。
+ *
+ * 用途**仅限路由分流与展示**（Layout 菜单、角色标签、`routeRedirect`）。
+ * 禁止用它推导权限——权限一律走 `can()` / `hasPermission()`（D24）。
+ */
 export const roleKey = () => contextRole() || LEGACY_ROLE_MAP[role().toLowerCase()] || (role() ? 'READ_ONLY' : '')
 
 /**
@@ -98,13 +103,6 @@ export const roleKey = () => contextRole() || LEGACY_ROLE_MAP[role().toLowerCase
  * 不再直接读 `localStorage.erp_user.role`——那是文件头禁止的用法。
  */
 export const isSupplier = () => roleKey() === 'FACTORY_COLLABORATOR'
-
-/** 平台管理员本尊判断（代客态不算本尊）。 */
-export const isSuperadmin = () => roleKey() === 'PLATFORM_ADMIN'
-  && !localStorage.getItem('erp_impersonating')
-
-/** Context 来源（MEMBERSHIP / LEGACY_FALLBACK / PLATFORM / FACTORY），无 Context 为 null。 */
-export const workspaceSource = () => contextSource()
 
 const APPROVER_PATHS = new Set(['/compliance-workbench', '/dashboard', '/bi', '/listings', '/compliance'])
 const ADMIN_PATHS = new Set(['/users', '/settings'])

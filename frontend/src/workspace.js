@@ -114,35 +114,6 @@ export function isMembershipContext() {
   return context?.source === 'MEMBERSHIP'
 }
 
-/**
- * Phase 1.8：把 Context 归一化成「路由分流用的身份快照」。
- *
- * 为什么需要这一层：`routeRedirect` / `defaultLanding` 需要的是
- * 「这个用户该去哪个首页、能进哪些页」，而 Context 与 legacy `erp_user`
- * 的字段名不同（`role` 大写枚举 vs 小写角色、`source` vs 无）。
- * 把差异收敛在这一个函数里，路由策略本身保持纯函数、可单测。
- *
- * 返回 null 表示「没有可用身份」（未登录或 Context 与 legacy 都拿不到）。
- *
- * `impersonating` 语义：superadmin 代客进入租户后必须当普通租户身份看，
- * 不能再去平台控制台。优先用 Context 的 `is_impersonating`（后端已透传），
- * 无 Context 时回退 localStorage 标记（代客会话是前端自管的）。
- */
-export function identitySnapshot() {
-  const impersonating = Boolean(context?.is_impersonating)
-    || Boolean(localStorage.getItem('erp_impersonating'))
-  if (context) {
-    return {
-      source: context.source,
-      role: context.role,
-      workspaceId: context.workspace_id ?? null,
-      impersonating,
-      fromContext: true,
-    }
-  }
-  return null
-}
-
 /** 切换活动 Workspace；成功后重新加载 Context。 */
 export async function switchWorkspace(id) {
   try {

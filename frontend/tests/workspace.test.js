@@ -103,7 +103,7 @@ describe('workspace context cache', () => {
   })
 })
 
-describe('capability resolution: context first, legacy fallback', () => {
+describe('capability resolution: context is the only authority (D24)', () => {
   beforeEach(() => {
     clearWorkspaceContext()
     localStorage.clear()
@@ -131,7 +131,12 @@ describe('capability resolution: context first, legacy fallback', () => {
     expect(canWrite()).toBe(false)
   })
 
-  it('falls back to legacy after a context is cleared', async () => {
+  /**
+   * D24：清掉 Context 后写权限必须变 false（旧实现会回退 legacy admin → true）。
+   * 这两条用例锁死「Context 生命周期」与「权限可见性」的联动：登出/401 清理
+   * Context 后，界面必须立刻退化为只读，而不是靠 localStorage 残留继续给按钮。
+   */
+  it('drops write access after the context is cleared (no legacy re-grant)', async () => {
     localStorage.setItem('erp_user', JSON.stringify({ role: 'admin' }))
     client.get.mockResolvedValueOnce(contextResponse({ ...CONTEXT, role: 'READ_ONLY', permissions: [] }))
     await loadWorkspaceContext()
@@ -139,14 +144,13 @@ describe('capability resolution: context first, legacy fallback', () => {
 
     clearWorkspaceContext()
 
-    expect(canWrite()).toBe(true)
+    expect(canWrite()).toBe(false)
   })
 
-  it('falls back to the legacy role when no context is cached', () => {
+  it('never grants write from the legacy role alone', () => {
     localStorage.setItem('erp_user', JSON.stringify({ role: 'admin' }))
-
-    expect(canWrite()).toBe(true)
-    localStorage.setItem('erp_user', JSON.stringify({ role: 'viewer' }))
+    expect(canWrite()).toBe(false)
+    localStorage.setItem('erp_user', JSON.stringify({ role: 'superadmin' }))
     expect(canWrite()).toBe(false)
   })
 })

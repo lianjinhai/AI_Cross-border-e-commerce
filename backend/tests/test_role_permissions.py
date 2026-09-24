@@ -166,50 +166,63 @@ _FRONTEND_PERMISSIONS = (pathlib.Path(__file__).resolve().parent.parent.parent
 
 
 def test_frontend_legacy_capabilities_match_backend_matrix():
-    """契约测试：前端 `LEGACY_CAPABILITIES` 的写权限必须与后端 `ROLE_PERMISSIONS` 一致。
+    """契约测试（D24 后）：前端**不得**存在第二份「角色→权限」表。
 
-    为什么要双向断言（专家探讨 P3）：前端 `can()` 在 Context 不可用（工厂账号、
-    请求失败）时回退到 `LEGACY_CAPABILITIES`——这是**手工维护的第二份表**。
-    后端新增权限 key 而前端漏同步时，那类账号的按钮会静默消失且无测试报警。
-    本测试从后端侧读取前端源码并比对，任一侧漂移即失败。
+    历史（本测试前身）：前端曾用 `LEGACY_CAPABILITIES` 手工维护一份角色→权限
+    映射，作为 Context 不可用时的兜底；本测试双向比对它与后端 `ROLE_PERMISSIONS`
+    的一致性。D24 采纳「只读降级」后该常量**已整体删除**——Context 不可用时
+    写权限一律 false，不再有任何前端兜底表。
+
+    因此守护点从「两张表一致」变成「**不存在第二份表**」：
+      1. 前端不得重新引入 `LEGACY_CAPABILITIES`（回退会静默恢复 legacy 授权，
+         等于把 D24 的收口推翻，且前端伪造 `erp_user.role` 会再次获得写权限）；
+      2. 写权限判定必须走 `hasPermission()`，且缺失时 fail-closed（`?? false`）。
     """
     import re
 
-    from app.services.workspace_context import ROLE_PERMISSIONS
-
     assert _FRONTEND_PERMISSIONS.is_file(), f"前端权限文件不存在：{_FRONTEND_PERMISSIONS}"
     text = _FRONTEND_PERMISSIONS.read_text(encoding="utf-8")
-    block = re.search(r"const LEGACY_CAPABILITIES = \{(.*?)\}", text, re.S)
-    assert block, "未找到 LEGACY_CAPABILITIES 定义（前端重构后需同步本测试）"
-    # 解析每个角色数组里的 key
-    frontend: dict[str, set[str]] = {}
-    for m in re.finditer(r"(\w+):\s*\[([^\]]*)\]", block.group(1)):
-        role, items = m.group(1), m.group(2)
-        frontend[role] = set(re.findall(r"'([^']+)'", items))
-    assert frontend, "LEGACY_CAPABILITIES 解析为空"
 
-    # 前端兜底表只列**写/特殊**权限（读权限不控制按钮，无需列出）
-    for role, keys in frontend.items():
-        backend_write = {k for k in ROLE_PERMISSIONS.get(role, frozenset())
-                         if k.endswith(":write") or k in ("workspace:member:admin",
-                                                          "compliance:approve",
-                                                          "compliance:check")}
-        assert keys == backend_write, (
-            f"{role} 前端兜底表与后端矩阵不一致：\n"
-            f"  前端多出：{sorted(keys - backend_write)}\n"
-            f"  前端缺少：{sorted(backend_write - keys)}")
+    # 1) 禁止重新引入前端权限兜底表（D24）
+    assert "LEGACY_CAPABILITIES" not in text, (
+        "前端重新引入了 LEGACY_CAPABILITIES 兜底表——D24 已将其删除，"
+        "Context 不可用时写权限必须 fail-closed（见 docs/DECISIONS.md D24）")
+
+    # 2) 能力判定必须 fail-closed：hasPermission 为 null（Context 不可用）时返回 false
+    assert re.search(r"hasPermission\(capability\)[\s\S]{0,200}?return false", text), (
+        "前端 can() 未 fail-closed：Context 不可用时必须返回 false，"
+        "禁止回退到任何 legacy 角色判定")
+    for fn, key in (("canWrite", "order:write"),
+                    ("canAdmin", "workspace:member:admin"),
+                    ("canApprove", "compliance:approve")):
+        pattern = rf"export const {fn} = \(\) => hasPermission\('{re.escape(key)}'\) \?\? false"
+        assert re.search(pattern, text), (
+            f"前端 {fn}() 未按 D24 fail-closed（期望 `hasPermission('{key}') ?? false`）")
 
 
 def test_backend_has_no_orphan_write_permission():
-    """后端不应有「前端完全未使用」的写权限 key（防止加了 key 但页面没接）。"""
+    """后端不应有「前端完全未使用」的写权限 key（防止加了 key 但页面没接）。
 
+    为什么改成扫**整个 src/**：D24 之前前端把写权限 key 集中列在
+    `LEGACY_CAPABILITIES` 里，扫一个文件即可；该常量删除后，key 只出现在
+    真正使用它的视图里（如 `Orders.vue` 的 `can('order:write')`）。
+    若仍只扫 `permissions.js`，所有写权限都会被误报为 orphan——那不是缺陷，
+    而是扫描范围没跟上设计变更。
+    """
     from app.services.workspace_context import ROLE_PERMISSIONS
 
     all_write = set()
     for keys in ROLE_PERMISSIONS.values():
         all_write |= {k for k in keys if k.endswith(":write")}
-    text = _FRONTEND_PERMISSIONS.read_text(encoding="utf-8")
-    # 前端可能用 can() 字面量或在页面里；此处只要求兜底表覆盖到（页面级检查由前端测试负责）
-    unused = [k for k in all_write if f"'{k}'" not in text]
-    # 读权限与 supply:read 等不在兜底表属正常；仅对「写权限」告警
-    assert not unused, f"以下写权限 key 未出现在前端权限文件中：{unused}"
+
+    src_dir = _FRONTEND_PERMISSIONS.parent
+    used = set()
+    for path in src_dir.rglob("*"):
+        if path.is_file() and path.suffix in (".js", ".vue"):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for key in all_write:
+                if f"'{key}'" in text or f'"{key}"' in text:
+                    used.add(key)
+    unused = sorted(all_write - used)
+    assert not unused, (
+        f"以下写权限 key 未被前端任何页面使用（后端已定义但页面没接）：{unused}")
