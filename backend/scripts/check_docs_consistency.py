@@ -20,6 +20,14 @@
        该损坏从首次提交（6215d49）就存在，历经 20 轮评审未被发现——
        因为**损坏后的文本仍然「读得通」**。这类问题必须由机器检查。
 
+    6. **ADR 索引锚点漂移**——`docs/adr/README.md` 声称「覆盖全部 D 编号、锚点已逐条
+       核对」，实测 **D22~D26 锚点各偏移 2 行**、**D27~D31 完全未收录**（索引表停在
+       D26 却写「总计 28 条」）。人工核对锚点在每次追加决策后必然失效。
+    5. **代码位置引用越界**——DEBT-05 把 `platform_adapters.py` 从 1303 行拆成
+       12 模块后，`项目介绍与功能地图.md` 仍有 11 处引用旧行号（如
+       `platform_adapters.py:71-539`，而门面文件只剩 131 行）。检查 B 只验证
+       「文件存在」，**行号越界它抓不到**——拆包/删函数后这类引用必然失效。
+
 检查项
     A. 基线数字一致：活文档中出现的 `N passed` 必须与 `docs/baseline.json` 一致。
     B. 路径引用有效：反引号里的文件路径必须能在仓库中解析。
@@ -27,6 +35,11 @@
        仍被描述为「未完成」。
     D. 文本卫生：文档不得含控制字符、BOM，行尾必须 LF，且行内代码标记
        （反引号）必须成对——这些是**内容损坏**，肉眼看不出来但会污染阅读与检索。
+    E. 换行注入：字面量 \\n 被写成真换行（把一行撕成两行）。
+    F. 代码位置引用有效：`file.py:123` 形式的行号必须在文件实际范围内——
+       代码重构（拆包/删函数）后行号必然失效，而「文件存在」检查抓不到。
+    G. ADR 索引锚点有效：`docs/adr/README.md` 的 `[L123](../DECISIONS.md#L123)`
+       锚点必须与该决策标题的实际行号一致，且不得漏收录新决策。
 
 豁免机制（防止校验器变成噪音后被整体关掉）
     - 行内标记 ``docs-ok``：该行豁免（用于**历史性**记录，如 DECISIONS 里
@@ -281,6 +294,153 @@ def _scan_injected_newlines(docs: list[Path]) -> list[str]:
     return problems
 
 
+# `file.py:123` / `file.py:123-145` 形式的代码位置引用。
+_LINEREF = re.compile(
+    r"([A-Za-z0-9_./\-]+\.(?:py|js|vue|json))[:：](\d+)(?:\s*[-–~]\s*(\d+))?")
+
+# 文档里指向「同名文件」时的消歧前缀：文档常写裸文件名（如 `base.py`），
+# 而仓库里有多个 base.py（agents/base.py 80 行、adapters/base.py 110 行）。
+# 用文档上下文里的目录线索消歧，避免把正确引用误判为越界（实测踩过）。
+_LINEREF_CONTEXT_HINTS = (
+    ("adapters/", "backend/app/services/adapters"),
+    ("services/adapters", "backend/app/services/adapters"),
+    ("agents/", "backend/app/agents"),
+    ("routers/", "backend/app/routers"),
+    ("services/", "backend/app/services"),
+    ("tests/", "backend/tests"),
+    ("scripts/", "backend/scripts"),
+    ("views/", "frontend/src/views"),
+)
+
+
+def _resolve_code_ref(ref: str, context: str) -> Path | None:
+    """把文档里的文件引用解析成仓库内的真实文件。
+
+    **歧义必须保守处理**：文档常写裸文件名（`auth.py`、`compliance.py`、`base.py`），
+    而仓库里有多个同名文件（`app/auth.py` 331 行 vs `app/routers/auth.py` 153 行；
+    `agents/compliance.py` 135 行 vs `routers/compliance.py` 72 行）。
+
+    实测踩坑：第一版按固定根目录顺序取「第一个存在」，把 `auth.py:284`
+    （实指 `app/auth.py`）解析成 `routers/auth.py`（仅 153 行）→ **误报越界**；
+    把 `compliance.py:82`（实指 `agents/compliance.py`）解析成 `routers/compliance.py`
+    → 同样误报。守卫型工具的误报会淹没真问题，因此：
+
+    ① 若按文件名能找到**多个**候选，且文档上下文无线索 → 返回 None（不判定）；
+    ② 上下文线索（`agents/`、`routers/` 等）优先于固定根目录顺序；
+    ③ 仅当**唯一命中**或线索明确时才判定越界。
+    """
+    # 线索可能出现在**引用内部**（`agents/base.py`）或**引用之前的紧邻上下文**
+    # （`…由 agents 的 base.py 实现…`），两者都要认。
+    # 实测踩坑：第一版只看 context，导致 `agents/base.py:9999` 这种「线索就在
+    # ref 里」的写法被判为歧义而跳过——真越界反而漏报。
+    probe = ref + " " + context
+    for hint, root in _LINEREF_CONTEXT_HINTS:
+        if hint not in probe:
+            continue
+        candidate = REPO_DIR / root / Path(ref).name
+        if candidate.is_file():
+            return candidate
+    # 带路径分隔符的引用：直接按常见根目录解析
+    if "/" in ref or "\\" in ref:
+        for root in PATH_ROOTS:
+            candidate = REPO_DIR / root / ref
+            if candidate.is_file():
+                return candidate
+    # 裸文件名：全局搜索，**唯一命中才接受**
+    matches = [f for f in REPO_DIR.rglob(Path(ref).name)
+               if f.is_file() and ".git" not in f.parts
+               and "node_modules" not in f.parts and "__pycache__" not in f.parts]
+    return matches[0] if len(matches) == 1 else None
+
+
+def check_code_line_refs() -> list[str]:
+    """F：`file.py:123` 形式的代码位置引用必须在文件实际行数内。
+
+    为什么需要：检查 B（路径引用有效）只验证「文件存在」。DEBT-05 把
+    `platform_adapters.py` 从 1303 行拆成 12 模块后，文档里 11 处旧行号
+    （如 `platform_adapters.py:71-539`）**全部越界**，但 B 检查全绿——
+    因为文件确实还在（131 行的兼容门面）。行号引用必须单独检查。
+    """
+    problems = []
+    for doc in _all_docs():
+        rel = doc.relative_to(REPO_DIR).as_posix()
+        for lineno, line in enumerate(doc.read_text(encoding="utf-8", errors="replace").split("\n"), 1):
+            if "docs-ok" in line:
+                continue
+            for match in _LINEREF.finditer(line):
+                ref, start, end = match.group(1), int(match.group(2)), match.group(3)
+                if ref.startswith(("http", "docs/")) or "://" in ref:
+                    continue
+                # 只传紧邻引用前的片段：整行上下文会让 `routers/bi.py` 这种
+                # 兄弟引用把 `auth.py` 误导到 routers/ 下（实测误报 2 处）。
+                target = _resolve_code_ref(ref, line[max(0, match.start() - 24):match.start()])
+                if target is None:
+                    continue        # 文件本身由检查 B 负责；歧义则不判定
+                total = len(target.read_text(encoding="utf-8", errors="replace").split("\n"))
+                high = int(end) if end else start
+                if start > total or high > total:
+                    problems.append(
+                        "%s:%d 代码位置引用越界：%s:%s%s（%s 实际仅 %d 行）"
+                        % (rel, lineno, ref, start,
+                           "-" + end if end else "",
+                           target.relative_to(REPO_DIR).as_posix(), total))
+    return problems
+
+
+# `docs/adr/README.md` 索引行的锚点：`| D27 | ... | [`L1567`](../DECISIONS.md#L1567) |`
+_ADR_ROW = re.compile(r"^\|\s*\*{0,2}(D\d+)(?:\(a\))?\*{0,2}\s*\|.*?\[`L(\d+)`\]\([^)]*#L\d+\)")
+# `DECISIONS.md` 里决策标题的两种历史格式：`## D1 标题` 与 `## D17：标题`
+_DECISION_HEAD = re.compile(r"^## (D\d+)[\s：]")
+
+
+def check_adr_index() -> list[str]:
+    """G：ADR 索引表的锚点行号必须与 `DECISIONS.md` 实际行号一致。
+
+    为什么需要：`docs/adr/README.md` 是**面向外部的可独立引用层**，其索引表明确
+    声称「覆盖全部 D 编号、锚点已逐条核对」。实测该声称已失效：
+    D22~D26 锚点各偏移 2 行、D27~D31 完全未收录（表停在 D26 却写「总计 28 条」）。
+    锚点在**每次追加决策后**都可能漂移，人工核对不可持续。
+    """
+    decisions = REPO_DIR / "docs" / "DECISIONS.md"
+    adr = REPO_DIR / "docs" / "adr" / "README.md"
+    if not decisions.exists() or not adr.exists():
+        return []
+
+    actual: dict[str, int] = {}
+    for lineno, line in enumerate(decisions.read_text(encoding="utf-8").split("\n"), 1):
+        match = _DECISION_HEAD.match(line)
+        if match:
+            actual.setdefault(match.group(1), lineno)   # 取正篇（首个）标题
+    if not actual:
+        return []
+
+    indexed: set[str] = set()
+    problems = []
+    for lineno, line in enumerate(adr.read_text(encoding="utf-8").split("\n"), 1):
+        match = _ADR_ROW.match(line)
+        if not match:
+            continue
+        num, claimed = match.group(1), int(match.group(2))
+        indexed.add(num)
+        if num in ("D16", "D17"):
+            # 早期重复编号：索引层用 (a) 后缀区分早期条目，不做精确锚点核对
+            continue
+        real = actual.get(num)
+        if real is None:
+            problems.append("docs/adr/README.md:%d 索引了不存在的 %s" % (lineno, num))
+        elif real != claimed:
+            problems.append(
+                "docs/adr/README.md:%d %s 锚点漂移：写 L%d，DECISIONS.md 实际 L%d"
+                % (lineno, num, claimed, real))
+
+    missing = sorted(set(actual) - indexed - {"D16", "D17"}, key=lambda s: int(s[1:]))
+    if missing:
+        problems.append(
+            "docs/adr/README.md 索引表漏收录 %d 条决策：%s"
+            % (len(missing), ", ".join(missing)))
+    return problems
+
+
 def check_ledger_status() -> list[str]:
     """C：规范 §11 标记「已完成」的债务，不得在其它活文档里仍写「未完成」。"""
     standard = REPO_DIR / "docs" / "CODE_AND_DIRECTORY_STANDARD.md"
@@ -326,12 +486,14 @@ def main(argv=None) -> int:
         "ledger_status": check_ledger_status(),
         "text_hygiene": _scan_text_hygiene(_all_docs()),
         "injected_newlines": _scan_injected_newlines(_all_docs()),
+        "code_line_refs": check_code_line_refs(),
+        "adr_index": check_adr_index(),
         "baseline": {"backend": baseline["backend"]["tests"],
                      "frontend": baseline["frontend"]["tests"]},
     }
     total = sum(len(report[key]) for key in
                 ("baseline_numbers", "path_refs", "ledger_status", "text_hygiene",
-                 "injected_newlines"))
+                 "injected_newlines", "code_line_refs", "adr_index"))
     report["total"] = total
 
     if args.json:
@@ -345,7 +507,9 @@ def main(argv=None) -> int:
                            ("path_refs", "B. 路径引用有效"),
                            ("ledger_status", "C. 台账状态自洽"),
                            ("text_hygiene", "D. 文本卫生（控制字符/BOM/行尾/围栏）"),
-                           ("injected_newlines", "E. 换行注入（字面量 \\n 被写成真换行）")):
+                           ("injected_newlines", "E. 换行注入（字面量 \\n 被写成真换行）"),
+                           ("code_line_refs", "F. 代码位置引用有效（file.py:123 未越界）"),
+                           ("adr_index", "G. ADR 索引锚点有效（行号一致 + 无漏收录）")):
             items = report[key]
             print("\n[%s] %s" % ("PASS" if not items else "FAIL(%d)" % len(items), title))
             for item in items[:40]:

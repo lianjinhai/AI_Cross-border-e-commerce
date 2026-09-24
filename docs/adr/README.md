@@ -52,13 +52,18 @@
 | D19 | 分页参数必须有上限 | Accepted | `MAX_PAGE_SIZE=200`、静默截断导致假绿 | [`L873`](../DECISIONS.md#L873) |
 | D20 | 主库残留计划任务必须停用 | Accepted | `schedules.enabled`、可逆处置不删行 | [`L960`](../DECISIONS.md#L960) |
 | D21 | Docker 生产镜像端到端实测 | Accepted | `docker_feasibility.py`、锁定清单结构检查 | [`L1022`](../DECISIONS.md#L1022) |
-| D22 | TLS 落地 —— 并把「修复」里藏的 3 个缺陷挖出来 | Accepted | Caddy、可信代理网段、`tls_feasibility.py` | [`L1129`](../DECISIONS.md#L1129) |
-| D23 | G-3 工厂账号 Context 通道 | Accepted | 精确路径白名单、fail-open 修复、`status` 校验 | [`L1251`](../DECISIONS.md#L1251) |
-| D24 | 前端 legacy 兜底降级为「只读」而非删除 | Accepted | 写权限 fail-closed、`LEGACY_CAPABILITIES` 整体删除 | [`L1351`](../DECISIONS.md#L1351) |
-| D25 | 代客态 `/api/auth/me` 500 | Accepted | 鸭子类型身份对象、收敛到唯一序列化入口 | [`L1405`](../DECISIONS.md#L1405) |
-| D26 | Membership 只有读取侧、没有写入侧 | Accepted | `membership_service.py`、共用 `normalize_legacy_role` | [`L1483`](../DECISIONS.md#L1483) |
+| D22 | TLS 落地 —— 并把「修复」里藏的 3 个缺陷挖出来 | Accepted | Caddy、可信代理网段、`tls_feasibility.py` | [`L1127`](../DECISIONS.md#L1127) |
+| D23 | G-3 工厂账号 Context 通道 | Accepted | 精确路径白名单、fail-open 修复、`status` 校验 | [`L1249`](../DECISIONS.md#L1249) |
+| D24 | 前端 legacy 兜底降级为「只读」而非删除 | Accepted | 写权限 fail-closed、`LEGACY_CAPABILITIES` 整体删除 | [`L1349`](../DECISIONS.md#L1349) |
+| D25 | 代客态 `/api/auth/me` 500 | Accepted | 鸭子类型身份对象、收敛到唯一序列化入口 | [`L1403`](../DECISIONS.md#L1403) |
+| D26 | Membership 只有读取侧、没有写入侧 | Accepted | `membership_service.py`、共用 `normalize_legacy_role` | [`L1481`](../DECISIONS.md#L1481) |
+| D27 | tenant_id 外键收敛：平台级表用 NULL 而非 0 哨兵值 | Accepted | 48/48 表受约束、`foreign_key_check` 0 违规 | [`L1567`](../DECISIONS.md#L1567) |
+| D28 | 平台适配器拆包（1303 行 → 12 模块） | Accepted | 兼容门面、`monkeypatch` 静默失效陷阱 | [`L1677`](../DECISIONS.md#L1677) |
+| D29 | 消除 Agent 间 P2P（L-3 架构红线） | Accepted | 共享领域计算下沉 `services/costing.py` | [`L1768`](../DECISIONS.md#L1768) |
+| D30 | 文档一致性治理：脱节变成 CI 可拦的缺陷类别 | Accepted | `docs/baseline.json` 单一事实源、A/B/C 三项检查 | [`L1838`](../DECISIONS.md#L1838) |
+| D31 | 内容损坏治理：潜伏 20 轮的反引号转义事故 | Accepted | 18 处围栏塌缩、D/E 两项检查 | [`L1918`](../DECISIONS.md#L1918) |
 
-**总计 28 条索引项，覆盖 D1~D26 全部编号。**
+**总计 33 条索引项，覆盖 D1~D31 全部编号**（D16/D17 各含早期重复编号一条，用 `(a)` 后缀区分）。
 
 > **`D16(a)` / `D17(a)` 是什么**：`DECISIONS.md` 中 **D16 与 D17 各被使用了两次**
 > （详见第 6 节「已知问题」）。本表用 `(a)` 后缀区分这两条**早期**决策，
@@ -108,7 +113,7 @@
 ### 4.1 常规决策（默认路径）
 
 1. 在 `docs/DECISIONS.md` **末尾追加**新决策，编号取当前最大 D 编号 + 1
-   （**当前最大为 D26，下一条是 D27**）；
+   （**当前最大为 D31，下一条是 D32**）；
 2. 沿用权威源既有字段风格：`## D<n>：<标题>（<日期>）` + `**背景**` / `**决策**` /
    `**理由**` / `**验证**` / `**关联**` + 补充规范编号表（`T-*` / `DP-*` / `S-*` / `V-*`）；
 3. 回到本文件第 2 节**补一行索引**（编号 / 标题 / 状态 / 关键词 / 锚点），

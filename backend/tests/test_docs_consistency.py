@@ -239,6 +239,128 @@ def test_injected_newline_ignores_normal_wrapping(tmp_path, monkeypatch):
     monkeypatch.setattr(cdc, "REPO_DIR", tmp_path)
     assert cdc._scan_injected_newlines([path]) == []
 
+# ---------------------------------------------------------------- F. 代码位置引用
+
+def _lineref(tmp_path, monkeypatch, body: str):
+    path = tmp_path / "docs" / "X.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    monkeypatch.setattr(cdc, "REPO_DIR", tmp_path)
+    monkeypatch.setattr(cdc, "_all_docs", lambda: [path])
+    return cdc.check_code_line_refs()
+
+
+def test_lineref_catches_out_of_range(tmp_path, monkeypatch):
+    """判别力：`file.py:9999` 越界必须被抓到。
+
+    这是 B（路径引用有效）抓不到的类别——DEBT-05 拆包后 `platform_adapters.py`
+    从 1303 行变 131 行，文档里 11 处旧行号全部越界，而 B 检查全绿（文件确实还在）。
+    """
+    (tmp_path / "mod.py").write_text("x = 1\n", encoding="utf-8")
+    problems = _lineref(tmp_path, monkeypatch, "见 " + BT + "mod.py:9999" + BT + " 处。\n")
+    assert len(problems) == 1, problems
+    assert "越界" in problems[0] and "9999" in problems[0]
+
+
+def test_lineref_accepts_valid_range(tmp_path, monkeypatch):
+    """反向用例：行号在文件范围内的引用不得误报。"""
+    (tmp_path / "mod.py").write_text("a = 1\nb = 2\nc = 3\n", encoding="utf-8")
+    assert _lineref(tmp_path, monkeypatch,
+                    "见 " + BT + "mod.py:1-3" + BT + " 与 " + BT + "mod.py:2" + BT + "。\n") == []
+
+
+def test_lineref_skips_ambiguous_bare_filename(tmp_path, monkeypatch):
+    """歧义裸文件名必须**保守跳过**而非误报。
+
+    仓库里有 `app/auth.py`(331) 与 `app/routers/auth.py`(153) 两个同名文件；
+    第一版按固定根目录顺序取第一个，把 `auth.py:284` 解析成 routers/ 版本
+    → 误报越界（实测 2 处）。守卫工具的误报会淹没真问题。
+    """
+    (tmp_path / "backend" / "app" / "routers").mkdir(parents=True)
+    (tmp_path / "backend" / "app" / "auth.py").write_text("x = 1\n" * 400, encoding="utf-8")
+    (tmp_path / "backend" / "app" / "routers" / "auth.py").write_text(
+        "y = 1\n" * 100, encoding="utf-8")
+    monkeypatch.setattr(cdc, "PATH_ROOTS", (Path("."),))
+    monkeypatch.setattr(cdc, "_LINEREF_CONTEXT_HINTS", ())
+    assert _lineref(tmp_path, monkeypatch, "见 " + BT + "auth.py:284" + BT + "。\n") == []
+
+
+def test_lineref_context_hint_disambiguates(tmp_path, monkeypatch):
+    """线索消歧后仍要能抓到越界（不能为了去误报而放过真问题）。
+
+    **夹具必须复刻生产目录结构**（T-44）：`_LINEREF_CONTEXT_HINTS` 里的线索
+    是按生产路径写死的（`agents/` → `backend/app/agents`），用 `app/agents`
+    这种玩具结构会让解析器一行都命中不了，测试「跑通却什么都没验证」。
+    """
+    (tmp_path / "backend" / "app" / "agents").mkdir(parents=True)
+    (tmp_path / "backend" / "app" / "agents" / "base.py").write_text(
+        "z = 1\n" * 50, encoding="utf-8")
+    (tmp_path / "backend" / "app" / "services").mkdir(parents=True)
+    (tmp_path / "backend" / "app" / "services" / "base.py").write_text(
+        "w = 1\n" * 200, encoding="utf-8")
+    monkeypatch.setattr(cdc, "PATH_ROOTS", (Path("."),))
+    problems = _lineref(tmp_path, monkeypatch,
+                        "见 " + BT + "agents/base.py:9999" + BT + " 处。\n")
+    assert len(problems) == 1, problems
+    assert "9999" in problems[0]
+    # 反向断言：确认解析到的是 agents 版本（51 行）而非 services 版本（201 行）
+    assert "backend/app/agents/base.py" in problems[0], problems[0]
+    assert "51 行" in problems[0], problems[0]
+
+
+def test_lineref_ignores_missing_file(tmp_path, monkeypatch):
+    """文件本身不存在时交给 B 检查负责，F 不重复上报（避免同一问题两条告警）。"""
+    assert _lineref(tmp_path, monkeypatch,
+                    "见 " + BT + "definitely_missing.py:10" + BT + "。\n") == []
+
+# ---------------------------------------------------------------- G. ADR 索引锚点
+
+def _adr(tmp_path, monkeypatch, decisions: str, adr_rows: str):
+    (tmp_path / "docs" / "adr").mkdir(parents=True)
+    (tmp_path / "docs" / "DECISIONS.md").write_text(decisions, encoding="utf-8")
+    (tmp_path / "docs" / "adr" / "README.md").write_text(adr_rows, encoding="utf-8")
+    monkeypatch.setattr(cdc, "REPO_DIR", tmp_path)
+    return cdc.check_adr_index()
+
+
+def _row(num: str, line: int) -> str:
+    return "| " + num + " | 标题 | Accepted | kw | [`L" + str(line) + "`](../DECISIONS.md#L" + str(line) + ") |"
+
+
+def test_adr_index_catches_anchor_drift(tmp_path, monkeypatch):
+    """判别力：锚点行号与 DECISIONS.md 实际不一致必须被抓到。
+
+    实测：`docs/adr/README.md` 的 D22~D26 锚点各偏移 2 行——而该表明确声称
+    「锚点已逐条核对」。人工核对在每次追加决策后必然失效。
+    """
+    decisions = "## D1 标题\n" + "x\n" * 9 + "## D2：标题\n"   # D1=L1, D2=L11
+    problems = _adr(tmp_path, monkeypatch, decisions, _row("D1", 1) + "\n" + _row("D2", 999) + "\n")
+    assert len(problems) == 1, problems
+    assert "D2" in problems[0] and "L999" in problems[0] and "L11" in problems[0]
+
+
+def test_adr_index_catches_missing_decision(tmp_path, monkeypatch):
+    """判别力：漏收录决策必须被抓到（表停在旧编号是「静默过期」）。"""
+    decisions = "## D1 标题\n## D2 标题\n"
+    problems = _adr(tmp_path, monkeypatch, decisions, _row("D1", 1) + "\n")
+    assert len(problems) == 1, problems
+    assert "D2" in problems[0] and "漏收录" in problems[0]
+
+
+def test_adr_index_accepts_consistent_table(tmp_path, monkeypatch):
+    """反向用例：锚点正确且无漏收录时不得误报。"""
+    decisions = "## D1 标题\n" + "x\n" * 9 + "## D2：标题\n"
+    assert _adr(tmp_path, monkeypatch, decisions,
+                _row("D1", 1) + "\n" + _row("D2", 11) + "\n") == []
+
+
+def test_adr_index_skips_legacy_duplicate_numbers(tmp_path, monkeypatch):
+    """D16/D17 是历史重复编号（早期以一级标题写入），索引层用 (a) 后缀区分，
+    不得因锚点核对产生噪音。"""
+    decisions = "## D16：新条目\n## D17：新条目\n"
+    assert _adr(tmp_path, monkeypatch, decisions,
+                _row("D16", 1) + "\n" + _row("D17", 2) + "\n") == []
+
 # ---------------------------------------------------------------- 真实仓库（端到端）
 
 def test_real_repo_is_consistent():
