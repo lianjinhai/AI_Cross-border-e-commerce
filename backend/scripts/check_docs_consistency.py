@@ -20,6 +20,11 @@
        该损坏从首次提交（6215d49）就存在，历经 20 轮评审未被发现——
        因为**损坏后的文本仍然「读得通」**。这类问题必须由机器检查。
 
+    7. **孤儿文档**——`docs/` 根目录有 18 个文档，但 `AGENTS.md` §11 只索引 9 个，
+       `docs/archive/README.md` 的「活文档清单」列了 11 个（漏 7 个），实测
+       **4 份文档零引用**（`M4客服知识自进化方案与论证.md`、
+       `权限体系问题排查与专家探讨.md`、`角色权限体系梳理方案.md`、
+       `角色界面差异化设计方案.md`）——维护者不知道它们存在，也不知道哪份已过期。
     6. **ADR 索引锚点漂移**——`docs/adr/README.md` 声称「覆盖全部 D 编号、锚点已逐条
        核对」，实测 **D22~D26 锚点各偏移 2 行**、**D27~D31 完全未收录**（索引表停在
        D26 却写「总计 28 条」）。人工核对锚点在每次追加决策后必然失效。
@@ -40,6 +45,9 @@
        代码重构（拆包/删函数）后行号必然失效，而「文件存在」检查抓不到。
     G. ADR 索引锚点有效：`docs/adr/README.md` 的 `[L123](../DECISIONS.md#L123)`
        锚点必须与该决策标题的实际行号一致，且不得漏收录新决策。
+    H. 文档地图完整：`docs/` 根下每个活文档都必须在 `docs/DOCUMENT_MAP.md`
+       登记，且归档目录每个文件都要在 `docs/archive/README.md` 登记——
+       否则新增文档会成为「没人知道它存在」的孤儿。
 
 豁免机制（防止校验器变成噪音后被整体关掉）
     - 行内标记 ``docs-ok``：该行豁免（用于**历史性**记录，如 DECISIONS 里
@@ -456,6 +464,44 @@ def check_adr_index() -> list[str]:
     return problems
 
 
+def check_document_map() -> list[str]:
+    """H：`docs/` 根下每个活文档都必须登记进 `docs/DOCUMENT_MAP.md`。
+
+    为什么需要：实测 `docs/` 根有 18 个文档，但 `AGENTS.md` §11 只索引 9 个、
+    `docs/archive/README.md` 的「活文档清单」列了 11 个（漏 7 个），
+    **4 份文档零引用**——维护者不知道它们存在、也不知道哪份已过期。
+    「人记得同步索引」不可持续，因此把「登记」变成硬门禁。
+
+    豁免：本检查自身与其索引对象（`DOCUMENT_MAP.md` 不登记自己）。
+    """
+    docs_dir = REPO_DIR / "docs"
+    doc_map = docs_dir / "DOCUMENT_MAP.md"
+    if not doc_map.exists():
+        return ["docs/DOCUMENT_MAP.md 不存在——docs/ 下的活文档需要一个总索引"]
+    map_text = doc_map.read_text(encoding="utf-8")
+
+    problems = []
+    for doc in sorted(docs_dir.glob("*.md")):
+        if doc.name == "DOCUMENT_MAP.md":
+            continue
+        if doc.name not in map_text:
+            problems.append(
+                "docs/%s 未登记进 docs/DOCUMENT_MAP.md（新增文档必须登记，"
+                "否则会成为没人知道它存在的孤儿）" % doc.name)
+
+    archive = docs_dir / "archive"
+    archive_readme = archive / "README.md"
+    if archive.is_dir() and archive_readme.exists():
+        archive_text = archive_readme.read_text(encoding="utf-8")
+        for item in sorted(archive.glob("*.md")):
+            if item.name == "README.md":
+                continue
+            if item.name not in archive_text:
+                problems.append(
+                    "docs/archive/%s 未登记进 docs/archive/README.md" % item.name)
+    return problems
+
+
 def check_ledger_status() -> list[str]:
     """C：规范 §11 标记「已完成」的债务，不得在其它活文档里仍写「未完成」。"""
     standard = REPO_DIR / "docs" / "CODE_AND_DIRECTORY_STANDARD.md"
@@ -503,12 +549,13 @@ def main(argv=None) -> int:
         "injected_newlines": _scan_injected_newlines(_all_docs()),
         "code_line_refs": check_code_line_refs(),
         "adr_index": check_adr_index(),
+        "document_map": check_document_map(),
         "baseline": {"backend": baseline["backend"]["tests"],
                      "frontend": baseline["frontend"]["tests"]},
     }
     total = sum(len(report[key]) for key in
                 ("baseline_numbers", "path_refs", "ledger_status", "text_hygiene",
-                 "injected_newlines", "code_line_refs", "adr_index"))
+                 "injected_newlines", "code_line_refs", "adr_index", "document_map"))
     report["total"] = total
 
     if args.json:
@@ -524,7 +571,8 @@ def main(argv=None) -> int:
                            ("text_hygiene", "D. 文本卫生（控制字符/BOM/行尾/围栏）"),
                            ("injected_newlines", "E. 换行注入（字面量 \\n 被写成真换行）"),
                            ("code_line_refs", "F. 代码位置引用有效（file.py:123 未越界）"),
-                           ("adr_index", "G. ADR 索引锚点有效（行号一致 + 无漏收录）")):
+                           ("adr_index", "G. ADR 索引锚点有效（行号一致 + 无漏收录）"),
+                           ("document_map", "H. 文档地图完整（活文档 + 归档均已登记）")):
             items = report[key]
             print("\n[%s] %s" % ("PASS" if not items else "FAIL(%d)" % len(items), title))
             for item in items[:40]:

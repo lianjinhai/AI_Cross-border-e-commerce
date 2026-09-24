@@ -151,6 +151,7 @@ routers/ -> agents/ -> tools/ -> services/ -> models.py
 
 | 文档 | 用途 |
 |---|---|
+| `docs/DOCUMENT_MAP.md` | **文档地图：我该读哪份文档？**（活文档 / 方案稿 / 归档总索引，H 项强制同步） |
 | `docs/CODE_AND_DIRECTORY_STANDARD.md` | **代码与目录规范（本文件的上位文档）** |
 | `CONTRIBUTING.md` | **面向人类开发者**的贡献指南（环境搭建 / 开发循环 / 迁移流程 / Windows 陷阱）；本文件面向 AI 助手，两者互补 |
 | `docs/AI_AGENT_OPERATING_SYSTEM_ARCHITECTURE.md` | Agent 操作系统架构冻结 V1.0 |

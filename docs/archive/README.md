@@ -23,16 +23,8 @@
 
 ## 保留在 `docs/` 根的活文档
 
-| 文件 | 用途 |
-|---|---|
-| `CODE_AND_DIRECTORY_STANDARD.md` | 代码与目录规范 V1.0 |
-| `AI_AGENT_OPERATING_SYSTEM_ARCHITECTURE.md` | Agent OS 架构冻结 V1.0 |
-| `CONTRACT.md` | 接口契约 |
-| `DECISIONS.md` | 架构决策记录（ADR） |
-| `backup_restore_runbook.md` | 备份与恢复运维手册 |
-| `WORKSPACE_MIGRATION_PROGRESS.md` | Workspace 迁移进度（活） |
-| `phase1_interfaces.md` | Phase 1 FROZEN 接口契约 |
-| `phase1_setting_scope_design.md` | P1-10 隔离设计（**待实施**，故未归档） |
-| `子代理实施索引-20260923.md` | 本轮子代理追溯索引（活） |
-| `项目介绍与功能地图.md` | 功能全景 |
-| `需求分析与详细设计说明书V8.0.md` | 原始需求与设计 |
+> ⚠️ **本清单已废止，改为单一来源**：活文档总索引见 [`docs/DOCUMENT_MAP.md`](../DOCUMENT_MAP.md)
+> （按「我要做什么」与「文档状态」分类，并由 `check_docs_consistency.py` 的 H 项强制同步）。
+>
+> **废止原因**：本清单曾列 11 个活文档，而实际有 18 个（漏 7 个，含 4 份零引用文档）。
+> 同一份信息维护在两个地方必然漂移——保留清单 = 保留漂移源。

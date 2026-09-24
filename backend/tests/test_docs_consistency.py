@@ -361,6 +361,63 @@ def test_adr_index_skips_legacy_duplicate_numbers(tmp_path, monkeypatch):
     assert _adr(tmp_path, monkeypatch, decisions,
                 _row("D16", 1) + "\n" + _row("D17", 2) + "\n") == []
 
+# ---------------------------------------------------------------- H. 文档地图
+
+def _docmap(tmp_path, monkeypatch, live: list[str], archived: list[str],
+            map_names: list[str], archive_names: list[str]):
+    docs = tmp_path / "docs"
+    (docs / "archive").mkdir(parents=True)
+    for name in live:
+        (docs / name).write_text("# x\n", encoding="utf-8")
+    for name in archived:
+        (docs / "archive" / name).write_text("# x\n", encoding="utf-8")
+    (docs / "DOCUMENT_MAP.md").write_text(
+        "# 地图\n" + "".join("- " + n + "\n" for n in map_names), encoding="utf-8")
+    (docs / "archive" / "README.md").write_text(
+        "# 归档\n" + "".join("- " + n + "\n" for n in archive_names), encoding="utf-8")
+    monkeypatch.setattr(cdc, "REPO_DIR", tmp_path)
+    return cdc.check_document_map()
+
+
+def test_docmap_catches_orphan_live_doc(tmp_path, monkeypatch):
+    """判别力：新增未登记的活文档必须被抓到。
+
+    实测背景：`docs/` 根有 18 个文档，但索引只覆盖 9~11 个，
+    **4 份文档零引用**——维护者不知道它们存在，也不知道哪份已过期。
+    """
+    problems = _docmap(tmp_path, monkeypatch,
+                       live=["A.md", "ORPHAN.md"], archived=[],
+                       map_names=["A.md"], archive_names=[])
+    assert len(problems) == 1, problems
+    assert "ORPHAN.md" in problems[0]
+
+
+def test_docmap_catches_orphan_archive(tmp_path, monkeypatch):
+    """判别力：归档目录里未登记的文件必须被抓到。"""
+    problems = _docmap(tmp_path, monkeypatch,
+                       live=["A.md"], archived=["old.md", "ORPHAN.md"],
+                       map_names=["A.md"], archive_names=["old.md"])
+    assert len(problems) == 1, problems
+    assert "ORPHAN.md" in problems[0]
+
+
+def test_docmap_accepts_complete_map(tmp_path, monkeypatch):
+    """反向用例：全部登记时不得误报（含 DOCUMENT_MAP.md 不登记自己）。"""
+    assert _docmap(tmp_path, monkeypatch,
+                   live=["A.md", "B.md"], archived=["old.md"],
+                   map_names=["A.md", "B.md"], archive_names=["old.md"]) == []
+
+
+def test_docmap_reports_missing_map_file(tmp_path, monkeypatch):
+    """DOCUMENT_MAP.md 本身缺失时必须明确报错，而不是静默通过。"""
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "A.md").write_text("# x\n", encoding="utf-8")
+    monkeypatch.setattr(cdc, "REPO_DIR", tmp_path)
+    problems = cdc.check_document_map()
+    assert len(problems) == 1, problems
+    assert "DOCUMENT_MAP.md 不存在" in problems[0]
+
 # ---------------------------------------------------------------- 真实仓库（端到端）
 
 def test_real_repo_is_consistent():
