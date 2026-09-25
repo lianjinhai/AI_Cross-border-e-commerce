@@ -274,6 +274,83 @@ def _line_at(text: str, lineno: int) -> str:
     return lines[lineno - 1] if 0 < lineno <= len(lines) else ""
 
 
+# ------------------------------------------------- K. 源码文本卫生（非 Markdown）
+
+# 扫描时排除的目录：依赖、生成物、缓存、冷备。node_modules 实测 15782 个文件，
+# 扫进来既慢，又会把第三方依赖的行尾当成自己的问题报出来（噪音淹没真问题）。
+_SOURCE_EXCLUDE_DIRS = {
+    ".git", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache",
+    "dist", "build", "backups", "_erp_backups", ".venv", "venv", "htmlcov",
+}
+
+
+def _crlf_allowed_suffixes() -> set[str]:
+    """从 `.gitattributes` 解析「按设计为 CRLF」的后缀。
+
+    **单一事实源（T-53）**：行尾策略只应存在于 `.gitattributes` 一处。若在这里
+    再抄一份后缀清单，改 `.gitattributes` 时必然漏改，检查器就会开始把合法文件
+    误报成违规——而误报会让整道门禁失去可信度（T-46 同类）。
+    """
+    allowed: set[str] = set()
+    path = REPO_DIR / ".gitattributes"
+    if not path.exists():
+        return allowed
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line or "eol=crlf" not in line:
+            continue
+        pattern = line.split()[0]
+        if pattern.startswith("*."):
+            allowed.add(pattern[1:].lower())      # "*.bat" -> ".bat"
+    return allowed
+
+
+def _is_binary(raw: bytes) -> bool:
+    """按 NUL 字节判定二进制（Git 同款启发式），避免给二进制文件报行尾问题。"""
+    return b"\x00" in raw[:8192]
+
+
+def check_source_hygiene() -> list[str]:
+    """K：非 Markdown 源码/配置文件的文本卫生——BOM 与 CRLF。
+
+    为什么必须单独检查（D 项只扫 `.md`）：
+      实测事故：新写的 `backend/app/agents/contracts.py` 落了 **399 处 CRLF**，
+      而 D 项只扫 `docs/**/*.md`，**全绿通过**；`git commit` 仅给一条
+      `warning: CRLF will be replaced by LF`——这类 warning 在长输出里极易被
+      忽略。后果有两层：
+        1. 工作区长期保留 CRLF，并留下「`git status` 显示已修改、`git diff`
+           却为空」的**假状态**（stat 缓存失效），误导「是否已提交」的判断；
+        2. 同类写入路径对任何脚本都成立——本仓库实测过真实损害：
+           `docker-entrypoint.sh` 变 CRLF 后容器报 `bad interpreter: /bin/sh^M`。
+
+    覆盖面：`REPO_DIR` 下全部非 Markdown 文本文件（Markdown 归 D 项，
+    不重复上报——见 T-50「同一问题只报一次」）。
+    """
+    allowed = _crlf_allowed_suffixes()
+    problems = []
+    for path in sorted(REPO_DIR.rglob("*")):
+        if not path.is_file():
+            continue
+        if any(part in _SOURCE_EXCLUDE_DIRS for part in path.parts):
+            continue
+        suffix = path.suffix.lower()
+        if suffix == ".md" or suffix in allowed:
+            continue
+        raw = path.read_bytes()
+        if _is_binary(raw):
+            continue
+        rel = path.relative_to(REPO_DIR).as_posix()
+        if raw.startswith(b"\xef\xbb\xbf"):
+            problems.append("%s:1 含 UTF-8 BOM（规范要求 UTF-8 无 BOM）" % rel)
+            raw = raw[3:]
+        count = raw.count(b"\r")
+        if count:
+            problems.append(
+                "%s:1 含 CR 行尾（%d 处）；仓库行尾策略为 LF（见 .gitattributes）"
+                % (rel, count))
+    return problems
+
+
 def _scan_injected_newlines(docs: list[Path]) -> list[str]:
     """E：疑似 `` `n `` 注入——字面量被写成了真换行，把一行撕成两行。
 
@@ -619,13 +696,14 @@ def main(argv=None) -> int:
         "adr_index": check_adr_index(),
         "document_map": check_document_map(),
         "subagent_status": check_subagent_status(),
+        "source_hygiene": check_source_hygiene(),
         "baseline": {"backend": baseline["backend"]["tests"],
                      "frontend": baseline["frontend"]["tests"]},
     }
     total = sum(len(report[key]) for key in
                 ("baseline_numbers", "path_refs", "ledger_status", "text_hygiene",
                  "injected_newlines", "code_line_refs", "adr_index", "document_map",
-                 "subagent_status"))
+                 "subagent_status", "source_hygiene"))
     report["total"] = total
 
     if args.json:
@@ -643,7 +721,8 @@ def main(argv=None) -> int:
                            ("code_line_refs", "F. 代码位置引用有效（file.py:123 未越界）"),
                            ("adr_index", "G. ADR 索引锚点有效（行号一致 + 无漏收录）"),
                            ("document_map", "H. 文档地图完整（活文档 + 归档均已登记）"),
-                           ("subagent_status", "I. 子代理状态自洽（无僵尸「进行中」）")):
+                           ("subagent_status", "I. 子代理状态自洽（无僵尸「进行中」）"),
+                           ("source_hygiene", "K. 源码文本卫生（非 Markdown 的 BOM/CRLF）")):
             items = report[key]
             print("\n[%s] %s" % ("PASS" if not items else "FAIL(%d)" % len(items), title))
             for item in items[:40]:

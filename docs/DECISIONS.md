@@ -2237,3 +2237,56 @@ Agent 只做引用；`required_permissions` 的取值由 `_ALL_KNOWN_PERMISSIONS
 
 **关联**：`docs/AI_AGENT_OPERATING_SYSTEM_ARCHITECTURE.md` §6.2 / §7.2~§7.9 / §18.3、
 规范 T-53 / **T-55** / **DEBT-34**、`docs/子代理实施索引-20260923.md` 第二十五轮。
+---
+
+## D36：源码文本卫生门禁 —— 行尾契约必须覆盖全仓，不能只管文档（2026-09-25）
+
+**背景**：本轮在写 Agent 契约声明模块时，`backend/app/agents/contracts.py` 落了
+**400 处 CRLF**。校验器**全绿通过**——D 项只扫 `docs/**/*.md`；`git commit` 只给
+一条 `warning: CRLF will be replaced by LF`，在长输出里被忽略。**这是一个真实
+的门禁缺口，由本轮施工亲测暴露，不是推演。**
+
+### 一、后果（两层，第二层已有真实损害先例）
+
+1. **假状态误导判断**：修好文件内容后，`git status` 仍显示该文件「已修改」而
+   `git diff` 为空（stat 缓存失效）。这会让人误判「是否已提交 / 是否有未保存改动」。
+2. **同类路径对任何脚本都成立**：`.gitattributes` 锁定全仓 `eol=lf`，但检查只管
+   网页文档。本仓库已有真实损害先例——`docker-entrypoint.sh` 变 CRLF 后容器报
+   `bad interpreter: /bin/sh^M`（见 D18）。
+
+### 二、修法：新增检查 K（源码文本卫生）
+
+`check_docs_consistency.py` 新增 **K 项**：扫描 `REPO_DIR` 下全部非 Markdown 文本文件，
+检查 BOM 与 CR 行尾。三条设计约束：
+
+| 约束 | 理由 |
+|---|---|
+| 跳过 `.md`（归 D 项） | T-50「同一问题只报一次」——重复上报会让报告可信度崩塌 |
+| 按 NUL 字节跳过二进制 | 否则给图片/字体报行尾问题，噪音淹没真问题 |
+| 后缀豁免**从 `.gitattributes` 解析** | T-53「同一份信息不得维护在两个地方」——在代码里抄一份 CRLF 后缀清单 = 保留第二个漂移源，改了 `.gitattributes` 必然漏改 |
+
+排除目录：`.git` / `node_modules`（实测 15782 文件）/ `__pycache__` / `dist` /
+`backups` 等生成物与冷备。
+
+### 三、判别力验证（回退法，本轮实测）
+
+| 验证 | 结果 |
+|---|---|
+| **变异**：把 `contracts.py` 改回 CRLF | ✅ K 项**精确命中**「`contracts.py:1 含 CR 行尾（400 处）`」，exit=2 |
+| **还原**：恢复 LF | ✅ K 项恢复 PASS，字节数与变异前一致（17708） |
+| 单元判别力 | ✅ 新增 **6 条**用例：CRLF 命中、BOM 命中、`.md` 不重复上报、`.gitattributes` 声明的后缀放行、二进制与 `node_modules` 跳过、合规源码不误报 |
+| 全仓实测 | ✅ 254 个受控文件 CRLF=0 / BOM=0 |
+
+### 四、顺带清理的游离残留（同属「资源未回收」）
+
+盘点时发现 3 个未被 Git 跟踪、已被 `.gitignore` 覆盖、但一直留在工作区的文件：
+
+| 文件 | 性质 | 处置 |
+|---|---|---|
+| `backend/requirements.lock.txt.bak` | 变异测试残留（与正式锁文件仅差一行注释里的数字） | 已删除（零引用，已核实） |
+| `backend/tests/test_api.py.orig` | 回退法残留（与现役文件同 29 个用例，现役为超集且与 HEAD 一致） | 已删除（已核实未丢测试） |
+| `_wip_backup/Users.vue.orig` | 同上 | 已删除，空目录一并清理 |
+
+**关联**：D18（LF 行尾锁定）、D30~D34（文档一致性治理）、规范 **T-56** / Doc-8、
+`docs/子代理实施索引-20260923.md` 第二十六轮。
+

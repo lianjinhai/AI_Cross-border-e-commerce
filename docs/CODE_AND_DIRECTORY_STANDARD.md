@@ -340,6 +340,7 @@ frontend/node_modules/  frontend/dist/     frontend/.zcode/
 | T-53 | **同一份信息不得维护在两个地方**。`docs/archive/README.md` 曾维护「活文档清单」，实测列 11 个而实际 18 个（漏 7 个，含 4 份零引用文档）——保留第二份清单 = 保留漂移源。改为**单一来源** `docs/DOCUMENT_MAP.md` + 在旧位置留废止说明并指向新源 |
 | T-54 | **已关闭的任务/子代理不得留下「进行中」标记**。实测 `docs/子代理实施索引-20260923.md` 里 **Godel**（P1-04）在第 33 行标「进行中」，而同一文件第 46 行已写「已完成，总结已入索引，已清理」——**同一份文档内自相矛盾**；**Parfit**（DEBT-07 `CONTRIBUTING.md`）标「🔄 进行中」，而 `CONTRIBUTING.md` 早已存在（16050 字节）、规范 §11 的 DEBT-07 已标「已完成」。这类**僵尸状态**会让人误以为「还有活没干完 / 有进程还占着资源」，**直接误导调度决策**。已固化为 `check_docs_consistency.py` 的 **I 项**：同一 ID 不得同时标「进行中」与「已完成」，且「进行中」不得挂在规范 §11 已关闭的债务上 |
 | T-55 | **门禁的豁免/白名单必须配反向断言，证明「被豁免的东西不是被守护的对象」**。本轮给 L-3 门禁的 `_ALLOWED_INTERNAL` 加入 `contracts`（Agent 契约声明模块：零 Agent 类、零 I/O），否则 `from .contracts import CONTRACTS` 会被误报成 Agent 间 P2P 调用。但**只加白名单 = 开一个静默后门**：若哪天有人把真 Agent 塞进豁免清单，「扫描 0 处违规」就退化成恒真断言——正是 L-3 曾漏掉 `factory_opportunity -> pricing` 的同一种失败模式。故新增 `test_allowed_internal_modules_contain_no_agent_classes`，用 AST 断言被豁免模块里**没有任何 `BaseAgent` 子类**。同一模式已用于 DEBT-09（`test_known_service_to_agent_debt_is_still_present` 反向断言债务仍存在）。**判定口径**：每条豁免都必须能回答「凭什么它不是被守护的对象」，且该理由由**测试**承担，不靠注释 |
+| T-56 | **行尾/BOM 门禁必须覆盖源码，不能只覆盖文档**。D 项只扫 `docs/**/*.md`，于是**本轮实测踩到**：新写的 `backend/app/agents/contracts.py` 落了 **400 处 CRLF**，校验器**全绿通过**，`git commit` 只给一条 `warning: CRLF will be replaced by LF`（长输出里极易忽略）。后果两层：① 工作区长期留 CRLF，并产生「`git status` 显示已修改、`git diff` 却为空」的**假状态**（stat 缓存失效），直接误导「是否已提交」的判断；② 同类写入路径对任何脚本都成立——本仓库已有真实损害先例：`docker-entrypoint.sh` 变 CRLF 后容器报 `bad interpreter: /bin/sh^M`。已固化为 `check_docs_consistency.py` 的 **K 项**（非 Markdown 的 BOM/CRLF，按 NUL 字节跳过二进制、排除 `node_modules` 等目录，后缀豁免从 `.gitattributes` 解析以免留第二份清单）。**判定口径**：凡「格式契约」类检查，覆盖面必须与契约声明的范围一致（`.gitattributes` 管全仓，检查就不能只管网页文档） |
 
 > **T-4 说明**：本轮修复中，`test_security.py` 曾把「superadmin 可访问租户业务 API」固化为正确行为，`test_api.py` 曾把「租户停用」误断言为「租户到期」。两者都是断言与语义脱节，属于**测试在保护错误行为**，比缺测试更危险。
 
@@ -493,7 +494,7 @@ python -m ruff format .         # 格式化
 | Doc-5 | 禁止文档与代码脱节：文档中引用的路径、字段名、状态值必须可被检索验证。**由 `scripts/check_docs_consistency.py` 在 CI 强制**（基线数字一致 / 路径引用有效 / 台账状态自洽） |
 | Doc-6 | **测试用例数只有一个来源**：`docs/baseline.json`（由 `scripts/refresh_test_baseline.py` 采集，禁止手工编辑）。活文档**不得写具体数字**，只写「见 `docs/baseline.json`」——数字会随施工变化，手工抄写到 N 个文档必然漂移。历史性记录（决策记录里的「当次实测」）必须加 `<!-- docs-ok: 原因 -->` 行内标记豁免 |
 | Doc-7 | **文档里的引用必须是「可解析路径」而非「裸文件名」**，且**提案中的未来文件**要显式标注（如「提案，未创建」）——否则校验器无法区分「写错路径」与「规划中的文件」 |
-| Doc-8 | **文档内容不得含控制字符、BOM，行尾必须 LF，代码围栏必须完整**。这些是「文件本身的损坏」，与内容是否属于历史记录无关，因此检查覆盖面是**全部**文档（不适用 `HISTORICAL_DOCS` 豁免）。由 `check_docs_consistency.py` 的 D/E 两项强制 |
+| Doc-8 | **文档内容不得含控制字符、BOM，行尾必须 LF，代码围栏必须完整**。这些是「文件本身的损坏」，与内容是否属于历史记录无关，因此检查覆盖面是**全部**文档（不适用 `HISTORICAL_DOCS` 豁免）。由 `check_docs_consistency.py` 的 D/E 两项强制。**非 Markdown 的源码/配置同样受此约束**（由 K 项强制，见 T-56） |
 | Doc-9 | **文档引用代码位置时优先用符号名而非行号**。行号会随重构失效，符号名（类/函数名）稳定。必须写行号时，须在改动该文件后同步更新——由 `check_docs_consistency.py` 的 F 项强制（行号不得超出文件实际行数；同名文件歧义时保守跳过，避免误报） |
 | Doc-10 | **索引/镜像类文档（ADR 索引、文档地图）的「一致性声称」必须可被校验**。凡写「覆盖全部 X」「已逐条核对」的文档，须有对应检查项；`docs/adr/README.md` 的 D 编号索引锚点由 G 项强制（行号一致 + 无漏收录） |
 | Doc-11 | **活文档必须有总索引且被机器强制同步**：`docs/` 根下每个活文档须在 `docs/DOCUMENT_MAP.md` 登记，`docs/archive/` 每个文件须在 `docs/archive/README.md` 登记——由 `check_docs_consistency.py` 的 H 项强制。未登记的文档会成为「没人知道它存在、也不知道哪份已过期」的孤儿（实测 4 份零引用） |

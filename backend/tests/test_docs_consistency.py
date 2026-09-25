@@ -484,6 +484,84 @@ def test_subagent_allows_clean_closed_entry(tmp_path, monkeypatch):
 
 # ---------------------------------------------------------------- 真实仓库（端到端）
 
+# ---------------------------------------------------------------- K. 源码文本卫生
+
+def _source_hygiene(tmp_path, monkeypatch, files: dict[str, bytes]):
+    """把 files 写成源码树后跑 K 项检查（bytes 语义写入，保留 CRLF/BOM）。"""
+    for rel, raw in files.items():
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+    monkeypatch.setattr(cdc, "REPO_DIR", tmp_path)
+    return cdc.check_source_hygiene()
+
+
+def test_source_hygiene_catches_crlf_in_python(tmp_path, monkeypatch):
+    """判别力：源码里的 CRLF 必须被抓到——**本轮实测踩到的真实缺口**。
+
+    事故经过：新写的 `backend/app/agents/contracts.py` 落了 399 处 CRLF，
+    而 D 项只扫 `docs/**/*.md`，**全绿通过**；`git commit` 只给一条
+    `warning: CRLF will be replaced by LF`，在长输出里被忽略。修完文件后
+    `git status` 仍显示该文件「已修改」而 `git diff` 为空（stat 缓存假状态）。
+    """
+    problems = _source_hygiene(tmp_path, monkeypatch,
+                               {"app/x.py": b"a = 1\r\nb = 2\r\n"})
+    assert len(problems) == 1, problems
+    assert "CR" in problems[0] and "app/x.py" in problems[0]
+
+
+def test_source_hygiene_catches_bom_in_config(tmp_path, monkeypatch):
+    """判别力：非 Markdown 的 BOM 必须被抓到（D 项只覆盖 .md）。"""
+    problems = _source_hygiene(tmp_path, monkeypatch,
+                               {"frontend/package.json": b"\xef\xbb\xbf{}\n"})
+    assert len(problems) == 1, problems
+    assert "BOM" in problems[0]
+
+
+def test_source_hygiene_skips_markdown_to_avoid_duplicate_report(tmp_path, monkeypatch):
+    """反向用例：`.md` 归 D 项，K 项不得重复上报（T-50「同一问题只报一次」）。
+
+    若两处都报，同一处 CRLF 会在报告里出现两条，可信度崩塌——这正是 D 项
+    第一版把 CR 同时当「控制字符」重复上报时踩过的坑。
+    """
+    problems = _source_hygiene(tmp_path, monkeypatch,
+                               {"docs/X.md": b"# t\r\n", "app/x.py": b"a = 1\n"})
+    assert problems == [], problems
+
+
+def test_source_hygiene_allows_suffixes_marked_crlf_in_gitattributes(tmp_path, monkeypatch):
+    """反向用例：`.gitattributes` 声明 `eol=crlf` 的后缀不得误报。
+
+    为什么从 `.gitattributes` 解析而不是在代码里抄一份清单（T-53）：抄一份就等于
+    保留第二个漂移源——改了 `.gitattributes` 而忘了改这里，检查器会开始把合法
+    文件报成违规，而误报会让整道门禁失去可信度。
+    """
+    problems = _source_hygiene(tmp_path, monkeypatch, {
+        ".gitattributes": b"*.bat text eol=crlf\n* text=auto eol=lf\n",
+        "build/run.bat": b"@echo off\r\n",
+        "app/x.py": b"a = 1\n",
+    })
+    assert problems == [], problems
+
+
+def test_source_hygiene_skips_binary_and_dependency_dirs(tmp_path, monkeypatch):
+    """反向用例：二进制与 node_modules 不得误报（否则噪音淹没真问题）。"""
+    problems = _source_hygiene(tmp_path, monkeypatch, {
+        "assets/logo.png": b"\x89PNG\r\n\x1a\n\x00\x00",
+        "node_modules/pkg/index.js": b"var a = 1\r\n",
+    })
+    assert problems == [], problems
+
+
+def test_source_hygiene_accepts_clean_source(tmp_path, monkeypatch):
+    """反向用例：合规源码不得误报（UTF-8 无 BOM + LF）。"""
+    problems = _source_hygiene(tmp_path, monkeypatch, {
+        "app/x.py": "中文注释\nx = 1\n".encode(),
+        "frontend/src/A.vue": b"<template></template>\n",
+    })
+    assert problems == [], problems
+
+
 def test_real_repo_is_consistent():
     """当前仓库必须通过全部检查——这是「文档与代码同步」的硬门禁。
 
