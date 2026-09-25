@@ -28,8 +28,14 @@ import pytest
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 AGENTS_DIR = BACKEND_DIR / "app" / "agents"
 
-# 唯一允许的 Agent 内互相引用：共同基类。
-_ALLOWED_INTERNAL = {"base"}
+# 允许的 Agent 包内同级引用：**不含 Agent 类**的共享模块。
+#   base      —— 所有 Agent 的共同基类（不是「另一个 Agent」）；
+#   contracts —— Agent 契约声明（Agent OS §6.2），纯词汇表 + frozen dataclass，
+#                无 I/O、无业务逻辑、无 Agent 类。
+# 豁免清单不能变成后门：`test_allowed_internal_modules_contain_no_agent_classes`
+# 会用 AST 断言这两个模块里**没有任何 BaseAgent 子类**，所以它们不可能是
+# 「被偷偷调用的另一个 Agent」。
+_ALLOWED_INTERNAL = {"base", "contracts"}
 # 负责编排的模块：架构规定它才可以引用其它 Agent。
 _ORCHESTRATOR = "orchestrator"
 # 已登记债务（规范 §11 DEBT-09）：scheduler 反向依赖 agents，Phase 2 事件总线时解决。
@@ -118,6 +124,36 @@ def test_detector_allows_base_and_orchestrator():
     assert _p2p_violations("from .base import BaseAgent\n", "pricing.py") == []
     orchestrated = "from .pricing import PricingAgent\nfrom .supplier import SupplierAgent\n"
     assert _p2p_violations(orchestrated, "orchestrator.py") == []
+
+
+def test_allowed_internal_modules_contain_no_agent_classes():
+    """白名单不得变成 P2P 后门：被豁免的模块里不许出现任何 BaseAgent 子类。
+
+    为什么必须反向断言：`_ALLOWED_INTERNAL` 是**按模块名**豁免的。若哪天有人把
+    一个真 Agent（例如 `.pricing`）塞进豁免清单，门禁会**静默失效**——
+    「扫描 0 处违规」就退化成恒真断言，而这正是 L-3 曾经漏掉
+    `factory_opportunity -> pricing` 的同一种失败模式。
+
+    用 AST 而非字符串匹配：`base.py` 里必然出现 `class BaseAgent` 字样，
+    字符串匹配无法区分「定义基类」与「继承基类」。
+    """
+    for name in sorted(_ALLOWED_INTERNAL):
+        source = (AGENTS_DIR / f"{name}.py").read_text(encoding="utf-8")
+        subclasses = [
+            node.name
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.ClassDef)
+            and any(
+                (isinstance(base, ast.Name) and base.id == "BaseAgent")
+                or (isinstance(base, ast.Attribute) and base.attr == "BaseAgent")
+                for base in node.bases
+            )
+        ]
+        assert not subclasses, (
+            f"agents/{name}.py 被 L-3 门禁豁免，却定义了 Agent 类 {subclasses}——"
+            "豁免清单已变成 P2P 后门，请移除该豁免，或改由 Orchestrator 编排"
+        )
+
 
 
 def test_services_do_not_import_agents():

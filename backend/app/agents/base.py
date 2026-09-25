@@ -77,3 +77,20 @@ class BaseAgent:
         except Exception:
             self.db.rollback()
             return 0
+
+    # ---- Agent OS §6.2 契约（§18.3 第 1 步）----
+    # 子类必须用 `agent_contract = CONTRACTS["<name>"]` 声明自己的契约。
+    # 默认 None 表示「尚未登记」——`assert_contract_declared()` 会因此报错，
+    # 避免新增 Agent 悄悄绕过红线 1（禁止未登记 Agent）。
+    agent_contract: object | None = None
+
+    @classmethod
+    def contract(cls):
+        """取本 Agent 的契约（未声明时抛错，而不是静默返回 None）。"""
+        if cls.agent_contract is None:
+            raise NotImplementedError(
+                "Agent %s 未声明 agent_contract——Agent OS §6.2 要求每个 Agent 必须声明 "
+                "domain / capabilities / input_schema / output_schema / required_permissions / "
+                "required_data_scope / risk_level / max_budget。见 app/agents/contracts.py"
+                % cls.__name__)
+        return cls.agent_contract

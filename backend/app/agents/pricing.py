@@ -10,6 +10,7 @@ from ..models import (
 )
 from ..services import costing
 from .base import BaseAgent
+from .contracts import CONTRACTS
 
 # 口径唯一来源：成本/利润实现已下沉到 services/costing.py（见该模块文档说明的
 # L-3 红线背景）。此处保留同名别名，避免存量调用方与测试因改名而失效。
@@ -32,6 +33,8 @@ class PricingAgent(BaseAgent):
     """真实利润 = 售价 - (采购+物流+平台佣金+广告)/汇率。"""
 
     name = "pricing"
+    # Agent OS §6.2 契约（§18.3 第 1 步）：声明能力边界，供 Guardrail / Runtime 读取。
+    agent_contract = CONTRACTS["finance_intelligence"]
 
     # ---------- 成本要素 ----------
     def _latest_fx(self, base: str, quote: str) -> float | None:
@@ -138,6 +141,8 @@ class AdsAgent(BaseAgent):
     """广告关键词建议 / 预算优化 / ROI 报告。"""
 
     name = "ads"
+    # Agent OS §6.2 契约（§18.3 第 1 步）：声明能力边界，供 Guardrail / Runtime 读取。
+    agent_contract = CONTRACTS["operation_optimization"]
 
     def _keywords_for(self, p: Product) -> list[str]:
         base = (p.title or "").lower().split()

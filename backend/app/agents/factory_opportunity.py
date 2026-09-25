@@ -12,6 +12,7 @@ from ..models import (
 )
 from ..services import costing
 from .base import BaseAgent
+from .contracts import CONTRACTS
 
 
 def _tokens(*values) -> set[str]:
@@ -21,6 +22,8 @@ def _tokens(*values) -> set[str]:
 
 class FactoryOpportunityAgent(BaseAgent):
     name = "factory_opportunity"
+    # Agent OS §6.2 契约（§18.3 第 1 步）：声明能力边界，供 Guardrail / Runtime 读取。
+    agent_contract = CONTRACTS["supply_intelligence"]
 
     def scan_private_supply_batch(self, params: dict | None = None,
                                   context: dict | None = None) -> dict:

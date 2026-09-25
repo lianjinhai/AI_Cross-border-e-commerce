@@ -8,6 +8,7 @@ from sqlalchemy import func
 
 from ..models import MarketTrend, Product, ProductScore
 from .base import BaseAgent
+from .contracts import CONTRACTS
 
 # 风险词：品牌黑名单兜底 + 违禁宣称（合规细节由 ComplianceAgent 深查）
 _RISK_BRANDS = ["apple", "iphone", "nike", "adidas", "disney", "lego", "rolex",
@@ -31,6 +32,8 @@ class DiscoveryAgent(BaseAgent):
     """市场发现与选品（对应规划第七章）：机会分 = 0.35*需求 + 0.20*(100-竞争) + 0.30*利润 + 0.15*(100-风险)。"""
 
     name = "discovery"
+    # Agent OS §6.2 契约（§18.3 第 1 步）：声明能力边界，供 Guardrail / Runtime 读取。
+    agent_contract = CONTRACTS["market_intelligence"]
 
     def scan_trends(self) -> list[dict]:
         """刷新市场趋势：基于关键词池 + 本店类目 upsert 12 条。"""
@@ -289,6 +292,8 @@ class ProductAgent(BaseAgent):
     """商品标准化（对应规划第八章）：类目映射 / 属性抽取 / 去重指纹。"""
 
     name = "product"
+    # Agent OS §6.2 契约（§18.3 第 1 步）：声明能力边界，供 Guardrail / Runtime 读取。
+    agent_contract = CONTRACTS["product_intelligence"]
 
     _CATEGORY_MAP = [
         ("家居", ["home", "storage", "organizer", "lamp", "light", "cushion", "收纳", "置物"]),

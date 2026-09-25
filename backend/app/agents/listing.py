@@ -7,6 +7,7 @@ from datetime import datetime
 
 from ..models import ComplianceReport, Listing, Product
 from .base import BaseAgent
+from .contracts import CONTRACTS
 
 _PLATFORM_SUFFIX = {"shopee": "Shopee Choice", "amazon": "Amazon Prime", "shopify": "Trending Now",
                     "ebay": "Fast Ship", "temu": "Temu Hot", "tiktok": "TikTok Viral"}
@@ -14,6 +15,8 @@ _PLATFORM_SUFFIX = {"shopee": "Shopee Choice", "amazon": "Amazon Prime", "shopif
 
 class ListingAgent(BaseAgent):
     name = "listing"
+    # Agent OS §6.2 契约（§18.3 第 1 步）：声明能力边界，供 Guardrail / Runtime 读取。
+    agent_contract = CONTRACTS["listing"]
 
     # ---------- 文案生成 ----------
     @staticmethod

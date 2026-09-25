@@ -7,10 +7,13 @@ from datetime import datetime
 from ..models import ComplianceReport, Listing, ListingReviewDecision, Product
 from ..services.platform_rules import check_updates, get_active_rules, validate_against_rules
 from .base import BaseAgent
+from .contracts import CONTRACTS
 
 
 class ListingReviewAgent(BaseAgent):
     name = "listing_review"
+    # Agent OS §6.2 契约（§18.3 第 1 步）：声明能力边界，供 Guardrail / Runtime 读取。
+    agent_contract = CONTRACTS["risk_compliance"]
 
     def review(self, listing_id: int) -> dict:
         listing = self.db.get(Listing, listing_id)

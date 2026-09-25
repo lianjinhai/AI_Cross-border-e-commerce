@@ -18,6 +18,13 @@ _STATUS_CN = {"pending": "待支付", "paid": "已付款待发货", "shipped": "
 
 class SupportAgent(BaseAgent):
     name = "support"
+    # Agent OS 合规状态：**未登记**。
+    # 架构 §6.1 把「客服 Agent」明确列为禁止的员工角色式建模，而本类当前承担
+    # 客服意图识别与自动回复，因此**不在 §7.1 的 8 个冻结 Agent 清单内**。
+    # 这里显式置 None（而非悄悄留空）：任何调用 `SupportAgent.contract()` 的
+    # 代码都会立刻抛错，从而暴露「这个 Agent 还没被架构接纳」这一事实。
+    # 处置见 docs/DECISIONS.md D35 与规范 §11 债务台账 DEBT-34。
+    agent_contract = None
 
     def classify(self, text: str) -> str:
         t = (text or "").lower()

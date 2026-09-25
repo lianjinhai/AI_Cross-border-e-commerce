@@ -2167,3 +2167,73 @@ Godel 那条是**同一文件内两处状态**（第 33 行「进行中子代理
 
 **关联**：D33（文档地图 / T-53）、规范 T-54、`docs/子代理实施索引-20260923.md`
 第二十二~二十三轮。
+
+---
+
+## D35：Agent 契约声明冻结 —— 能力边界从文档搬进代码（2026-09-25）
+
+**背景**：`docs/AI_AGENT_OPERATING_SYSTEM_ARCHITECTURE.md` §6.2 要求每个 Agent 声明
+8 项能力约束（`domain` / `capabilities` / `input_schema` / `output_schema` /
+`required_permissions` / `required_data_scope` / `risk_level` / `max_budget`），
+§18.3 把「补齐声明」列为后续开发的**第 1 步**（纯声明、低风险），且明确要求
+**按 1→6 顺序、禁止跳步**。此前**一项都没有**——Agent 的能力边界只存在于
+架构文档里，代码无从校验，Guardrail / Runtime 落地时也读不到。
+
+### 一、交付物
+
+| 交付 | 内容 |
+|---|---|
+| `backend/app/agents/contracts.py`（新建 400 行） | 词汇表（domain / risk / scope / 权限 key）+ `AgentContract` frozen dataclass + **8 条冻结契约** + `CONTRACTS` 索引 + `FROZEN_AGENT_COUNT` 与导入期 `assert_frozen_count()` 自检 |
+| `backend/app/agents/base.py` | 新增 `agent_contract` 类属性与 `contract()` classmethod（未声明则抛 `NotImplementedError`） |
+| 10 个 Agent 类 | 挂上 `agent_contract`；`SupportAgent` 显式置 `None`（见下） |
+| `backend/tests/test_agent_contracts.py`（新建 269 行） | 23 个用例，含判别力回退法 |
+
+### 二、词汇表集中，不散在 12 个 Agent 文件里（T-53）
+
+权限 key、数据范围、风险等级是**跨 Agent 共用的词汇表**。若每个 Agent 各写一份
+字符串字面量，改名时必然漏改（T-53）。因此词汇表**集中定义**在 `contracts.py`，
+Agent 只做引用；`required_permissions` 的取值由 `_ALL_KNOWN_PERMISSIONS` 做
+**构建期自检**——声明了权限目录（`docs/phase1_interfaces.md` 第 4 节）之外的 key
+会直接抛错，防止「声明了一个没人能拥有的权限」这种静默失效。
+
+### 三、实测到的真实冲突（如实登记，不掩盖）
+
+| # | 冲突 | 处置 |
+|---|---|---|
+| 1 | **`SupportAgent` 不在冻结清单**：架构 §6.1 明确把「客服 Agent」列为**禁止的员工角色式建模**，而代码里该类承担客服意图识别 + 自动回复 | 显式置 `agent_contract = None`，注释指向 **DEBT-34** |
+| 2 | `AdsAgent.optimize_budget()` **直接改 `AdCampaign.budget` 并 commit**（违 §9.1） | 登记进契约 `known_gaps`；§18.3 第 3 步改为 `ADJUST_AD_BUDGET` Action |
+| 3 | `ListingAgent.publish()` **直接改 `Listing.status` 并 commit**（违 §9.1） | 同上，第 3 步改为 `PUBLISH_LISTING` Action |
+| 4 | **LLM 层无任何成本/预算概念**（实测 `ai/llm.py` 无 cost / token / price 字段） | `max_budget` 目前只是**声明上限**，已在 `known_gaps` 标注 |
+| 5 | `channel_strategy` 无独立实现；`product_intelligence` 缺独立类；`supply` / `risk` / `finance` / `operation` 由两个类分担、尚未归并 | 全部写进各契约的 `known_gaps` |
+
+**为什么必须写进文档而不是只写代码注释**：这 5 条都是**架构与代码的真实差距**。
+若契约声明假装已达标，第 3 步做 Action 层时会以为「只要接管道」，实际要先补实现。
+
+### 四、修法：把「文档 == 代码」变成机器检查
+
+1. **必填输出字段逐条比对**：`test_agent_contracts.py` 断言 8 个 Agent 的
+   `output_schema` 必填字段与架构文档 §7.2~§7.9 **逐条一致**（实测 doc 的
+   9/4/6/8/4/3/7/5 == impl），文档加字段而代码没跟上会红；
+2. **冻结数量自检**：`FROZEN_AGENT_COUNT = 8` + 导入期 `assert_frozen_count()`，
+   多一个少一个都直接抛错；
+3. **L-3 门禁白名单加反向断言**（新增规范 **T-55**）：本轮 `from .contracts import CONTRACTS`
+   被 `test_no_agent_to_agent_p2p_imports` 误报为 P2P——`contracts.py` 是纯声明模块
+   （零 Agent 类、零 I/O），属合法共享模块。修法是把它加入豁免清单，**同时**新增
+   `test_allowed_internal_modules_contain_no_agent_classes`：用 AST 断言被豁免的模块里
+   **没有任何 `BaseAgent` 子类**。否则豁免清单可能变成 P2P 后门——「扫描 0 处违规」
+   退化成恒真断言，正是 L-3 曾漏掉 `factory_opportunity -> pricing` 的同一种失败模式。
+
+### 五、验证
+
+| 验证 | 结果 |
+|---|---|
+| 后端回归 | ✅ **352 passed**（328 + 24 新增：23 条契约用例 + 1 条 L-3 白名单反向断言）；`ruff check app/ tests/ scripts/` 全绿 |
+| 契约导入自检 | ✅ 契约数 8 == 冻结要求 8 |
+| 必填输出字段 vs 架构文档 | ✅ **8/8 逐条一致** |
+| `SupportAgent.contract()` | ✅ 正确抛 `NotImplementedError` |
+| **判别力回退法** | ✅ 变异 1（删 listing 的 `keywords[]`）→ 抓到；变异 2（文档删 `metric_evidence`）→ 抓到；还原后恢复通过 |
+| 前端回归 | ✅ **72 passed** |
+| 文档校验 | ✅ **A~I 九项全 PASS** |
+
+**关联**：`docs/AI_AGENT_OPERATING_SYSTEM_ARCHITECTURE.md` §6.2 / §7.2~§7.9 / §18.3、
+规范 T-53 / **T-55** / **DEBT-34**、`docs/子代理实施索引-20260923.md` 第二十五轮。

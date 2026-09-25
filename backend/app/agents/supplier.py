@@ -6,10 +6,13 @@ from sqlalchemy import func
 
 from ..models import ForecastSnapshot, Order, Product, Supplier, SupplierOffer, SupplierScore
 from .base import BaseAgent
+from .contracts import CONTRACTS
 
 
 class SupplierAgent(BaseAgent):
     name = "supplier"
+    # Agent OS §6.2 契约（§18.3 第 1 步）：声明能力边界，供 Guardrail / Runtime 读取。
+    agent_contract = CONTRACTS["supply_intelligence"]
 
     # ---------------- 最优货源 ----------------
     def match_best(self, product_id: int) -> dict:

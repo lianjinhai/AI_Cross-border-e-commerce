@@ -4,6 +4,7 @@ import re
 from ..ai.knowledge import retrieve
 from ..models import ComplianceReport, Listing, Product
 from .base import BaseAgent
+from .contracts import CONTRACTS
 
 _BUILTIN_BRANDS = ["apple", "iphone", "ipad", "samsung", "xiaomi", "nike", "adidas", "puma",
                    "disney", "marvel", "lego", "barbie", "hello kitty", "pokemon", "rolex",
@@ -15,6 +16,8 @@ _WATERMARK_HINTS = ["watermark", "logo_", "_logo", "shuiyin"]
 
 class ComplianceAgent(BaseAgent):
     name = "compliance"
+    # Agent OS §6.2 契约（§18.3 第 1 步）：声明能力边界，供 Guardrail / Runtime 读取。
+    agent_contract = CONTRACTS["risk_compliance"]
 
     def _brand_words(self) -> list[str]:
         docs = retrieve(self.db, self.tenant_id, "商标黑名单 品牌 侵权", top_k=2)
