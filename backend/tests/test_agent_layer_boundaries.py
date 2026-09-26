@@ -199,3 +199,112 @@ def test_costing_service_has_no_agent_dependency(name):
         "costing.py 不得自建会话（必须由调用方传入 Session + tenant_id，"
         "避免出现无上下文计算）"
     )
+
+
+# ---------------------------------------------------------------- §18.3 第 2 步棘轮
+
+# Agent 内直连数据库的调用点基线（2026-09-26 实测：query 34 + get 23 = 57）。
+#
+# 为什么用「只减不增」的棘轮，而不是直接断言 0：
+#   §18.3 第 2 步的 Agent 侧迁移依赖「第二批 Tool 清单」补齐（规范 §11 DEBT-36），
+#   在清单补齐前无法一次性清零。棘轮的作用是让**剩余进度可见且单调**：迁移掉
+#   一处就下调一次基线，任何人都不能在不知情的情况下新增直连调用。
+#   本表之和即 §18.3 第 2 步的剩余工作量。
+_ORM_CALL_BASELINE = {
+    "compliance.py": (0, 2),
+    "discovery.py": (11, 4),
+    "factory_opportunity.py": (4, 1),
+    "listing.py": (1, 5),
+    "listing_review.py": (3, 2),
+    "orchestrator.py": (6, 0),
+    "pricing.py": (4, 3),
+    "supplier.py": (5, 2),
+    "support.py": (0, 4),
+}
+# 写操作（self.db.commit）不在本棘轮范围内：§18.3 第 3 步（Action 层）才处置，
+# 本步只收敛**读取**路径。
+_ORM_KINDS = ("query", "get")
+
+
+def _count_orm_calls_in_source(source: str) -> dict:
+    """统计 `self.db.query(...)` / `self.db.get(...)` 调用点。
+
+    用 AST 而不是正则：正则会把注释、文档字符串、文档里的示例一并算进来，
+    基线数字会随注释改动而漂移，棘轮随即失去确定性。
+    """
+    counts = {kind: 0 for kind in _ORM_KINDS}
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr not in counts:
+            continue
+        if ast.unparse(node.func.value) == "self.db":
+            counts[node.func.attr] += 1
+    return counts
+
+
+def _count_orm_calls(path: Path) -> dict:
+    return _count_orm_calls_in_source(path.read_text(encoding="utf-8"))
+
+
+def test_agent_direct_orm_calls_never_increase():
+    """棘轮（硬闸）：Agent 内直连数据库的调用点**逐文件**只减不增。
+
+    为什么逐文件而不是只看总数：总数会掩盖「A 文件降了 3 处、B 文件涨了 3 处」
+    ——而新增的直连调用恰恰是这条红线最需要拦住的东西。
+    """
+    regressions = []
+    for path in sorted(AGENTS_DIR.glob("*.py")):
+        counts = _count_orm_calls(path)
+        baseline = _ORM_CALL_BASELINE.get(path.name, (0, 0))
+        for index, kind in enumerate(_ORM_KINDS):
+            if counts[kind] > baseline[index]:
+                regressions.append("%s 的 self.db.%s：%d > 基线 %d"
+                                   % (path.name, kind, counts[kind], baseline[index]))
+    assert not regressions, (
+        "Agent 内直连数据库的调用点增加了——§18.3 第 2 步要求改走 Tool 层"
+        "（`app/tools/`，见 D37）。若确需新增，先做第二批 Tool 清单决策：\n  "
+        + "\n  ".join(regressions))
+
+
+def test_orm_ratchet_baseline_is_not_stale():
+    """反向断言：迁移掉一处就**必须**同步下调基线（T-55：豁免要配反向断言）。
+
+    没有这条，基线会长期停在迁移前的数字上，看起来「还剩 57 处」而实际已经
+    迁移完了——进度锚点一旦失真，就没人再信它。
+    """
+    stale = []
+    for path in sorted(AGENTS_DIR.glob("*.py")):
+        counts = _count_orm_calls(path)
+        baseline = _ORM_CALL_BASELINE.get(path.name, (0, 0))
+        for index, kind in enumerate(_ORM_KINDS):
+            if counts[kind] < baseline[index]:
+                stale.append("%s 的 self.db.%s：实际 %d < 基线 %d"
+                             % (path.name, kind, counts[kind], baseline[index]))
+    assert not stale, (
+        "已迁移但基线未同步——请下调 `_ORM_CALL_BASELINE`（它是 §18.3 第 2 步的"
+        "进度锚点，也是规范 §11 DEBT-36 的完成度）：\n  " + "\n  ".join(stale))
+
+
+def test_orm_ratchet_detects_a_real_increase():
+    """判别力：给一段真实形态的直连代码，计数器必须数得出来。
+
+    否则「全部等于基线」可能只是计数器恒返回 0（恒真断言）。
+    """
+    sample = (
+        "class A:\n"
+        "    def f(self):\n"
+        "        self.db.query(Product).filter(Product.tenant_id == 1).all()\n"
+        "        self.db.get(Product, 1)\n"
+        "        self.db.commit()\n"
+        "        # self.db.query(Commented) 注释里的不算\n"
+    )
+    assert _count_orm_calls_in_source(sample) == {"query": 1, "get": 1}
+
+
+def test_orm_ratchet_baseline_covers_every_offending_file():
+    """基线表不得漏登记：出现直连调用的文件必须在表内（新文件默认基线 0）。"""
+    missing = [path.name for path in sorted(AGENTS_DIR.glob("*.py"))
+               if path.name not in _ORM_CALL_BASELINE
+               and any(_count_orm_calls(path).values())]
+    assert not missing, "以下文件有直连调用却未登记基线：%s" % missing

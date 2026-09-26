@@ -1374,6 +1374,21 @@ Platform Identity（`superadmin`，ADR-F03 相关）**没有业务 Workspace**�
 
 **顺序要求**：必须按 1→6 顺序，禁止跳步。每步完成后必须保持全部回归测试通过。
 
+### 18.3.1 迁移进度（活记录，每次推进必须同步）
+
+| 步 | 状态 | 证据 / 剩余工作 |
+|---|---|---|
+| 1 | ✅ **完成**（D35） | 8 条冻结契约落在 `backend/app/agents/contracts.py`；`SupportAgent` 显式未登记（DEBT-34） |
+| 2 | 🔶 **前半完成**（D37） | Tool Layer 基础设施已交付：§10.4 的 9 个 Tool / 22 个方法、`call()` 六步管线、审计、注册表与清单自检、27 条测试。**后半未完成**：Agent 侧 57 个读取点尚未迁移——卡在 DEBT-36（§10.4 第一批清单覆盖不了 `Conversation` / `Listing` / `AdCampaign` 等七类读取目标，需第二批清单决策）。进度锚点：`tests/test_agent_layer_boundaries.py::_ORM_CALL_BASELINE` 之和 |
+| 3 | ⏳ 未开始 | 高风险：`listing.publish`、`pricing.reprice_batch`、`ads.optimize_budget` 仍直改并 `commit`（违 §9.1） |
+| 4 | ⏳ 未开始 | Orchestrator 仍同步直调 |
+| 5 | ⏳ 未开始 | `BaseAgent.SessionLocal()` 仍自持会话；完成后才能关闭 DEBT-35 |
+| 6 | ⏳ 未开始 | `trace_id` / `task_id` / `parent_trace_id` / `steps[]` 未补 |
+
+> **为什么第 2 步要拆成前后半**：§18.3 的每一步都要求「完成后全部回归测试通过」。
+> 在第二批 Tool 清单落地前强行改 Agent，只能把 ORM 查询换成「无对应 Tool 的
+> 临时调用」，等于用另一种形式继续绕开边界——那不是推进，是换了个地方欠债。
+
 ### 18.4 禁止事项（开发期）
 
 | 禁止 | 原因 |

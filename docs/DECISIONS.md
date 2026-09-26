@@ -2290,3 +2290,91 @@ Agent 只做引用；`required_permissions` 的取值由 `_ALL_KNOWN_PERMISSIONS
 **关联**：D18（LF 行尾锁定）、D30~D34（文档一致性治理）、规范 **T-56** / Doc-8、
 `docs/子代理实施索引-20260923.md` 第二十六轮。
 
+
+---
+
+## D37：Tool Layer 落地 —— Agent 访问业务能力的唯一入口（2026-09-26）
+
+**背景**：Agent OS §18.3 第 2 步要求「引入 Tool Layer，把 Agent 内的直接 ORM
+查询改为 Tool 调用」。第 1 步（D35，Agent 契约声明）已完成。本轮交付**第 2 步的
+前半**：Tool Layer 基础设施本身（§10.1~§10.5 的全部机制）；Agent 侧逐点迁移
+见下文第五节。
+
+### 一、交付物
+
+| 文件 | 行数 | 职责 |
+|---|---|---|
+| `app/tools/contract.py` | 207 | 冻结契约与词汇表：`ToolSpec` / `ToolContext` / `ToolResult` / `ToolCall` / `ToolError` / 触发来源 / 上下文来源 / 失败码。**零业务逻辑、零 I/O** |
+| `app/tools/base.py` | 177 | `BaseTool` + `Reading` + `call()` 六步调用管线；`as_int` / `clamp_limit` / `ts` 三个共用口径 |
+| `app/tools/audit.py` | 66 | §10.2「必须记录 Audit」的唯一落点（独立短会话） |
+| `app/tools/registry.py` | 72 | `TOOLS` 索引 + `get_tool` / `open_tool` / `tool_specs` + import 期清单自检 |
+| `app/tools/__init__.py` | 32 | 对外门面：只导出上下文/取用/结果三类符号 |
+| `app/tools/{product,store,order,supply,finance,market,compliance,knowledge,memory}.py` | 32~113 | §10.4 冻结清单的 9 个 Tool、22 个方法 |
+| `tests/test_tool_layer.py` | 478 | 25 条用例（含清单一致性、闸门判别力、真库成功路径） |
+
+**`call()` 管线（顺序不可调换）**：方法在册？→ 是否写操作？→ 权限是否满足？
+→ 委派只读实现 → 记录 Audit → 归一为 `ToolResult`。子类只提供 `_<method>()`
+只读实现，**没有机会**绕过闸门。
+### 二、六个关键决策（代码里有逐条理由，这里只记「为什么这样选」）
+
+| # | 决策 | 备选方案与被否原因 |
+|---|---|---|
+| 1 | **`ToolCall` 不接收调用方传入的 `permission`**（刻意偏离 §10.3 的字段表），改由 Tool 依据自身 `ToolSpec` 解析 | §10.3 把 `permission` 列为 ToolCall 字段。但调用方传入的权限**可被伪造或误填**，等于把闸门钥匙交给被检查者。权限来源必须是被调用方 |
+| 2 | **兼容期上下文（`legacy_context`）「放行 + 标记 `degraded`」**，而不是 fail-closed | 若此处一律拒绝，迁移期全部 Agent 立即失效、全部测试当场变红。缺口改由三重可见性兜底：`ToolResult.degraded`、审计行 `mode=tool`、`tests/test_agent_layer_boundaries.py` 的直连 ORM 调用点棘轮（只减不增，见 DEBT-35 / DEBT-36） |
+| 3 | **写操作在闸门处一律拒绝，OWNER 持全部权限也不例外** | §10.5 要求写操作经 Action System。若按权限放行，`listing:write` 角色就能让 Agent 直接改 `Listing.status`——正是 §9.1 要消灭的路径。4 个写方法只声明 `ToolSpec`、不实现，由 `call()` 拒绝 |
+| 4 | **审计走独立短会话，不写调用方持有的业务会话** | 写进调用方会话时，业务回滚会把审计一起回滚——事后无法区分「操作没发生」与「操作发生了但审计丢了」，审计随即失去证明力 |
+| 5 | **只读实现返回纯 dict，不返回 ORM 对象** | 返回 ORM 等于把边界开成门洞：Agent 可继续顺着关系属性懒加载、继续 `obj.status = x` 改数据，红线 3 只剩口号 |
+| 6 | **清单完整性由「解析架构文档 §10.4 表格」的测试保证** | 在代码里再抄一份清单 = 保留第二个漂移源。测试直接读文档表格，与注册表逐条比对 tool / method / permission / writes |
+
+**权限目录**同样不复制：`contract.py` 从 `services/workspace_context.ROLE_PERMISSIONS`
+求并集（25 个 key）。依赖方向是 `routers -> agents -> tools -> services -> models`，
+`tools` **不得**反向 import `agents`（否则成环，且 Tool 层无法脱离 Agent 独立测试）。
+
+### 三、本轮实测发现的两个真实缺陷（不是推演，是施工中被测试抓住的）
+
+| # | 缺陷 | 症状 | 修法 |
+|---|---|---|---|
+| 1 | **参数校验晚于数据库访问**：`supply.get_supplier_offers`、`order.get_orders` 先构造 `self.db.query(...)` 才做 `int()` 校验 | 脏参数（`supplier_id="abc"`）不报 `BAD_PARAM`，而是实现内部 `AttributeError` → 归一成 `INTERNAL`。调用方无从判断「是我传错了」还是「服务坏了」 | 校验一律前置到任何数据库访问之前。测试用 `db=None` 让「是否已进入实现」可观测——校验没拦住时错误码会变成 `INTERNAL` |
+| 2 | **探针用例依赖演示数据**：`test_every_read_method_runs_against_real_db` 取演示租户的首个商品 | **单跑通过、全量失败**——`test_api.py` 的 `purge_demo_data` 会在全量跑中清空演示数据。典型的规范 T-2 顺序依赖 | 改为自带探针租户（租户 + 商品 + 评分 + 合规报告 + 汇率），夹具内建、夹具内删。审计行 `ai_logs` 必须一并回收（它是 `tenants` 的外键子表） |
+
+**顺带消除的重复**：`_as_int` 曾在 6 个 Tool 模块里各写一份（T-53）。已收成
+`base.as_int()` 一份，`days` / `limit` 的窗口校验收成 `clamp_limit(name=...)`。
+### 四、判别力验证（每条断言都要能构造出违规并证明它会被抓到）
+
+| 验证 | 方法 | 结果 |
+|---|---|---|
+| **清单漂移会被抓住** | 变异：把 `market.get_trends` 的权限从 `product:read` 改成 `finance:read`（仍是合法 key，构造期拦不住） | ✅ 精确命中「`market.get_trends` 权限：文档 `product:read` / 代码 `finance:read`」；还原后字节数一致 |
+| **提取器不是永远空** | 断言解析器真读出内容（`memory.recall`=读/`ai:read`、`memory.remember`=写/`ai:write`） | ✅ 防「解析到空字典所以永不报错」 |
+| **权限闸门拦在委派之前** | 权威上下文只给 `compliance:read`，调 `product.get_products`，且 `db=None` | ✅ 错误码是 `PERMISSION_DENIED`（若已委派会变成 `INTERNAL`）——证明实现**根本没被执行** |
+| **有权限时确实放行** | 反向断言：给 `product:read` 后同样 `db=None` | ✅ 变成 `INTERNAL`，证明闸门已放行 |
+| **写闸对最高权限也生效** | 4 个写方法 × `OWNER`（持全部 25 个权限） | ✅ 全部 `NOT_IMPLEMENTED`，且错误信息指向 §10.5 |
+| **内部件不可经 `call()` 触达** | `call("spec")` / `call("drop_everything")` | ✅ 全部 `NOT_IMPLEMENTED`（先查清单，再做 `getattr`） |
+| **降级必须可见** | `legacy_context` 调用 | ✅ `degraded=True`，且审计记录里同样是 True |
+| **审计真的落库** | 调 `knowledge.search` 后查 `ai_logs` | ✅ 行数 +1，`mode=tool`、`agent`=上下文 agent_type、`tenant_id` 一致 |
+| **跨租户读不到** | 造另一租户的商品，用本租户上下文按 SKU 检索 | ✅ 返回空列表 |
+| **参数校验先于数据库访问** | 8 组脏参数 × `db=None` | ✅ 全部 `BAD_PARAM`（**本轮靠这条抓到 2 处真实缺陷**） |
+| **只读方法全部能跑通** | 探针租户下逐个调用 16 个只读方法 | ✅ `ok_count == 16`（探针数据齐备，全走成功分支而非 `NOT_FOUND`） |
+
+### 五、本轮**未完成**的部分（已登记为债务，不得当作已交付）
+
+| 债务 | 内容 | 为什么本轮不做 |
+|---|---|---|
+| **DEBT-35** | 兼容期 `legacy_context` 路径**无法校验权限**（§10.2 第二项在该路径下不生效） | 需要 §18.3 第 5 步（Runtime 注入权威上下文）才能关闭。当前以「放行 + `degraded` 标记 + 审计可见」过渡，并配 `legacy_context` 调用点计数断言（只减不增） |
+| **DEBT-36** | §10.4 **第一批** Tool 清单覆盖不了现有 Agent 的全部读取点：`Conversation`、`Listing`（通用读取）、`AdCampaign`、`OpportunitySupplierMatch`、`SupplierCatalogProduct`、`ForecastSnapshot`、`ListingReviewDecision` 七类目标没有 Tool 归属 | 补齐属于**第二批 Tool 清单**，需要一次架构增量决策（改冻结清单要走评审）。在此之前 §18.3 第 2 步的「Agent 侧迁移」无法完成 |
+
+**因此 §18.3 第 2 步只完成了前半**（Tool Layer 基础设施）。后半（把 57 个读取点
+逐点改成 Tool 调用）依赖 DEBT-36 的清单补齐，不得跳步直接改 Agent。
+### 六、验证结果
+
+| 验证 | 结果 |
+|---|---|
+| 后端回归（正序） | ✅ **389 passed**（基线 358 + 新增 31：Tool Layer 27 + 直连 ORM 棘轮 4）；`ruff check app/ tests/ scripts/` **全绿** |
+| 后端回归（**反序**文件列表） | ✅ **389 passed**，与正序完全一致（D16 强制自检项） |
+| 文档校验 | ✅ **A~K 十一项全 PASS**（含 G 项 ADR 索引锚点） |
+| E2E 可行性（真启动服务） | ✅ **7 步全 PASS**；主库 sha256 前后一致（`2a0b5de9…`，3169 行），隔离性成立 |
+| 前端 | ✅ **72 passed**（本轮未改动前端） |
+| 基线 | `docs/baseline.json` 已刷新：后端 358 → **389**，前端 72 不变 |
+
+**关联**：`docs/AI_AGENT_OPERATING_SYSTEM_ARCHITECTURE.md` §10 / §18.3（含新增
+§18.3.1 迁移进度）、规范 **L-7** / §2 目录结构 / §11 台账 **DEBT-35** / **DEBT-36**、
+D35（第 1 步）、D36（K 项门禁）、`docs/子代理实施索引-20260923.md` 第二十七轮。

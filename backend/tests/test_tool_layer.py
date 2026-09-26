@@ -1,0 +1,530 @@
+"""Tool Layer 的回归测试（Agent OS §10 / §18.3 第 2 步）。
+
+**为什么必须有**：Tool Layer 的全部价值都在「闸门真的拦得住」。
+若只是把查询包一层、没有任何检查，那么：
+  - 少声明一个 permission → 该 Tool 变成无门槛的万能查询口；
+  - 写方法能被 Agent 直接调用 → §9.1「Agent 不得直接改业务数据」当场失效；
+  - 审计没落库 → §19 验收项 5「全部可追溯」无法成立；
+  - 清单漏项 → 架构文档与代码分叉，且没有任何人会发现。
+
+因此本文件的重点不是「Tool 能返回数据」，而是**判别力**：每条断言都要能构造出
+违规并证明它会被抓到（规范 T-55：豁免与放行必须配反向断言）。
+
+**与架构文档的关系**：`test_manifest_matches_architecture_doc` 直接解析
+`docs/AI_AGENT_OPERATING_SYSTEM_ARCHITECTURE.md` 的 §10.4 表格并与注册表比对
+——「文档改了、代码没改」会在 CI 变红，而不是靠人工核对。
+"""
+import re
+import sys
+from pathlib import Path
+
+import pytest
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+REPO_DIR = BACKEND_DIR.parent
+ARCH_DOC = REPO_DIR / "docs" / "AI_AGENT_OPERATING_SYSTEM_ARCHITECTURE.md"
+
+sys.path.insert(0, str(BACKEND_DIR))
+
+from app.services.workspace_context import ROLE_PERMISSIONS  # noqa: E402
+from app.tools import audit as tool_audit  # noqa: E402
+from app.tools import registry  # noqa: E402
+from app.tools.contract import (  # noqa: E402
+    ERR_BAD_PARAM,
+    ERR_INTERNAL,
+    ERR_NOT_FOUND,
+    ERR_NOT_IMPLEMENTED,
+    ERR_PERMISSION,
+    SOURCE_CONTEXT,
+    TRIGGER_USER_GOAL,
+    ToolContext,
+    ToolResult,
+    ToolSpec,
+    legacy_context,
+)
+
+# ---------------------------------------------------------------- §10.4 清单一致性
+
+
+def _doc_manifest() -> dict:
+    """解析架构文档 §10.4 表格 -> ``{"<tool>.<method>": {permission, writes}}``。
+
+    表格形态（Tool 名只在首行出现，后续行首列为空即续行）：
+        | **Product Tool** | `get_products()` | `product:read` | 读 |
+        |                  | `analyze_product()` | `product:read` | 读 |
+        | **Memory Tool**  | `recall()` / `remember()` | `ai:read` / `ai:write` | 读/写 |
+    一行里出现多个方法/权限时按出现顺序一一对应。
+    """
+    text = ARCH_DOC.read_text(encoding="utf-8")
+    section = text.split("### 10.4", 1)[1].split("### 10.5", 1)[0]
+    out: dict = {}
+    tool = ""
+    for line in section.splitlines():
+        if not line.strip().startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) < 4:
+            continue
+        head, methods, perms, mode = cells[0], cells[1], cells[2], cells[3]
+        if head.startswith("**"):
+            tool = head.strip("*").replace(" Tool", "").strip().lower()
+        if not tool or not methods.startswith("`"):
+            continue  # 表头行 / 分隔行
+        names = re.findall(r"`([a-z_]+)\(\)`", methods)
+        keys = re.findall(r"`([a-z_]+:[a-z_:]+)`", perms)
+        flags = ["写" in part for part in mode.split("/")]
+        assert len(names) == len(keys) == len(flags), (
+            "§10.4 行内方法/权限/读写三列数量不齐：%r" % (line,))
+        for name, key, writes in zip(names, keys, flags):
+            out["%s.%s" % (tool, name)] = {"permission": key, "writes": writes}
+    return out
+
+
+def test_manifest_matches_architecture_doc():
+    """注册表必须与 §10.4 冻结清单**逐条一致**（数量、权限、读写属性）。"""
+    doc = _doc_manifest()
+    assert len(doc) == 22, "§10.4 应含 22 个方法，解析到 %d 个：%s" % (len(doc), sorted(doc))
+
+    got = registry.tool_specs()
+    assert set(got) == set(doc), (
+        "注册表与 §10.4 不一致\n  只在文档：%s\n  只在代码：%s"
+        % (sorted(set(doc) - set(got)), sorted(set(got) - set(doc))))
+
+    mismatches = []
+    for key, want in doc.items():
+        spec = got[key]
+        if spec.permission != want["permission"]:
+            mismatches.append("%s 权限：文档 %s / 代码 %s"
+                              % (key, want["permission"], spec.permission))
+        if spec.writes != want["writes"]:
+            mismatches.append("%s 读写：文档 %s / 代码 %s"
+                              % (key, want["writes"], spec.writes))
+    assert not mismatches, "注册表与架构文档不一致：\n  " + "\n  ".join(mismatches)
+
+
+def test_doc_parser_has_discriminating_power():
+    """判别力：提取器必须真读出内容（防止「解析到空字典所以永不报错」）。"""
+    doc = _doc_manifest()
+    assert doc["product.get_products"] == {"permission": "product:read", "writes": False}
+    assert doc["product.create_listing_draft"]["writes"] is True
+    assert doc["memory.recall"] == {"permission": "ai:read", "writes": False}
+    assert doc["memory.remember"] == {"permission": "ai:write", "writes": True}
+
+
+def test_every_read_spec_has_implementation():
+    """声明了只读方法却忘了写 `_<method>`，必须在这里被抓住而不是运行时才发现。"""
+    missing = [spec.key for cls in registry.TOOLS.values() for spec in cls.specs
+               if not spec.writes and not callable(getattr(cls, "_" + spec.method, None))]
+    assert not missing, "只读方法缺少实现：%s" % missing
+
+
+def test_registry_get_tool_rejects_unknown_name():
+    """取不存在的 Tool 必须报错并列出在册名单，而不是返回 None 让调用方空指针。"""
+    with pytest.raises(KeyError) as exc:
+        registry.get_tool("nonexistent")
+    assert "product" in str(exc.value)
+
+
+# ---------------------------------------------------------------- 契约不变量
+
+
+def test_permission_catalog_is_derived_not_copied():
+    """权限目录必须是 `ROLE_PERMISSIONS` 的并集，而不是另抄一份清单（T-53）。"""
+    from app.tools.contract import _ALL_KNOWN_PERMISSIONS
+
+    want = frozenset(p for perms in ROLE_PERMISSIONS.values() for p in perms)
+    assert _ALL_KNOWN_PERMISSIONS == want
+
+
+def test_toolspec_rejects_permission_outside_frozen_catalog():
+    """写错权限 key（如 products:read）必须在构造期就报错——否则该 Tool 无人可授权。"""
+    with pytest.raises(ValueError) as exc:
+        ToolSpec(tool="product", method="x", permission="products:read",
+                 writes=False, summary="")
+    assert "冻结目录" in str(exc.value)
+
+
+def test_toolresult_requires_error_when_not_ok():
+    with pytest.raises(ValueError):
+        ToolResult(ok=False)
+
+
+def test_toolresult_rejects_error_when_ok():
+    with pytest.raises(ValueError):
+        ToolResult(ok=True, error={"code": "X", "detail": "y"})
+
+
+def test_context_requires_workspace_id():
+    """§17.1 禁止无上下文 Agent：workspace_id 缺失必须拒绝构造，不降级放行。"""
+    with pytest.raises(ValueError) as exc:
+        ToolContext(tenant_id=1, workspace_id=0, agent_type="market_intelligence")
+    assert "禁止无上下文" in str(exc.value)
+
+
+def test_context_rejects_unknown_trigger():
+    with pytest.raises(ValueError):
+        ToolContext(tenant_id=1, workspace_id=1, agent_type="a", trigger="SOMETHING")
+
+
+def test_unverified_context_is_fail_closed_for_has():
+    """`permissions=None` 是「未校验」不是「无权限」：has() 一律 False（fail-closed）。"""
+    ctx = legacy_context(tenant_id=1, agent_type="a")
+    assert ctx.permission_checked is False
+    assert ctx.has("product:read") is False
+
+
+# ---------------------------------------------------------------- 调用管线
+
+
+@pytest.fixture
+def recorded(monkeypatch):
+    """把审计替换成内存记录器：纯管线测试不必真连库。"""
+    rows: list = []
+
+    def _record(context, tool, method, params, result, latency_ms):
+        rows.append({"tool": tool, "method": method, "params": params,
+                     "ok": result.ok, "degraded": result.degraded,
+                     "error": result.error, "latency_ms": latency_ms})
+
+    monkeypatch.setattr(tool_audit, "record", _record)
+    return rows
+
+
+@pytest.fixture
+def legacy_ctx():
+    return legacy_context(tenant_id=1, agent_type="market_intelligence")
+
+
+@pytest.fixture
+def owner_ctx():
+    return ToolContext(tenant_id=1, workspace_id=1, agent_type="market_intelligence",
+                       permissions=ROLE_PERMISSIONS["OWNER"], source=SOURCE_CONTEXT,
+                       trigger=TRIGGER_USER_GOAL)
+
+
+def test_permission_denied_before_delegation(recorded):
+    """权威上下文缺权限 → PERMISSION_DENIED。
+
+    `db=None` 是刻意的：只读实现一旦被委派就会 AttributeError 变成 INTERNAL。
+    断言错误码是 PERMISSION_DENIED 即证明**实现根本没被执行**。
+    """
+    ctx = ToolContext(tenant_id=1, workspace_id=1, agent_type="risk_compliance",
+                      permissions=frozenset({"compliance:read"}), source=SOURCE_CONTEXT)
+    result = registry.open_tool("product", ctx, db=None).call("get_products")
+    assert result.ok is False
+    assert result.error["code"] == ERR_PERMISSION
+    assert result.degraded is False
+    assert recorded[0]["ok"] is False
+
+
+def test_authoritative_context_with_permission_passes_gate(recorded):
+    """反向断言：有权限时必须放行到实现（用 db=None 触发的 INTERNAL 作为「已放行」的证据）。"""
+    ctx = ToolContext(tenant_id=1, workspace_id=1, agent_type="product_intelligence",
+                      permissions=frozenset({"product:read"}), source=SOURCE_CONTEXT)
+    result = registry.open_tool("product", ctx, db=None).call("get_products")
+    assert result.error["code"] == ERR_INTERNAL
+    assert result.degraded is False
+
+
+def test_legacy_context_is_allowed_but_marked_degraded(recorded, legacy_ctx):
+    """兼容期上下文：放行但**必须**标记 degraded——缺口可见，而不是假装已校验。"""
+    result = registry.open_tool("product", legacy_ctx, db=None).call("get_products")
+    assert result.degraded is True
+    assert result.error["code"] == ERR_INTERNAL
+    assert recorded[0]["degraded"] is True
+
+
+@pytest.mark.parametrize("tool,method", [
+    ("product", "create_listing_draft"),
+    ("store", "sync_orders"),
+    ("supply", "create_purchase_order"),
+    ("memory", "remember"),
+])
+def test_write_methods_are_refused_even_for_owner(recorded, owner_ctx, tool, method):
+    """§10.5：写操作必须经 Action System。OWNER 持有全部权限也必须被拒。"""
+    result = registry.open_tool(tool, owner_ctx, db=None).call(method)
+    assert result.ok is False
+    assert result.error["code"] == ERR_NOT_IMPLEMENTED
+    assert "Action" in result.error["detail"]
+
+
+def test_unknown_method_is_refused(recorded, owner_ctx):
+    result = registry.open_tool("product", owner_ctx, db=None).call("drop_everything")
+    assert result.error["code"] == ERR_NOT_IMPLEMENTED
+
+
+def test_call_cannot_reach_internal_attributes(recorded, owner_ctx):
+    """`call()` 只认冻结清单里的方法；`spec` / `_permitted` 之类的内部件不可触达。"""
+    result = registry.open_tool("product", owner_ctx, db=None).call("spec")
+    assert result.error["code"] == ERR_NOT_IMPLEMENTED
+
+
+def test_memory_recall_reports_not_implemented(recorded, owner_ctx):
+    """Phase 6 未到：recall 必须显式 NOT_IMPLEMENTED，不得静默返回空列表。
+
+    静默返回空会让 Agent 把「记忆系统还没建」当成「确实没经验」，并据此下结论
+    ——这是最危险的一类错误：错得毫无痕迹（§15.4）。
+    """
+    result = registry.open_tool("memory", owner_ctx, db=None).call("recall")
+    assert result.ok is False
+    assert result.error["code"] == ERR_NOT_IMPLEMENTED
+
+
+# ---------------------------------------------------------------- 真连库：审计与隔离
+
+
+def test_audit_row_lands_in_ai_logs(client):
+    """§10.2「必须记录 Audit」的落地验证：调用后 ai_logs 真的多了一行。"""
+    from app.db import SessionLocal
+    from app.models import AiLog, Tenant
+
+    db = SessionLocal()
+    try:
+        tenant_id = db.query(Tenant).order_by(Tenant.id).first().id
+        before = db.query(AiLog).filter(AiLog.action == "tool:knowledge.search").count()
+    finally:
+        db.close()
+
+    ctx = legacy_context(tenant_id=tenant_id, agent_type="market_intelligence")
+    tool = registry.open_tool("knowledge", ctx, db=SessionLocal())
+    try:
+        result = tool.call("search", query="商标 侵权", top_k=2)
+    finally:
+        tool.db.close()
+    assert result.ok is True, result.error
+    assert result.degraded is True  # legacy 上下文无法校验权限
+
+    db = SessionLocal()
+    try:
+        rows = (db.query(AiLog).filter(AiLog.action == "tool:knowledge.search")
+                .order_by(AiLog.id.desc()).all())
+    finally:
+        db.close()
+    assert len(rows) == before + 1, "Tool 调用未落审计"
+    row = rows[0]
+    assert row.mode == "tool"
+    assert row.agent == "market_intelligence"
+    assert row.tenant_id == tenant_id
+    assert row.ok is True
+
+
+def test_get_products_does_not_leak_across_tenants(client):
+    """§10.2「禁止跨 Workspace 读取」的落地验证：另一个租户的商品读不到。"""
+    from app.db import SessionLocal
+    from app.models import Product, Tenant
+
+    db = SessionLocal()
+    try:
+        tenant_a = db.query(Tenant).order_by(Tenant.id).first().id
+        other = Tenant(name="ToolLayer隔离测试租户")
+        db.add(other)
+        db.commit()
+        foreign = Product(tenant_id=other.id, sku="TOOL-ISOLATION-SKU",
+                          title="不该被别的租户看到的商品")
+        db.add(foreign)
+        db.commit()
+        other_id, foreign_id = other.id, foreign.id
+    finally:
+        db.close()
+
+    try:
+        ctx = legacy_context(tenant_id=tenant_a, agent_type="product_intelligence")
+        tool = registry.open_tool("product", ctx, db=SessionLocal())
+        try:
+            result = tool.call("get_products", keyword="TOOL-ISOLATION-SKU")
+        finally:
+            tool.db.close()
+        assert result.ok is True, result.error
+        assert result.data == [], "跨租户数据泄漏：读到了其它租户的商品"
+    finally:  # 测试库是会话级共享资源，构造的数据必须清干净（T-2 不制造顺序依赖）
+        db = SessionLocal()
+        try:
+            db.query(Product).filter(Product.id == foreign_id).delete()
+            db.query(Tenant).filter(Tenant.id == other_id).delete()
+            db.commit()
+        finally:
+            db.close()
+
+
+@pytest.fixture
+def probe_tenant(client):
+    """自带租户 + 商品 + 评分 + 合规报告 + 汇率：不依赖演示数据。
+
+    为什么不能用演示租户：`test_api.py` 的 purge_demo_data 会在全量跑中清空演示
+    数据，于是本用例「单跑通过、全量失败」——这正是规范 T-2 要消灭的顺序依赖。
+    探针数据在本夹具里建、在本夹具里删，跑与不跑都不改变库的最终状态。
+    """
+    from datetime import datetime, timedelta
+
+    from app.db import SessionLocal
+    from app.models import AiLog, ComplianceReport, ExchangeRate, Product, ProductScore, Tenant
+
+    db = SessionLocal()
+    try:
+        tenant = Tenant(name="ToolLayer真库探针租户")
+        db.add(tenant)
+        db.commit()
+        product = Product(tenant_id=tenant.id, sku="TOOL-PROBE-1",
+                          title="Tool Layer 真库探针商品",
+                          attrs={"sale_price": 19.99, "weight_kg": 0.3})
+        db.add(product)
+        db.commit()
+        db.add(ProductScore(tenant_id=tenant.id, product_id=product.id,
+                            demand=70, competition=40, profit=65, risk=20, total=72))
+        db.add(ComplianceReport(tenant_id=tenant.id, target_type="product",
+                                product_id=product.id, risk_level="low", score=95))
+        db.add(ExchangeRate(tenant_id=tenant.id, base_currency="USD",
+                            quote_currency="CNY", rate=7.12,
+                            effective_at=datetime.utcnow() - timedelta(days=1)))
+        db.commit()
+        ids = {"tenant_id": tenant.id, "product_id": product.id}
+    finally:
+        db.close()
+    yield ids
+    db = SessionLocal()
+    try:  # 清干净：探针租户不留在测试库里，避免给后续用例制造隐含前提
+        # 审计行必须一起删：Tool 调用会写入 ai_logs(tenant_id=探针租户)，
+        # 它是 tenants 的外键子表，不清掉就删不掉租户（FK constraint failed）。
+        db.query(AiLog).filter(AiLog.tenant_id == ids["tenant_id"]).delete()
+        db.query(ProductScore).filter(ProductScore.tenant_id == ids["tenant_id"]).delete()
+        db.query(ComplianceReport).filter(
+            ComplianceReport.tenant_id == ids["tenant_id"]).delete()
+        db.query(ExchangeRate).filter(
+            ExchangeRate.tenant_id == ids["tenant_id"]).delete()
+        db.query(Product).filter(Product.id == ids["product_id"]).delete()
+        db.query(Tenant).filter(Tenant.id == ids["tenant_id"]).delete()
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_every_read_method_runs_against_real_db(probe_tenant):
+    """§10.4 的每个只读方法都要能在真实库上跑通（含**成功路径**）。
+
+    判定口径：`ok=True`，或**预期内**的数据缺失（NOT_FOUND）。
+    INTERNAL / BAD_PARAM 一律算失败——它们意味着实现有缺陷，而不是数据不存在。
+    探针夹具刻意把评分/合规报告/汇率都造齐，使 `score_opportunity`、
+    `check_product`、`get_fx_rate` 走的是成功分支而不是 NOT_FOUND 分支。
+    """
+    from app.db import SessionLocal
+
+    tenant_id = probe_tenant["tenant_id"]
+    product_id = probe_tenant["product_id"]
+    ctx = legacy_context(tenant_id=tenant_id, agent_type="market_intelligence")
+    calls = [
+        ("product", "get_products", {"limit": 5}),
+        ("product", "analyze_product", {"product_id": product_id}),
+        ("market", "get_trends", {"limit": 5}),
+        ("market", "score_opportunity", {"product_id": product_id}),
+        ("supply", "search_suppliers", {"limit": 5}),
+        ("supply", "get_supplier_offers", {"limit": 5}),
+        ("compliance", "get_platform_rules", {}),
+        ("compliance", "check_product", {"product_id": product_id}),
+        ("order", "get_orders", {"limit": 5}),
+        ("order", "analyze_sales", {"days": 30}),
+        ("store", "list_connected_stores", {}),
+        ("store", "get_store_metrics", {"days": 30}),
+        ("finance", "calculate_profit", {"product_id": product_id}),
+        ("finance", "get_unit_economics", {"product_id": product_id}),
+        ("finance", "get_fx_rate", {"base": "USD", "quote": "CNY"}),
+        ("knowledge", "search", {"query": "选品 合规"}),
+    ]
+    assert len(calls) == 16, "只读方法应为 16 个，实际 %d" % len(calls)
+
+    failures = []
+    ok_count = 0
+    for tool_name, method, params in calls:
+        tool = registry.open_tool(tool_name, ctx, db=SessionLocal())
+        try:
+            result = tool.call(method, **params)
+        finally:
+            tool.db.close()
+        if result.ok:
+            ok_count += 1
+            continue
+        if result.error["code"] == ERR_NOT_FOUND:
+            continue  # NOT_FOUND = 这条记录不存在，不是实现缺陷
+        failures.append("%s.%s -> %s: %s" % (tool_name, method,
+                                             result.error["code"], result.error["detail"]))
+    assert not failures, "只读方法在真实库上执行失败：\n  " + "\n  ".join(failures)
+    # 反向断言：若哪天实现整体退化成「一律 NOT_FOUND」，上一条断言仍会全绿。
+    # 探针数据（商品/评分/合规报告/汇率）齐备时，16 个方法应全部走成功分支。
+    assert ok_count == 16, (
+        "只读方法成功 %d/16——是否有实现静默退化成 NOT_FOUND？" % ok_count)
+
+
+def test_read_methods_reject_bad_params_without_touching_db(recorded, legacy_ctx):
+    """参数校验必须是 BAD_PARAM，而不是把脏值送进查询后炸成 INTERNAL。
+
+    `db=None` 让「已进入实现」这件事变得可观测：若校验没拦住，错误码会变成
+    INTERNAL（实现里访问 None 报错）而不是 BAD_PARAM。
+    """
+    cases = [
+        ("product", "get_products", {"limit": -1}),
+        ("product", "get_products", {"limit": "abc"}),
+        ("product", "analyze_product", {"product_id": "abc"}),
+        ("order", "analyze_sales", {"days": 0}),
+        ("store", "get_store_metrics", {"days": "x"}),
+            ("supply", "get_supplier_offers", {"supplier_id": "abc"}),
+            ("order", "get_orders", {"shop_id": "abc"}),
+            ("knowledge", "search", {"query": "   "}),
+        ("knowledge", "search", {"query": "x", "top_k": 999}),
+    ]
+    for tool_name, method, params in cases:
+        result = registry.open_tool(tool_name, legacy_ctx, db=None).call(method, **params)
+        assert result.ok is False, "%s.%s 应被拒绝" % (tool_name, method)
+        assert result.error["code"] == ERR_BAD_PARAM, (
+            "%s.%s 参数校验未生效：%s" % (tool_name, method, result.error))
+
+
+# ---------------------------------------------------------------- 分层红线 L-7
+
+def _imports_agents(module: str) -> bool:
+    """模块路径中任一段等于 `agents` 即算越层（覆盖 `..agents` 与 `app.agents.x`）。"""
+    return "agents" in (module or "").split(".")
+
+
+def _iter_agent_imports(source: str) -> list:
+    """返回源码中 import `agents` 的行号（AST，**含函数体内延迟 import**）。
+
+    用 AST 而不是只扫顶层 import：DEBT-28 的教训是违规恰好藏在方法体内的延迟
+    import 里，只扫顶层的写法看不见它。
+    """
+    import ast
+
+    lines = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom):
+            if _imports_agents(node.module):
+                lines.append(node.lineno)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if _imports_agents(alias.name):
+                    lines.append(node.lineno)
+    return lines
+
+
+def test_tools_never_import_agents():
+    """L-7：`tools/` 禁止 import `agents/`。
+
+    依赖方向是 `routers -> agents -> tools -> services -> models`。反向 import 会
+    成环，并让 Tool 层无法脱离 Agent 独立测试——而「能独立测试」正是它作为
+    Agent 唯一数据通道的前提。
+    """
+    offenders = []
+    for path in sorted((BACKEND_DIR / "app" / "tools").glob("*.py")):
+        for lineno in _iter_agent_imports(path.read_text(encoding="utf-8")):
+            offenders.append("%s:%d" % (path.name, lineno))
+    assert not offenders, "tools/ 反向依赖 agents/：" + ", ".join(offenders)
+
+
+def test_agent_import_detector_has_discriminating_power():
+    """判别力：检测器必须能抓到真实形态的越层 import，含**函数体内**的那种。"""
+    top_level = "from ..agents import discovery\n"
+    lazy = "def f():\n    from app.agents.discovery import DiscoveryAgent\n"
+    absolute = "import app.agents.listing\n"
+    clean = "from ..services.costing import calc_profit\n"
+    assert _iter_agent_imports(top_level) == [1]
+    assert _iter_agent_imports(lazy) == [2]
+    assert _iter_agent_imports(absolute) == [1]
+    assert _iter_agent_imports(clean) == []

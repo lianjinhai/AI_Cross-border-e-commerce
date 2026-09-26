@@ -64,7 +64,13 @@ AI-电商ERP/
 │   │   │   ├── shop_scope.py            # 店铺可见性守卫（归档店铺一律视为不存在）
 │   │   │   ├── tenant_data_purge.py     # 演示数据清理（按外键拓扑序）
 │   │   │   └── workspace_context.py     # 身份 Context 唯一入口
-│   │   ├── tools/                  # 【Phase 2 新增】Agent Tool Layer
+│   │   ├── tools/                  # Agent 唯一数据通道（Agent OS §10；见 D37）
+│   │   │   ├── contract.py              # 冻结契约：ToolSpec/ToolContext/ToolResult/ToolCall/错误码
+│   │   │   ├── base.py                  # BaseTool + call() 六步管线 + 共用口径（as_int/clamp_limit/ts）
+│   │   │   ├── audit.py                 # §10.2「必须记录 Audit」唯一落点（独立短会话）
+│   │   │   ├── registry.py              # TOOLS 索引 + import 期清单自检
+│   │   │   └── <domain>.py              # 9 个领域 Tool：product/store/order/supply/finance/
+│   │   │                                #   market/compliance/memory/knowledge（§10.4 冻结清单）
 │   │   ├── workflows/              # 工作流引擎
 │   │   ├── models.py               # 数据模型（单一入口）
 │   │   ├── pagination.py           # 分页参数统一约束（PageNum/PageSize，上限 200）
@@ -146,8 +152,14 @@ models.py     数据定义
 | L-4 | `routers/` 可以 import `services/` `agents/` `models.py` | 允许（存量已如此） |
 | L-5 | **新增** Agent 数据访问必须经 `tools/`（Phase 2 起）；存量 `BaseAgent.db` 已登记为债务 | 登记 |
 | L-6 | 禁止函数体内延迟 import 来掩盖循环依赖；确需延迟导入必须写明原因注释 | 新增代码阻断 |
+| L-7 | `tools/` **禁止** import `agents/`（依赖方向 `routers -> agents -> tools -> services -> models`） | 立即阻断 |
 
 > **L-3 补充**：Agent 之间的协作只能由 Orchestrator 编排。任何「A Agent 直接调用 B Agent」的写法都违反架构红线 2。
+
+> **L-7 补充**：Tool 层反向 import Agent 会成环，并让 Tool 层无法脱离 Agent
+> 独立测试——而「能独立测试」正是它作为唯一数据通道的前提。权限目录同理：
+> `tools/contract.py` 从 `services/workspace_context.ROLE_PERMISSIONS` 求并集，
+> **不**从 `agents/contracts.py` 取（T-53：同一份信息不得维护在两个地方）。
 
 ### 3.3 存量偏差（登记，不立即整改）
 
@@ -541,6 +553,8 @@ python -m ruff format .         # 格式化
 | DEBT-32 | **超阈值函数 11 个**（>80 行硬上限；全 `app/` 共 562 个函数，>50 行警戒线 24 个） | **P2** | `seed.py:200 _seed`(265)、`services/alerting.py:125 scan`(196)、`agents/factory_opportunity.py:25`(126)、`agents/supplier.py:94 forecast`(122)、`routers/orders.py:106 import_csv`(117)、`db.py:78 _migrate_sqlite`(112)、`routers/purchases.py:168 dropship_order`(97)、`agents/discovery.py:196 pick_candidates`(90)、`workflows/engine.py:151 run_workflow`(84)、`agents/listing_review.py:15 review`(82)、`routers/listings.py:187 publish`(81) | 按域拆函数。**口径**：`end_lineno - lineno + 1`，不含装饰器行，**含嵌套函数**（不含嵌套则 >80 为 10 个、>50 为 22 个——两种口径翻转点见 D29 索引） |
 | DEBT-33 | 迁移 `import app.models`（违 M-6）2 处 + 空壳 `downgrade()` 1 处，**均未登记豁免** | **P2** | `migrations/versions/20260922_01_commercial_finance_baseline.py:16,20`、`20260922_02_factory_supply_network.py:32` | 补登记豁免说明。空壳 `downgrade()` 已写明原因（M-3 允许例外但须说明）；其余 15 个迁移的 `downgrade()` 均有真实 `op.*`/`sa.text` 调用（已逐个核实） |
 | DEBT-34 | **`SupportAgent` 未纳入 Agent OS 冻结清单**：架构 §6.1 明确把「客服 Agent」列为**禁止的员工角色式建模**，而代码里该类承担客服意图识别 + 自动回复（身份冲突） | **P2** | `backend/app/agents/support.py`、`backend/app/agents/contracts.py` | 已显式登记 `agent_contract = None`，`contract()` 会抛 `NotImplementedError`，契约测试反向断言其仍为 `None`。处置方向**需负责人裁决**：或按领域能力重建模（客服意图识别归入 Operation Optimization / Risk & Compliance），或保留并补架构例外说明。**不得**给它挂一个凑数的契约 |
+| DEBT-35 | **兼容期 `legacy_context` 路径无法校验权限**：§10.2「必须检查 Permission」在 legacy 路径下不生效（Tool 层拿不到权限集合） | **P1** | `backend/app/tools/contract.py`、`backend/app/tools/base.py` | 过渡处置：放行但标记 `ToolResult.degraded=True`，审计行 `mode=tool` 记录缺口（§15.4 降级不得静默）。**关闭条件**：§18.3 第 5 步（Runtime 注入权威上下文）落地后，`legacy_context` 调用点清零。在此之前不得把 degraded 当已校验 |
+| DEBT-36 | **§10.4 第一批 Tool 清单覆盖不了现有 Agent 的全部读取点**：`Conversation`、`Listing`（通用读取）、`AdCampaign`、`OpportunitySupplierMatch`、`SupplierCatalogProduct`、`ForecastSnapshot`、`ListingReviewDecision` 七类目标没有 Tool 归属 | **P1** | `backend/app/tools/registry.py`、`docs/AI_AGENT_OPERATING_SYSTEM_ARCHITECTURE.md` §10.4 | 补齐属**第二批 Tool 清单**，改冻结清单须走评审（架构 §20）。在此之前 §18.3 第 2 步的 Agent 侧迁移无法完成。**进度锚点**：`tests/test_agent_layer_boundaries.py::_ORM_CALL_BASELINE` 之和（起点 57 = query 34 + get 23），迁移一处下调一次 |
 
 ---
 
