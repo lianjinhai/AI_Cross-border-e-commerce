@@ -542,12 +542,13 @@ def test_compliance_agent_reads_go_through_tool_layer(probe_tenant):
     assert risk_written == listing_report["risk_level"]
 
 
-def test_support_agent_reads_go_through_tool_layer():
+def test_support_agent_reads_go_through_tool_layer(client):
     """判别力：support 的会话/订单读取必须留下 `mode=tool` 审计（§18.3 第 2 步）。
 
     自带探针租户（会话 + 买家消息 + 订单），夹具内建内删：不依赖演示数据，
     不给后续用例制造隐含前提（规范 T-2）。审计行与知识候选都是 `tenants` 的
-    外键子表，必须一并回收，否则删不掉租户。
+    外键子表，必须一并回收，否则删不掉租户。参数 `client` 只为拉起会话级建库
+    夹具（T-2：单跑本用例时也要有表结构，不能靠同文件其它用例先跑）。
     """
     from app.agents.support import SupportAgent
     from app.db import SessionLocal
@@ -600,6 +601,141 @@ def test_support_agent_reads_go_through_tool_layer():
             db.query(Message).filter(Message.tenant_id == ids["tenant_id"]).delete()
             db.query(Conversation).filter(Conversation.id == ids["conversation_id"]).delete()
             db.query(Order).filter(Order.id == ids["order_id"]).delete()
+            db.query(Tenant).filter(Tenant.id == ids["tenant_id"]).delete()
+            db.commit()
+        finally:
+            db.close()
+
+
+def test_listing_agent_reads_go_through_tool_layer(client):
+    """判别力：listing 的商品/Listing/规则/知识/合规读取必须留下 `mode=tool` 审计。
+
+    自带探针租户（商品带图 + Listing + 合规报告），夹具内建内删（规范 T-2）：
+    不依赖演示数据，不给后续用例制造隐含前提。参数 `client` 只为拉起会话级建库
+    夹具（T-2：单跑本用例时也要有表结构，不能靠同文件其它用例先跑）。
+    """
+    from app.agents.listing import ListingAgent
+    from app.db import SessionLocal
+    from app.models import AiLog, ComplianceReport, Listing, Product, Tenant
+
+    db = SessionLocal()
+    try:
+        tenant = Tenant(name="ToolLayer上架探针租户")
+        db.add(tenant)
+        db.commit()
+        product = Product(tenant_id=tenant.id, sku="TOOL-LISTING-1",
+                          title="Tool Layer 上架探针商品", category="家居",
+                          images=["https://cdn.example.com/probe.jpg"],
+                          attrs={"material": "cotton", "color": "blue"})
+        db.add(product)
+        db.commit()
+        listing = Listing(tenant_id=tenant.id, product_id=product.id, platform="shopee",
+                          language="en", title="Tool Layer 上架探针 Listing",
+                          description="probe listing", bullets=["bullet"],
+                          keywords=["probe"], status="draft")
+        db.add(listing)
+        db.commit()
+        db.add(ComplianceReport(tenant_id=tenant.id, target_type="listing",
+                                listing_id=listing.id, risk_level="low", score=90))
+        db.commit()
+        ids = {"tenant_id": tenant.id, "product_id": product.id, "listing_id": listing.id}
+    finally:
+        db.close()
+
+    try:
+        agent = ListingAgent(ids["tenant_id"])
+        try:
+            opt = agent.optimize(ids["listing_id"])
+            pub = agent.publish(ids["listing_id"])
+        finally:
+            agent.close()
+        assert opt["id"] == ids["listing_id"]
+        assert pub["status"] == "published"
+        assert pub["external_id"] == "shopee-%06d" % ids["listing_id"]
+
+        db = SessionLocal()
+        try:
+            actions = {r.action for r in db.query(AiLog)
+                       .filter(AiLog.tenant_id == ids["tenant_id"],
+                               AiLog.mode == "tool").all()}
+            row = db.get(Listing, ids["listing_id"])
+            status_after, title_after = row.status, row.title
+        finally:
+            db.close()
+        expected = {"tool:product.get_products", "tool:listing.get_listings",
+                    "tool:knowledge.search", "tool:compliance.get_platform_rules",
+                    "tool:compliance.check_listing"}
+        assert expected <= actions, (
+            "listing 的读取没有全部走 Tool 层——§18.3 第 2 步的迁移被回退了？缺失：%s"
+            % sorted(expected - actions))
+        # 反向断言：写路径（`_write_listing`）必须仍然生效——它是第 3 步欠账，
+        # 但迁移期间不得被顺手删掉（删掉等于「优化/发布点了没反应」）。
+        assert status_after == "published" and title_after.endswith("[Optimized]")
+    finally:
+        db = SessionLocal()
+        try:
+            db.query(AiLog).filter(AiLog.tenant_id == ids["tenant_id"]).delete()
+            db.query(ComplianceReport).filter(
+                ComplianceReport.tenant_id == ids["tenant_id"]).delete()
+            db.query(Listing).filter(Listing.id == ids["listing_id"]).delete()
+            db.query(Product).filter(Product.id == ids["product_id"]).delete()
+            db.query(Tenant).filter(Tenant.id == ids["tenant_id"]).delete()
+            db.commit()
+        finally:
+            db.close()
+
+
+def test_listing_publish_blocks_rule_violation(client):
+    """反向断言：发布门禁必须拦下违规文案（迁到字段级核心后语义不变）。
+
+    shopee 内置规则包禁用「no.1」，标题命中即拒绝，且拒绝后状态必须保持 draft
+    ——先写后拦等于门禁失效。同时守住 `validate_listing_fields` 的核心判定：
+    若它被改坏成「永远返回空清单」，本用例立刻红。
+    """
+    from app.agents.listing import ListingAgent
+    from app.db import SessionLocal
+    from app.models import AiLog, Listing, Product, Tenant
+
+    db = SessionLocal()
+    try:
+        tenant = Tenant(name="ToolLayer规则门禁探针租户")
+        db.add(tenant)
+        db.commit()
+        product = Product(tenant_id=tenant.id, sku="TOOL-RULE-1",
+                          title="Tool Layer 规则门禁商品", category="家居",
+                          images=["https://cdn.example.com/probe.jpg"], attrs={})
+        db.add(product)
+        db.commit()
+        listing = Listing(tenant_id=tenant.id, product_id=product.id, platform="shopee",
+                          language="en", title="Best no.1 Seller 探针 Listing",
+                          description="probe", bullets=["bullet"], keywords=["probe"],
+                          status="draft")
+        db.add(listing)
+        db.commit()
+        ids = {"tenant_id": tenant.id, "product_id": product.id, "listing_id": listing.id}
+    finally:
+        db.close()
+
+    try:
+        agent = ListingAgent(ids["tenant_id"])
+        try:
+            with pytest.raises(ValueError, match="平台规则校验未通过"):
+                agent.publish(ids["listing_id"])
+        finally:
+            agent.close()
+
+        db = SessionLocal()
+        try:
+            status = db.get(Listing, ids["listing_id"]).status
+        finally:
+            db.close()
+        assert status == "draft", "被规则拦下的 Listing 不得发生任何写入（先写后拦=门禁失效）"
+    finally:
+        db = SessionLocal()
+        try:
+            db.query(AiLog).filter(AiLog.tenant_id == ids["tenant_id"]).delete()
+            db.query(Listing).filter(Listing.id == ids["listing_id"]).delete()
+            db.query(Product).filter(Product.id == ids["product_id"]).delete()
             db.query(Tenant).filter(Tenant.id == ids["tenant_id"]).delete()
             db.commit()
         finally:

@@ -149,32 +149,40 @@ def all_rules_overview(db: Session) -> list[dict]:
     return out
 
 
-def validate_against_rules(db: Session, platform: str, listing, product) -> list[str]:
-    """发布前强制规则校验，返回违规清单（非空即拒绝发布）。"""
-    pack = get_active_rules(db, platform)
-    rules = pack["rules"]
+def validate_listing_fields(platform: str, rules: dict, listing: dict,
+                            product: dict) -> list[str]:
+    """字段级校验核心：纯函数，接收字段字典，不碰数据库，返回违规清单。
+
+    为什么从 ``validate_against_rules`` 拆出来（D40）
+        Agent 侧读取已全部走 Tool（§18.3 第 2 步），拿到的是字段字典而不是 ORM
+        对象。若校验函数只接受 ORM 对象，Agent 要么回退直连数据库、要么把字典
+        再拼回对象——两条路都违反架构。把「规则怎么判」与「数据从哪来」拆开：
+        本函数只判字段；``validate_against_rules`` 保留为 ORM 适配器，供
+        services/adapters 等未迁移调用点使用（T-53：判定逻辑只有一份）。
+    """
     if not rules:
         return []
     violations: list[str] = []
-    title = (listing.title or "")
+    title = (listing.get("title") or "")
     if len(title) > rules.get("title_max", 255):
         violations.append(f"标题 {len(title)} 字符超出 {platform} 上限 {rules['title_max']}")
-    desc_len = len(listing.description or "")
+    desc_len = len(listing.get("description") or "")
     if desc_len > rules.get("desc_max", 100000):
         violations.append(f"描述 {desc_len} 字符超出上限 {rules['desc_max']}")
 
-    text = " ".join([title, listing.description or "",
-                     " ".join(listing.keywords or []),
-                     " ".join(listing.bullets or []), product.title or ""]).lower()
+    text = " ".join([title, listing.get("description") or "",
+                     " ".join(listing.get("keywords") or []),
+                     " ".join(listing.get("bullets") or []),
+                     product.get("title") or ""]).lower()
     for w in rules.get("banned_words", []):
         if w.lower() in text:
             violations.append(f"命中 {platform} 违禁词「{w}」（发布将导致下架/处罚）")
 
     for cat in rules.get("banned_categories", []):
-        if cat and cat in (product.category or ""):
-            violations.append(f"类目「{product.category}」属于 {platform} 禁售范围")
+        if cat and cat in (product.get("category") or ""):
+            violations.append(f"类目「{product.get('category')}」属于 {platform} 禁售范围")
 
-    images = [i for i in (product.images or []) if i]
+    images = [i for i in (product.get("images") or []) if i]
     if len(images) < rules.get("image_min", 1):
         violations.append(f"商品图片不足：{platform} 要求至少 {rules['image_min']} 张")
     if len(images) > rules.get("image_max", 99):
@@ -184,6 +192,27 @@ def validate_against_rules(db: Session, platform: str, listing, product) -> list
         if bad:
             violations.append(f"{platform} 要求公网可访问图片，存在 {len(bad)} 张本地占位图")
     return violations
+
+
+_LISTING_FIELDS = ("title", "description", "keywords", "bullets", "category", "images")
+
+
+def _fields_of(obj) -> dict:
+    """ORM 对象或字典 -> 字段字典（只取校验需要的键，缺省 None 由核心兜底）。"""
+    if isinstance(obj, dict):
+        return obj
+    return {name: getattr(obj, name, None) for name in _LISTING_FIELDS}
+
+
+def validate_against_rules(db: Session, platform: str, listing, product) -> list[str]:
+    """发布前强制规则校验，返回违规清单（非空即拒绝发布）。
+
+    ORM 适配器：取规则包 + 从 ORM 对象抽字段，判定委托 ``validate_listing_fields``。
+    Agent 侧请改用 Tool 取数 + ``validate_listing_fields``（D40）。
+    """
+    pack = get_active_rules(db, platform)
+    return validate_listing_fields(platform, pack["rules"], _fields_of(listing),
+                                   _fields_of(product))
 
 
 def check_updates(db: Session, platform: str) -> dict:

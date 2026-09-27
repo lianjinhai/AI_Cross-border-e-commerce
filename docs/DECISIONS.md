@@ -2498,3 +2498,67 @@ D35（第 1 步）、D36（K 项门禁）、`docs/子代理实施索引-20260923
 
 **关联**：架构 §10.4.1 / §18.3.1、规范 §11 DEBT-36、`docs/phase1_interfaces.md` §4、
 D38（第二批清单启动）、`docs/子代理实施索引-20260923.md` 第二十九轮。
+
+---
+
+## D40：listing.py 读取迁移 + platform_rules 字段级核心拆分（2026-09-27）
+
+**背景**：§18.3 第 2 步继续推进。下一个目标是 `listing.py`（query 1 + get 5）。
+它的读取目标（Product / Listing / ComplianceReport / 平台规则 / 知识）大多已有 Tool，
+但发布门禁 `services/platform_rules.validate_against_rules(db, platform, listing, product)`
+**只接受 ORM 对象**——Agent 侧改走 Tool 后拿到的是字段字典，不改这个签名就只能回退
+直连数据库（迁移变成假动作）。因此本轮先做一次最小拆分，再迁移。
+
+### 一、交付物
+
+| 文件 | 变更 | 职责 |
+|---|---|---|
+| `backend/app/services/platform_rules.py` | 拆分 | 新增纯函数 `validate_listing_fields(platform, rules, listing, product)`（只判字段、不碰数据库）；`validate_against_rules` 保留为 ORM 适配器（`_fields_of()` 抽字段后委托核心），供 `services/adapters/base.py` / `listing_review.py` 等未迁移调用点使用 |
+| `backend/app/agents/listing.py` | 迁移（255 → 300 行） | 6 处直连读取全部改走 Tool（Product ×2 / Listing ×2 / Compliance ×1 / 知识检索）；平台规则包改走 `compliance.get_platform_rules`；写路径集中到 `_write_listing` |
+| `backend/tests/test_agent_layer_boundaries.py` | 基线 | `listing.py` (1, 5) → (0, 1)；棘轮之和 53 → **48** |
+| `backend/tests/test_tool_layer.py` | +3 条 | listing 迁移判别力（5 个 `tool:*` 审计 action）+ 发布门禁反向断言 + 修掉 support/listing 两条用例的 T-2 顺序依赖 |
+
+### 二、四个关键决策
+
+| # | 决策 | 备选与被否原因 |
+|---|---|---|
+| 1 | **判定逻辑拆「字段级核心 + ORM 适配器」，而不是让 Agent 把字典拼回对象** | 拼回对象等于在 Agent 里再造一份 ORM 视图（T-53 违规），且适配器一旦只被 Agent 使用就会失控；拆开后两处调用共享同一份判定 |
+| 2 | **写路径集中到 `_write_listing`，保留 1 处 `self.db.get`** | 与 compliance `_sync_listing_risk` / support `_touch_conversation` 同款处置：§9.1 要求写操作走 Action（第 3 步），本步先把写收敛到单点，避免「读迁移顺手把写删了」——反向断言守着它必须仍然生效 |
+| 3 | **合规报告门禁改读 `compliance.check_listing`** | 旧实现直接查 `ComplianceReport` 取 `risk_level`；改用冻结 Tool 后同时拿到复核结论与报告（信息不减少）。Tool 内部按 `id desc` 取最新，与旧的 `created_at desc` 在单会话内等价 |
+| 4 | **规则包读取失败时降级为空规则包** | 与旧实现「未知平台 → `rules={}`」等价；若改为抛错，一次读取抖动会让所有发布失败。生成期自检 + 发布期校验基于同一份空集合，不会因此放行脏文案（门禁失效路径由第 2 条用例守着） |
+
+### 三、判别力验证（实测）
+
+| 验证 | 变异 | 结果 |
+|---|---|---|
+| listing 迁移可判别 | `_listing` 改回 `self.db.get(Listing, ...)` | ✅ 两道门禁同时命中：棘轮「2 > 基线 1」+ 审计断言「缺 `tool:listing.get_listings`」 |
+| 发布门禁可判别 | `validate_listing_fields` 改为恒返回 `[]` | ✅ `test_listing_publish_blocks_rule_violation` 立刻红（`DID NOT RAISE`） |
+| 文件还原 | —— | ✅ 两次变异后均按 sha256 还原为字节一致 |
+
+### 四、验证结果
+
+| 验证 | 结果 |
+|---|---|
+| 后端回归（正序 / 反序） | ✅ **400 passed**（正反序一致） |
+| `ruff check app/ tests/ scripts/` | ✅ 全绿 |
+| 文档校验 | ✅ A~K 全 PASS（10 项，编号无 J） |
+| 主库 | 未触碰（本轮无迁移文件；E2E 隔离性校验前后 sha256 一致） |
+
+### 五、顺带修复（T-2，小改）
+
+`test_support_agent_reads_go_through_tool_layer` 单跑时报 `no such table: tenants`
+——它依赖同文件其它用例先拉起会话级 `client` 夹具（建表 + 迁移）。给 support / listing
+两条用例补上 `client` 参数后单跑即可通过（规范 T-2：测试不得依赖执行顺序）。
+
+### 六、剩余工作（诚实记录）
+
+- DEBT-36 未关闭：`AdCampaign` / `OpportunitySupplierMatch` / `SupplierCatalogProduct` /
+  `ForecastSnapshot` / `ListingReviewDecision` 五类仍无 Tool 归属；
+- `platform_rules.validate_against_rules` 的 ORM 适配器仍被 `listing_review.py` 与
+  `services/adapters/base.py` 使用——两者迁移后应删适配器、只留字段级核心；
+- 棘轮之和 53 → **48**（其中 3 处为写路径，属第 3 步），剩余 **45** 处读取点待迁；
+- 下一个迁移目标：`supplier.py`（Supplier / SupplierOffer + 聚合函数）或 `pricing.py`
+  （需先补 `AdCampaign` 的第二批清单）。
+
+**关联**：架构 §10.4.1 / §18.3.1、规范 §11 DEBT-36 / T-2、D38 / D39（Agent 侧迁移前两例）、
+`docs/子代理实施索引-20260923.md` 第三十轮。

@@ -1402,8 +1402,8 @@ Platform Identity（`superadmin`，ADR-F03 相关）**没有业务 Workspace**�
 | 步 | 状态 | 证据 / 剩余工作 |
 |---|---|---|
 | 1 | ✅ **完成**（D35） | 8 条冻结契约落在 `backend/app/agents/contracts.py`；`SupportAgent` 显式未登记（DEBT-34） |
-| 2 | 🔶 **前半完成、后半已启动**（D37 / D38 / D39） | 基础设施（D37）：§10.4 的 9 个 Tool / 22 个方法、`call()` 六步管线、审计、注册表与清单自检。第二批清单：`Listing Tool`（D38）、`Conversation Tool`（D39，前置补 `support:read` 权限 key，走迁移）已交付（合计 11 个 Tool / 24 个方法，§10.4.1）。**Agent 侧迁移 2/9 文件**：`compliance.py`、`support.py` 的读取点全部改走 Tool（由 `ai_logs` 的 `mode=tool` 行与测试证明）。进度锚点：`tests/test_agent_layer_boundaries.py::_ORM_CALL_BASELINE` 之和 = **53**（其中 2 处是写路径，属第 3 步）→ 剩余 **51** 处读取点仍受 DEBT-36 约束（五类目标尚无 Tool 归属） |
-| 3 | ⏳ 未开始 | 高风险：`listing.publish`、`pricing.reprice_batch`、`ads.optimize_budget` 仍直改并 `commit`（违 §9.1） |
+| 2 | 🔶 **前半完成、后半进行中**（D37 / D38 / D39 / D40） | 基础设施（D37）：§10.4 的 9 个 Tool / 22 个方法、`call()` 六步管线、审计、注册表与清单自检。第二批清单：`Listing Tool`（D38）、`Conversation Tool`（D39，前置补 `support:read` 权限 key，走迁移）已交付（合计 11 个 Tool / 24 个方法，§10.4.1）。**Agent 侧迁移 3/9 文件**：`compliance.py`、`support.py`、`listing.py` 的读取点全部改走 Tool（由 `ai_logs` 的 `mode=tool` 行与测试证明）；`listing.py` 的写路径收敛到 `_write_listing` 单点，规则判定改用 `services/platform_rules.validate_listing_fields`（D40）。进度锚点：`tests/test_agent_layer_boundaries.py::_ORM_CALL_BASELINE` 之和 = **48**（其中 3 处是写路径，属第 3 步）→ 剩余 **45** 处读取点仍受 DEBT-36 约束（五类目标尚无 Tool 归属） |
+| 3 | ⏳ 未开始 | 高风险：`listing.publish` / `listing.optimize` 的写已集中到 `_write_listing`（D40），但仍是 Agent 直改 + `commit`（违 §9.1）；`pricing.reprice_batch`、`ads.optimize_budget` 待办 |
 | 4 | ⏳ 未开始 | Orchestrator 仍同步直调 |
 | 5 | ⏳ 未开始 | `BaseAgent.SessionLocal()` 仍自持会话；完成后才能关闭 DEBT-35 |
 | 6 | ⏳ 未开始 | `trace_id` / `task_id` / `parent_trace_id` / `steps[]` 未补 |
