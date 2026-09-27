@@ -8,6 +8,7 @@ ask_json() 是核心模式：优先 LLM 产出结构化 JSON，任何失败自�
 from ..ai.llm import ModelRouter
 from ..db import SessionLocal
 from ..models import AiLog
+from ..services.pii_redact import redact, redact_prompt
 from ..tools import legacy_context, open_tool
 
 
@@ -70,9 +71,12 @@ class BaseAgent:
         return result, "rule"
 
     def _log(self, action, mode, model, prompt, response, latency_ms, ok):
+        # PII 脱敏（§19 验收项 8）挂在这里：AiLog 的唯一写入落点。只影响审计表，
+        # 业务表（messages 等）保持原文——脱敏不得改写业务数据。
         self.db.add(AiLog(tenant_id=self.tenant_id, agent=self.name, action=action,
-                          mode=mode, model=model, prompt=prompt[:4000],
-                          response=str(response)[:4000], latency_ms=latency_ms, ok=ok))
+                          mode=mode, model=model,
+                          prompt=redact_prompt(prompt)[:4000],
+                          response=redact(response)[:4000], latency_ms=latency_ms, ok=ok))
         self.db.commit()
 
     # ---- M6 决策解释层 ----

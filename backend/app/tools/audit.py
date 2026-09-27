@@ -17,6 +17,7 @@ import logging
 
 from ..db import SessionLocal
 from ..models import AiLog
+from ..services.pii_redact import redact
 from .contract import ToolContext, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -63,4 +64,9 @@ def _payload(result: ToolResult) -> dict:
 
 
 def _brief(payload) -> str:
-    return repr(payload)[:_MAX_FIELD]
+    """审计载荷的文本化：先做 PII 脱敏再截断（§19 验收项 8）。
+
+    为什么 Tool 侧也要脱敏：参数与结果都可能带买家侧文本（例如按消息内容检索），
+    而 Tool 审计与 Agent 审计同表（`ai_logs`），漏一处等于没做。
+    """
+    return redact(repr(payload))[:_MAX_FIELD]

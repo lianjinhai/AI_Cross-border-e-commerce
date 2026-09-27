@@ -1058,6 +1058,12 @@ Trace {
 | — | 新增 `trace_id` / `task_id` / `parent_trace_id` / `workspace_id` / `tokens_used` / `trigger` |
 | — | 新增 `steps[]`（Tool 调用序列） |
 
+**实现状态（2026-09-27，与 D38 同期）**：`prompt` / `response` 的脱敏已落地——
+唯一落点是 `BaseAgent._log`（Agent 审计）与 `tools/audit._brief`（Tool 审计，与
+Agent 审计同表，漏一处等于没做），规则见 `backend/app/services/pii_redact.py`，
+回归测试 `backend/tests/test_pii_redact.py`。存量 2 行（脱敏前落库）的处置见
+规范 §11 **DEBT-37**。
+
 ### 15.4 可观测性红线
 
 - 禁止记录 Token、密码、API Key、店铺凭证；
