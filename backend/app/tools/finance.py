@@ -10,14 +10,30 @@
     `costing.to_cny` 的纪律是「缺汇率必须抛错，禁止用猜测汇率算利润」。
     在 Tool 层回退一个默认汇率，等于把这条纪律从唯一入口处废掉——所有 Agent
     都会拿到一个看起来正常的利润率。缺就是缺，让调用方知道。
+
+为什么广告活动（AdCampaign）读取挂在 Finance Tool（D44）
+    冻结权限目录里没有独立的 ads 域，新增权限 key 必须走迁移（D39 先例）。而
+    AdCampaign 的字段（预算/花费/收入）全是金钱事实，Finance Intelligence 的
+    ROI 分析正是它的消费方。跨域复用权限 key 已有先例（market→product:read、
+    store→order:read）。若未来要独立 ads 域，按「只增不改」补 key + 迁移即可。
 """
 
 from __future__ import annotations
 
-from ..models import Product
+from ..models import AdCampaign, Product
 from ..services.costing import calc_profit, cost_elements, latest_fx
-from .base import BaseTool, Reading, as_int, reading
+from .base import BaseTool, Reading, as_int, clamp_limit, reading, ts
 from .contract import ERR_BAD_PARAM, ERR_NOT_FOUND, ToolError, ToolSpec
+
+
+def campaign_dict(c: AdCampaign) -> dict:
+    """广告活动字段口径（唯一一份，避免各调用方各挑一套）。"""
+    return {"id": c.id, "name": c.name, "platform": c.platform,
+            "product_id": c.product_id, "keywords": c.keywords or [],
+            "budget": c.budget, "spend": c.spend, "revenue": c.revenue,
+            "impressions": c.impressions, "clicks": c.clicks, "orders": c.orders,
+            "status": c.status, "created_at": ts(c.created_at),
+            "updated_at": ts(c.updated_at)}
 
 
 class FinanceTool(BaseTool):
@@ -29,6 +45,8 @@ class FinanceTool(BaseTool):
                  writes=False, summary="拆出采购/物流/佣金/广告/汇率等成本要素"),
         ToolSpec(tool="finance", method="get_fx_rate", permission="finance:read",
                  writes=False, summary="读取最近一条生效汇率"),
+        ToolSpec(tool="finance", method="get_campaigns", permission="finance:read",
+                 writes=False, summary="读取广告活动（预算/花费/收入/点击），可按状态或商品过滤"),
     )
 
     def _calculate_profit(self, product_id: int, price=None) -> Reading:
@@ -68,3 +86,22 @@ class FinanceTool(BaseTool):
         if not product or product.tenant_id != self.context.tenant_id:
             raise ToolError(ERR_NOT_FOUND, "商品 %s 不存在" % product_id)
         return product
+
+    def _get_campaigns(self, status: str = "", product_id=None, limit=50) -> Reading:
+        """广告活动读取。
+
+        返回**原始字段**（预算/花费/收入/曝光/点击/订单），ROI/CTR/CVR 等比率留给
+        调用方计算——比率是展示口径，写进 Tool 会与页面的算法漂移（T-53）。
+        """
+        n = clamp_limit(limit)
+        pid = None if product_id in (None, "") else as_int(product_id, "product_id")
+        state = (status or "").strip()
+        query = self.db.query(AdCampaign).filter(
+            AdCampaign.tenant_id == self.context.tenant_id)
+        if pid is not None:
+            query = query.filter(AdCampaign.product_id == pid)
+        if state:
+            query = query.filter(AdCampaign.status == state)
+        rows = query.order_by(AdCampaign.id.desc()).limit(n).all()
+        return reading([campaign_dict(c) for c in rows], table="ad_campaigns",
+                       campaign_ids=[c.id for c in rows])

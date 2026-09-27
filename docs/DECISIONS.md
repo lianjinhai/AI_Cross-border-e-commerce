@@ -2736,3 +2736,61 @@ D38（第二批清单启动）、`docs/子代理实施索引-20260923.md` 第二
 
 **关联**：架构 §10.4.1 / §18.3.1、规范 §11 DEBT-36、D42（`id desc` 口径同源）、
 `docs/子代理实施索引-20260923.md` 第三十三轮。
+
+---
+
+## D44：Finance / Listing Tool 补批 + pricing.py 迁移 —— Agent 侧迁移第七例（2026-09-27）
+
+**背景**：§18.3 第 2 步继续推进。`pricing.py` 里是两个 Agent（`PricingAgent` /
+`AdsAgent`）共 7 处直连读取，卡在两类没有 Tool 归属的目标：广告活动
+（`AdCampaign`，DEBT-36 的最后一类）与「已发布 Listing 的商品 id 清单」。
+
+### 一、交付物
+
+| 文件 | 变更 | 职责 |
+|---|---|---|
+| `backend/app/tools/finance.py` | +1 方法 | `get_campaigns(status / product_id / limit)`：广告活动读取（预算/花费/收入/曝光/点击/订单原始字段，比率留给调用方）；权限复用 `finance:read` |
+| `backend/app/tools/listing.py` | +1 方法 | `get_published_product_ids(limit)`：已发布 Listing 的商品 id 去重清单（上限 200，`order_by(product_id)`） |
+| `backend/app/agents/pricing.py` | 迁移（4, 3 → 0, 1） | 7 处读取全部改走 Tool（Product / Market / Listing / Finance）；1 处写路径（`optimize_budget` 预算调整）保留并标注；两个 Agent 共用模块级读取助手（T-53） |
+| `backend/tests/test_agent_layer_boundaries.py` | 基线 | `pricing.py` (4, 3) → **(0, 1)**；棘轮之和 33 → **27** |
+| `backend/tests/test_tool_layer.py` | +1 条 + 覆盖清单 | pricing/ads 判别力（6 个 `tool:*` 审计 action + 三处写路径反向断言）；真库覆盖 25 → 27 条；冻结清单硬计数 30 → 32 |
+| 文档 | 同步 | §10.4.1 两行 + 补批说明、§18.3.1（7/9 文件、之和 27）、DEBT-36、D44 索引 |
+
+### 二、四个关键决策
+
+| # | 决策 | 备选与被否原因 |
+|---|---|---|
+| 1 | **广告活动读取挂在 Finance Tool（复用 `finance:read`），不新建 ads 域** | 冻结权限目录没有 ads 域；新增权限 key 必须走迁移（D39 先例）。AdCampaign 字段（预算/花费/收入）全是金钱事实，Finance Intelligence 的 ROI 分析正是消费方。跨域复用已有先例（market→product:read、store→order:read）。若未来要独立 ads 域，按「只增不改」补 key + 迁移 |
+| 2 | **Tool 只返回原始字段，ROI/CTR/CVR 留给调用方算** | 比率是展示口径；写进 Tool 会与页面算法漂移（T-53）。`get_campaigns` 因此是纯数据视图 |
+| 3 | **成本要素改经 `finance.get_unit_economics` 取，而不是把 `costing.cost_elements` 改成吃字典** | `costing` 是「唯一成本口径」的共享实现（adapters / 工具 / 测试都在用）；改其入参会波及全部调用面。Tool 的 `get_unit_economics` 是同一实现的包装，口径不变 |
+| 4 | **两处批量任务由 Tool 侧截断到 200** | `reprice_batch`（活跃商品）与 `draft_batch`（已发布商品）原先是「取全量再切 200」；Tool 化后 `order_by(id)` 确定顺序后截断。与 D41 / D43 同款返回体边界，已登记 |
+
+### 三、判别力验证（实测）
+
+| 验证 | 变异 | 结果 |
+|---|---|---|
+| pricing 迁移可判别 | `roi_report` 改回 `self.db.query(AdCampaign)` | ✅ 两道门禁同时命中：棘轮「1 > 基线 0」+ 审计断言「缺 `tool:finance.get_campaigns`」；还原后 sha256 字节一致 |
+| 写路径未被顺手删 | —— | 用例内断言 2 条定价记录、1 条广告草稿、预算 50 → 65 |
+| 冻结清单数量 | —— | `len(doc) == 30` → **32**、真库覆盖 25 → **27**（两处硬计数同步） |
+
+### 四、验证结果
+
+| 验证 | 结果 |
+|---|---|
+| 后端回归（正序 / 反序） | ✅ **405 passed**（正反序一致） |
+| `ruff check app/ tests/ scripts/` | ✅ 全绿 |
+| 文档校验 | ✅ A~K 全 PASS（10 项，编号无 J） |
+| 主库 | 未触碰（本轮无迁移文件；E2E 隔离性校验前后 sha256 一致） |
+
+### 五、剩余工作（诚实记录）
+
+- **DEBT-36 的七类目标已全部有 Tool 归属**（Conversation / Listing / AdCampaign /
+  OpportunitySupplierMatch / SupplierCatalogProduct / ForecastSnapshot /
+  ListingReviewDecision），债务从「清单缺归属」转为**纯迁移工作量**；
+- `platform_rules.validate_against_rules` 的 ORM 适配器仍被 `services/adapters/base.py`
+  使用（Agent 调用点已清零）；
+- 棘轮之和 33 → **27**（其中 6 处为写路径），剩余 **21** 处读取点待迁；
+- 剩余文件：`discovery.py`（11 + 4）、`orchestrator.py`（6 处 `func.count`/`sum` 聚合）。
+
+**关联**：架构 §10.4.1 / §18.3.1、规范 §11 DEBT-36、D41（`get_product_ids` 复用）、
+D43（返回体边界同款）、`docs/子代理实施索引-20260923.md` 第三十四轮。

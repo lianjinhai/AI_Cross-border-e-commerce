@@ -1,13 +1,12 @@
-"""定价 Agent（真实利润/动态定价，第十一章）与广告增长 Agent（第十二章）。"""
+"""定价 Agent（真实利润/动态定价，第十一章）与广告增长 Agent（第十二章）。
+
+§18.3 第 2 步：读取全部经 Tool 层（Product / Market / Listing / Finance Tool，见
+D44）；写路径（定价记录落库、广告草稿新建、预算调整）保留 ORM 访问并集中标注，
+属第 3 步（Action 层）欠账。
+"""
 from datetime import datetime
 
-from ..models import (
-    AdCampaign,
-    Listing,
-    PricingRecord,
-    Product,
-    ProductScore,
-)
+from ..models import AdCampaign, PricingRecord, Product
 from ..services import costing
 from .base import BaseAgent
 from .contracts import CONTRACTS
@@ -27,6 +26,45 @@ def _setting(db, key: str, default: dict) -> dict:
 def _setting_for(db, tenant_id: int, key: str, default: dict) -> dict:
     """按租户读取配置（租户覆盖 → 平台默认 → 代码默认）。"""
     return costing.setting_for(db, tenant_id, key, default)
+
+
+# ---- 读取：全部经 Tool 层（§18.3 第 2 步）----
+# Pricing 与 Ads 两个 Agent 共用同一组读取口径，收在模块级函数里（T-53：一份实现）。
+
+def _tool_product(agent, product_id: int) -> dict | None:
+    got = agent.tool("product").call("get_products", product_id=product_id)
+    rows = got.data if got.ok and isinstance(got.data, list) else []
+    return rows[0] if rows else None
+
+
+def _tool_score(agent, product_id: int) -> dict | None:
+    """最新机会评分；无评分时返回 None，调用方按默认值处理（与库内无记录等价）。"""
+    got = agent.tool("market").call("score_opportunity", product_id=product_id)
+    data = got.data if got.ok and isinstance(got.data, dict) else None
+    return (data or {}).get("score")
+
+
+def _tool_cost_elements(agent, product_id: int) -> dict:
+    got = agent.tool("finance").call("get_unit_economics", product_id=product_id)
+    if not got.ok:
+        # 与旧的 costing.cost_elements 抛 ValueError 等价（缺汇率等 fail-closed 场景）。
+        raise ValueError(got.error["detail"])
+    return got.data
+
+
+def _tool_active_product_ids(agent, limit: int = 200) -> list[int]:
+    got = agent.tool("product").call("get_product_ids", status="active", limit=limit)
+    return got.data if got.ok and isinstance(got.data, list) else []
+
+
+def _tool_published_product_ids(agent, limit: int = 200) -> list[int]:
+    got = agent.tool("listing").call("get_published_product_ids", limit=limit)
+    return got.data if got.ok and isinstance(got.data, list) else []
+
+
+def _tool_campaigns(agent, limit: int = 200) -> list[dict]:
+    got = agent.tool("finance").call("get_campaigns", limit=limit)
+    return got.data if got.ok and isinstance(got.data, list) else []
 
 
 class PricingAgent(BaseAgent):
@@ -55,20 +93,18 @@ class PricingAgent(BaseAgent):
 
     # ---------- 动态定价 ----------
     def suggest_price(self, product_id: int) -> dict:
-        p = self.db.get(Product, product_id)
-        if not p or p.tenant_id != self.tenant_id:
+        p = _tool_product(self, product_id)
+        if not p:
             raise ValueError(f"商品 {product_id} 不存在")
-        ce = self.cost_elements(p)
+        ce = _tool_cost_elements(self, product_id)
         rules = _setting_for(self.db, self.tenant_id, "rules", _DEFAULT_RULES)
         fx, fee = ce["fx"], ce["fee_rate"]
         cost_cny = ce["purchase_cny"] + ce["logistics_cny"] + ce["ads_cny"]
         floor = cost_cny * (1 + rules["min_margin"]) / (fx * (1 - fee))
         target = cost_cny * (1 + rules["target_margin"]) / (fx * (1 - fee))
-        score = (self.db.query(ProductScore)
-                 .filter(ProductScore.tenant_id == self.tenant_id, ProductScore.product_id == product_id)
-                 .order_by(ProductScore.created_at.desc()).first())
-        demand = score.demand if score else 55
-        competition = score.competition if score else 50
+        score = _tool_score(self, product_id)
+        demand = score["demand"] if score else 55
+        competition = score["competition"] if score else 50
         adjustments = []
         factor = 1.0
         if demand > 70:
@@ -77,7 +113,7 @@ class PricingAgent(BaseAgent):
         if competition > 70:
             factor -= 0.05
             adjustments.append(f"竞争激烈({competition:.0f}) 降价5%")
-        current = float((p.attrs or {}).get("sale_price") or 0)
+        current = float((p["attrs"] or {}).get("sale_price") or 0)
         if current and current > target * 1.3:
             factor -= 0.05
             adjustments.append("现价偏高，向目标价回归5%")
@@ -90,7 +126,7 @@ class PricingAgent(BaseAgent):
                     "adjustments": adjustments or ["按目标利润率定价"]}
 
         system = "你是跨境电商动态定价引擎。只返回 JSON。"
-        prompt = (f"商品「{p.title}」成本¥{cost_cny:.2f}，佣金率{fee}，汇率{fx}，"
+        prompt = (f"商品「{p['title']}」成本¥{cost_cny:.2f}，佣金率{fee}，汇率{fx}，"
                   f"需求分{demand:.0f}，竞争分{competition:.0f}，价格下限${floor:.2f}，目标价${target:.2f}。"
                   "给出最终建议价(不得低于下限、可在目标价±8%浮动)。"
                   "返回 JSON: {\"suggested_price\":0,\"strategy\":\"一句话策略\",\"adjustments\":[\"中文理由\"]}")
@@ -124,8 +160,7 @@ class PricingAgent(BaseAgent):
         return out
 
     def reprice_batch(self, params: dict | None = None, context: dict | None = None) -> dict:
-        ids = [r[0] for r in self.db.query(Product.id)
-               .filter(Product.tenant_id == self.tenant_id, Product.status == "active").all()]
+        ids = _tool_active_product_ids(self, limit=200)
         repriced = []
         for pid in ids[:200]:
             try:
@@ -144,32 +179,32 @@ class AdsAgent(BaseAgent):
     # Agent OS §6.2 契约（§18.3 第 1 步）：声明能力边界，供 Guardrail / Runtime 读取。
     agent_contract = CONTRACTS["operation_optimization"]
 
-    def _keywords_for(self, p: Product) -> list[str]:
-        base = (p.title or "").lower().split()
+    def _keywords_for(self, p: dict) -> list[str]:
+        base = (p["title"] or "").lower().split()
         words = [w for w in base if len(w) > 2][:4]
-        attrs = p.attrs or {}
-        seeds = words + [str(attrs.get("color") or ""), p.category or ""]
+        attrs = p["attrs"] or {}
+        seeds = words + [str(attrs.get("color") or ""), p["category"] or ""]
         seeds = [s for s in seeds if s]
         modifiers = ["buy online", "best price", "free shipping", "2026", "wholesale", "hot sale"]
         kws = list(dict.fromkeys(seeds)) + [f"{s} {m}" for s in seeds[:4] for m in modifiers]
         return kws[:12]
 
     def suggest_for_product(self, product_id: int, platform: str = "facebook") -> dict:
-        p = self.db.get(Product, product_id)
-        if not p or p.tenant_id != self.tenant_id:
+        p = _tool_product(self, product_id)
+        if not p:
             raise ValueError(f"商品 {product_id} 不存在")
         def rule() -> dict:
             return {"keywords": self._keywords_for(p), "budget": 50.0,
                     "reason": "基于商品标题与类目的规则选词，建议日预算 50USD"}
 
         system = "你是跨境电商广告投放专家。只返回 JSON。"
-        prompt = (f"为商品「{p.title}」（类目 {p.category}，平台 {platform}）设计广告投放方案："
+        prompt = (f"为商品「{p['title']}」（类目 {p['category']}，平台 {platform}）设计广告投放方案："
                   "8-12 个投放关键词、建议日预算(USD)。"
                   "返回 JSON: {\"keywords\":[\"...\"],\"budget\":0,\"reason\":\"中文理由\"}")
         result, _mode = self.ask_json("suggest_for_product", system, prompt, fallback=rule, small_task=True)
         if not result.get("keywords"):
             result = rule()
-        return {"name": f"{p.title[:24]}-{platform}广告", "platform": platform,
+        return {"name": f"{p['title'][:24]}-{platform}广告", "platform": platform,
                 "product_id": product_id, "keywords": result["keywords"],
                 "budget": float(result.get("budget") or 50), "status": "draft",
                 "reason": result.get("reason", "")}
@@ -183,9 +218,7 @@ class AdsAgent(BaseAgent):
         else:
             ids = context.get("product_ids")
         if not ids:
-            ids = [r[0] for r in self.db.query(Listing.product_id)
-                   .filter(Listing.tenant_id == self.tenant_id, Listing.status == "published")
-                   .distinct().all()]
+            ids = _tool_published_product_ids(self, limit=200)
         platform = params.get("platform", "facebook")
         drafts = []
         for pid in ids[:20]:
@@ -200,6 +233,7 @@ class AdsAgent(BaseAgent):
         return {"campaign_drafts": drafts, "context_patch": {}}
 
     def optimize_budget(self, campaign_id: int) -> dict:
+        # 写路径（预算调整需要 ORM 行对象）：§18.3 第 3 步（Action 层）欠账，见 D44。
         c = self.db.get(AdCampaign, campaign_id)
         if not c or c.tenant_id != self.tenant_id:
             raise ValueError(f"广告活动 {campaign_id} 不存在")
@@ -219,17 +253,18 @@ class AdsAgent(BaseAgent):
                 "action": action, "reason": reason}
 
     def roi_report(self) -> dict:
-        camps = (self.db.query(AdCampaign)
-                 .filter(AdCampaign.tenant_id == self.tenant_id).all())
+        camps = _tool_campaigns(self, limit=200)
         items = []
         for c in camps:
-            roi = round((c.revenue - c.spend) / c.spend, 2) if c.spend else 0
-            ctr = round(c.clicks / c.impressions * 100, 2) if c.impressions else 0
-            cvr = round(c.orders / c.clicks * 100, 2) if c.clicks else 0
-            d = {"id": c.id, "name": c.name, "platform": c.platform, "product_id": c.product_id,
-                 "keywords": c.keywords, "budget": c.budget, "spend": c.spend, "revenue": c.revenue,
-                 "impressions": c.impressions, "clicks": c.clicks, "orders": c.orders,
-                 "status": c.status, "roi": roi, "ctr": ctr, "cvr": cvr}
+            roi = round((c["revenue"] - c["spend"]) / c["spend"], 2) if c["spend"] else 0
+            ctr = round(c["clicks"] / c["impressions"] * 100, 2) if c["impressions"] else 0
+            cvr = round(c["orders"] / c["clicks"] * 100, 2) if c["clicks"] else 0
+            d = {"id": c["id"], "name": c["name"], "platform": c["platform"],
+                 "product_id": c["product_id"], "keywords": c["keywords"],
+                 "budget": c["budget"], "spend": c["spend"], "revenue": c["revenue"],
+                 "impressions": c["impressions"], "clicks": c["clicks"],
+                 "orders": c["orders"], "status": c["status"],
+                 "roi": roi, "ctr": ctr, "cvr": cvr}
             items.append(d)
         spend = sum(c["spend"] for c in items)
         revenue = sum(c["revenue"] for c in items)

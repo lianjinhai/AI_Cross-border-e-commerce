@@ -85,12 +85,14 @@ def _doc_manifest() -> dict:
 def test_manifest_matches_architecture_doc():
     """注册表必须与 §10.4 + §10.4.1 冻结清单**逐条一致**（数量、权限、读写属性）。"""
     doc = _doc_manifest()
-    assert len(doc) == 30, "§10.4 + §10.4.1 应含 30 个方法，解析到 %d 个：%s" % (len(doc), sorted(doc))
+    assert len(doc) == 32, "§10.4 + §10.4.1 应含 32 个方法，解析到 %d 个：%s" % (len(doc), sorted(doc))
     assert "listing.get_listings" in doc, "§10.4.1 第二批表格未被解析到（区段边界写错？）"
     assert "conversation.get_conversations" in doc, "§10.4.1 的 Conversation Tool 未被解析到"
     assert "compliance.get_review_decisions" in doc, "§10.4.1 的 Compliance Tool 补批未被解析到"
     assert "supply.get_catalog_products" in doc, "§10.4.1 的 Supply Tool 目录补批未被解析到"
     assert "supply.get_forecast_snapshot" in doc, "§10.4.1 的 Supply Tool 预测补批未被解析到"
+    assert "finance.get_campaigns" in doc, "§10.4.1 的 Finance Tool 广告补批未被解析到"
+    assert "listing.get_published_product_ids" in doc, "§10.4.1 的 Listing Tool 补批未被解析到"
 
     got = registry.tool_specs()
     assert set(got) == set(doc), (
@@ -490,8 +492,10 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
         ("compliance", "check_listing", {"listing_id": listing_id}),
         ("conversation", "get_conversations", {"limit": 5}),
         ("compliance", "get_review_decisions", {"limit": 5}),
+        ("finance", "get_campaigns", {"limit": 5}),
+        ("listing", "get_published_product_ids", {}),
     ]
-    assert len(calls) == 25, "真库覆盖清单应为 25 条，实际 %d" % len(calls)
+    assert len(calls) == 27, "真库覆盖清单应为 27 条，实际 %d" % len(calls)
     # 完整性（T-53）：除 memory.recall（Phase 6 未到，实现显式 NOT_IMPLEMENTED）外，
     # 冻结清单里的每个只读方法都必须在这里真跑一遍——否则第二批新增的方法会静默漏测。
     expected = {spec.key for spec in registry.tool_specs().values()
@@ -518,10 +522,10 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
                                              result.error["code"], result.error["detail"]))
     assert not failures, "只读方法在真实库上执行失败：\n  " + "\n  ".join(failures)
     # 反向断言：若哪天实现整体退化成「一律 NOT_FOUND」，上一条断言仍会全绿。
-    # 探针数据（商品/Listing/评分/合规报告/汇率/预测快照）齐备时，25 个方法应全部
+    # 探针数据（商品/Listing/评分/合规报告/汇率/预测快照）齐备时，27 个方法应全部
     # 走成功分支。
-    assert ok_count == 25, (
-        "只读方法成功 %d/25——是否有实现静默退化成 NOT_FOUND？" % ok_count)
+    assert ok_count == 27, (
+        "只读方法成功 %d/27——是否有实现静默退化成 NOT_FOUND？" % ok_count)
 
 
 def test_compliance_agent_reads_go_through_tool_layer(probe_tenant):
@@ -1068,6 +1072,120 @@ def test_factory_opportunity_agent_reads_go_through_tool_layer(client):
                 SupplierCatalogProduct.tenant_id == ids["tenant_id"]).delete()
             db.query(Product).filter(Product.id == ids["product_id"]).delete()
             db.query(Supplier).filter(Supplier.id == ids["supplier_id"]).delete()
+            db.query(Tenant).filter(Tenant.id == ids["tenant_id"]).delete()
+            db.commit()
+        finally:
+            db.close()
+
+
+def test_pricing_and_ads_agents_reads_go_through_tool_layer(client):
+    """判别力：pricing / ads 两个 Agent 的读取必须留下 `mode=tool` 审计。
+
+    自带探针租户（商品 + 机会评分 + 已发布 Listing + 在投广告），夹具内建内删
+    （规范 T-2）。覆盖定价侧（`suggest_price` / `reprice_batch`）与广告侧
+    （`roi_report` / `draft_batch` / `optimize_budget`）。参数 `client` 只为拉起
+    会话级建库夹具（单跑本用例也要有表结构）。
+    """
+    from app.agents.pricing import AdsAgent, PricingAgent
+    from app.db import SessionLocal
+    from app.models import (
+        AdCampaign,
+        AiLog,
+        Listing,
+        PricingRecord,
+        Product,
+        ProductScore,
+        Tenant,
+    )
+
+    db = SessionLocal()
+    try:
+        tenant = Tenant(name="ToolLayer定价广告探针租户")
+        db.add(tenant)
+        db.commit()
+        product = Product(tenant_id=tenant.id, sku="TOOL-PRICING-1",
+                          title="Tool Layer 定价探针商品", category="家居",
+                          status="active",
+                          attrs={"sale_price": 29.9, "color": "blue", "weight_kg": 0.3})
+        db.add(product)
+        db.commit()
+        db.add_all([
+            ProductScore(tenant_id=tenant.id, product_id=product.id,
+                         demand=70, competition=40, profit=65, risk=20, total=72),
+            Listing(tenant_id=tenant.id, product_id=product.id, platform="shopee",
+                    language="en", title="Tool Layer 定价探针 Listing",
+                    status="published"),
+            AdCampaign(tenant_id=tenant.id, name="探针在投广告", platform="facebook",
+                       product_id=product.id, keywords=["probe"], budget=50.0,
+                       spend=10.0, revenue=50.0, impressions=1000, clicks=50,
+                       orders=5, status="running"),
+        ])
+        db.commit()
+        campaign_id = db.query(AdCampaign).filter(
+            AdCampaign.tenant_id == tenant.id).one().id
+        ids = {"tenant_id": tenant.id, "product_id": product.id,
+               "campaign_id": campaign_id}
+    finally:
+        db.close()
+
+    try:
+        pricing = PricingAgent(ids["tenant_id"])
+        try:
+            quote = pricing.suggest_price(ids["product_id"])
+            repriced = pricing.reprice_batch()
+        finally:
+            pricing.close()
+        assert quote["suggested_price"] > 0
+        assert repriced["repriced"], "reprice_batch 应至少复价 1 个活跃商品"
+
+        ads = AdsAgent(ids["tenant_id"])
+        try:
+            report = ads.roi_report()
+            drafts = ads.draft_batch()
+            budget = ads.optimize_budget(ids["campaign_id"])
+        finally:
+            ads.close()
+        # ROI=(50-10)/10=4 > 2 → 加预算 30%：50 → 65。口径写死在这里是刻意的。
+        assert report["summary"]["total_spend"] == 10.0
+        assert report["campaigns"][0]["roi"] == 4.0
+        assert drafts["campaign_drafts"], "draft_batch 应从已发布 Listing 回退取商品"
+        assert budget["action"] == "加预算", budget
+
+        db = SessionLocal()
+        try:
+            actions = {r.action for r in db.query(AiLog)
+                       .filter(AiLog.tenant_id == ids["tenant_id"],
+                               AiLog.mode == "tool").all()}
+            pricing_rows = db.query(PricingRecord).filter(
+                PricingRecord.tenant_id == ids["tenant_id"]).count()
+            draft_rows = db.query(AdCampaign).filter(
+                AdCampaign.tenant_id == ids["tenant_id"],
+                AdCampaign.status == "draft").count()
+            budget_after = db.get(AdCampaign, ids["campaign_id"]).budget
+        finally:
+            db.close()
+        expected = {"tool:product.get_products", "tool:market.score_opportunity",
+                    "tool:finance.get_unit_economics", "tool:product.get_product_ids",
+                    "tool:listing.get_published_product_ids", "tool:finance.get_campaigns"}
+        assert expected <= actions, (
+            "pricing/ads 的读取没有全部走 Tool 层——§18.3 第 2 步的迁移被回退了？缺失：%s"
+            % sorted(expected - actions))
+        # 反向断言：三处写路径（定价记录 / 广告草稿 / 预算调整）必须仍然生效——它们
+        # 是第 3 步欠账，迁移期间不得被顺手删掉（删掉等于「点了没反应」）。
+        assert pricing_rows == 2, "suggest_price 与 reprice_batch 各应落 1 条定价记录"
+        assert draft_rows == 1 and budget_after == 65.0
+    finally:
+        db = SessionLocal()
+        try:
+            db.query(AiLog).filter(AiLog.tenant_id == ids["tenant_id"]).delete()
+            db.query(PricingRecord).filter(
+                PricingRecord.tenant_id == ids["tenant_id"]).delete()
+            db.query(AdCampaign).filter(
+                AdCampaign.tenant_id == ids["tenant_id"]).delete()
+            db.query(Listing).filter(Listing.tenant_id == ids["tenant_id"]).delete()
+            db.query(ProductScore).filter(
+                ProductScore.tenant_id == ids["tenant_id"]).delete()
+            db.query(Product).filter(Product.id == ids["product_id"]).delete()
             db.query(Tenant).filter(Tenant.id == ids["tenant_id"]).delete()
             db.commit()
         finally:

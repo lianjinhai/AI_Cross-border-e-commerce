@@ -39,6 +39,9 @@ class ListingTool(BaseTool):
     specs = (
         ToolSpec(tool="listing", method="get_listings", permission="listing:read",
                  writes=False, summary="列出本租户上架内容，可按 Listing/商品/状态过滤"),
+        ToolSpec(tool="listing", method="get_published_product_ids",
+                 permission="listing:read", writes=False,
+                 summary="已发布 Listing 的商品 id 去重清单"),
     )
 
     def _get_listings(self, listing_id=None, product_id=None, status: str = "",
@@ -63,3 +66,18 @@ class ListingTool(BaseTool):
         rows = query.order_by(Listing.id.desc()).limit(n).all()
         return reading([listing_dict(r) for r in rows], table="listings",
                        listing_ids=[r.id for r in rows])
+
+    def _get_published_product_ids(self, limit=200) -> Reading:
+        """已发布 Listing 对应的商品 id（去重）。
+
+        为什么单开方法而不是让调用方 `get_listings(status="published", limit=500)`
+        再在本地去重：批量补广告草稿只需要 id 清单；拉 Listing 全行会把内容体
+        （标题/描述/关键词）灌进 Agent 上下文与审计（§10.2 data_scope）。返回上限
+        200（按 product_id 升序），超出时批任务应分批处理而不是抬高上限（D44）。
+        """
+        n = clamp_limit(limit, default=200, maximum=200)
+        rows = (self.db.query(Listing.product_id)
+                .filter(Listing.tenant_id == self.context.tenant_id,
+                        Listing.status == "published")
+                .distinct().order_by(Listing.product_id).limit(n).all())
+        return reading([r[0] for r in rows], table="listings", count=len(rows))
