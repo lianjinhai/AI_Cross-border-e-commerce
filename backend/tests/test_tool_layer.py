@@ -85,9 +85,10 @@ def _doc_manifest() -> dict:
 def test_manifest_matches_architecture_doc():
     """注册表必须与 §10.4 + §10.4.1 冻结清单**逐条一致**（数量、权限、读写属性）。"""
     doc = _doc_manifest()
-    assert len(doc) == 27, "§10.4 + §10.4.1 应含 27 个方法，解析到 %d 个：%s" % (len(doc), sorted(doc))
+    assert len(doc) == 28, "§10.4 + §10.4.1 应含 28 个方法，解析到 %d 个：%s" % (len(doc), sorted(doc))
     assert "listing.get_listings" in doc, "§10.4.1 第二批表格未被解析到（区段边界写错？）"
     assert "conversation.get_conversations" in doc, "§10.4.1 的 Conversation Tool 未被解析到"
+    assert "compliance.get_review_decisions" in doc, "§10.4.1 的 Compliance Tool 补批未被解析到"
 
     got = registry.tool_specs()
     assert set(got) == set(doc), (
@@ -475,8 +476,9 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
         ("listing", "get_listings", {"limit": 5}),
         ("compliance", "check_listing", {"listing_id": listing_id}),
         ("conversation", "get_conversations", {"limit": 5}),
+        ("compliance", "get_review_decisions", {"limit": 5}),
     ]
-    assert len(calls) == 22, "真库覆盖清单应为 22 条，实际 %d" % len(calls)
+    assert len(calls) == 23, "真库覆盖清单应为 23 条，实际 %d" % len(calls)
     # 完整性（T-53）：除 memory.recall（Phase 6 未到，实现显式 NOT_IMPLEMENTED）外，
     # 冻结清单里的每个只读方法都必须在这里真跑一遍——否则第二批新增的方法会静默漏测。
     expected = {spec.key for spec in registry.tool_specs().values()
@@ -503,9 +505,9 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
                                              result.error["code"], result.error["detail"]))
     assert not failures, "只读方法在真实库上执行失败：\n  " + "\n  ".join(failures)
     # 反向断言：若哪天实现整体退化成「一律 NOT_FOUND」，上一条断言仍会全绿。
-    # 探针数据（商品/Listing/评分/合规报告/汇率）齐备时，22 个方法应全部走成功分支。
-    assert ok_count == 22, (
-        "只读方法成功 %d/22——是否有实现静默退化成 NOT_FOUND？" % ok_count)
+    # 探针数据（商品/Listing/评分/合规报告/汇率）齐备时，23 个方法应全部走成功分支。
+    assert ok_count == 23, (
+        "只读方法成功 %d/23——是否有实现静默退化成 NOT_FOUND？" % ok_count)
 
 
 def test_compliance_agent_reads_go_through_tool_layer(probe_tenant):
@@ -683,6 +685,108 @@ def test_listing_agent_reads_go_through_tool_layer(client):
             db.query(Listing).filter(Listing.id == ids["listing_id"]).delete()
             db.query(Product).filter(Product.id == ids["product_id"]).delete()
             db.query(Tenant).filter(Tenant.id == ids["tenant_id"]).delete()
+            db.commit()
+        finally:
+            db.close()
+
+
+def test_listing_review_agent_reads_go_through_tool_layer(client):
+    """判别力：listing_review 的 Listing/商品/规则/合规读取必须留下 `mode=tool` 审计。
+
+    自带探针租户（带图商品 + Listing + 低风险合规报告 + 当日版本规则包），夹具内建
+    内删（规范 T-2）：不依赖演示数据。参数 `client` 只为拉起会话级建库夹具（单跑本
+    用例也要有表结构）。规则包刻意用「当前日期版本 + 探针平台名」：内置规则包版本
+    会随日期推移触发 30 天新鲜度门禁（manual_required），把断言押在「今天恰好
+    approved」上等于埋定时炸弹（规范 §8 T-8）。
+    """
+    from datetime import datetime
+
+    from app.agents.listing_review import ListingReviewAgent
+    from app.db import SessionLocal
+    from app.models import (
+        AiLog,
+        ComplianceReport,
+        Listing,
+        ListingReviewDecision,
+        PlatformRulePack,
+        Product,
+        Tenant,
+    )
+
+    platform = "probe_review"
+    db = SessionLocal()
+    try:
+        tenant = Tenant(name="ToolLayer复核探针租户")
+        db.add(tenant)
+        db.commit()
+        product = Product(tenant_id=tenant.id, sku="TOOL-REVIEW-1",
+                          title="Tool Layer 复核探针商品", category="家居",
+                          images=["https://cdn.example.com/probe.jpg"])
+        db.add(product)
+        db.commit()
+        listing = Listing(tenant_id=tenant.id, product_id=product.id, platform=platform,
+                          language="en", title="Tool Layer 复核探针 Listing",
+                          description="probe listing", bullets=["bullet"],
+                          keywords=["probe"], status="draft")
+        db.add(listing)
+        db.commit()
+        db.add_all([
+            ComplianceReport(tenant_id=tenant.id, target_type="listing",
+                             listing_id=listing.id, risk_level="low", score=90),
+            PlatformRulePack(platform=platform,
+                             version=datetime.utcnow().strftime("%Y-%m-%d"),
+                             rules={"title_max": 200, "desc_max": 3000, "image_min": 1,
+                                    "banned_words": [], "banned_categories": []},
+                             source_url="https://example.com/probe-rules"),
+        ])
+        db.commit()
+        ids = {"tenant_id": tenant.id, "product_id": product.id, "listing_id": listing.id}
+    finally:
+        db.close()
+
+    try:
+        agent = ListingReviewAgent(ids["tenant_id"])
+        try:
+            result = agent.review(ids["listing_id"])
+        finally:
+            agent.close()
+        # 规则源齐备（origin=db、来源 URL、当日版本）、低风险报告、无违规 →
+        # 必须走 approved 成功分支；manual_required 说明规则源判读被改坏。
+        assert result["decision"] == "approved", result["reasons"]
+
+        db = SessionLocal()
+        try:
+            actions = {r.action for r in db.query(AiLog)
+                       .filter(AiLog.tenant_id == ids["tenant_id"],
+                               AiLog.mode == "tool").all()}
+            rows = db.query(ListingReviewDecision).filter(
+                ListingReviewDecision.tenant_id == ids["tenant_id"]).all()
+            decision_rows = [(r.listing_id, r.decision, bool(r.human_override))
+                             for r in rows]
+        finally:
+            db.close()
+        expected = {"tool:listing.get_listings", "tool:product.get_products",
+                    "tool:compliance.get_platform_rules", "tool:compliance.check_listing",
+                    "tool:compliance.get_review_decisions"}
+        assert expected <= actions, (
+            "listing_review 的读取没有全部走 Tool 层——§18.3 第 2 步的迁移被回退了？缺失：%s"
+            % sorted(expected - actions))
+        # 反向断言：写路径（复核结论落库）必须仍然生效——它是第 3 步欠账，
+        # 迁移期间不得被顺手删掉（删掉等于「复核点了没反应」）。
+        assert decision_rows == [(ids["listing_id"], "approved", False)], decision_rows
+    finally:
+        db = SessionLocal()
+        try:
+            db.query(AiLog).filter(AiLog.tenant_id == ids["tenant_id"]).delete()
+            db.query(ListingReviewDecision).filter(
+                ListingReviewDecision.tenant_id == ids["tenant_id"]).delete()
+            db.query(ComplianceReport).filter(
+                ComplianceReport.tenant_id == ids["tenant_id"]).delete()
+            db.query(Listing).filter(Listing.id == ids["listing_id"]).delete()
+            db.query(Product).filter(Product.id == ids["product_id"]).delete()
+            db.query(Tenant).filter(Tenant.id == ids["tenant_id"]).delete()
+            db.query(PlatformRulePack).filter(
+                PlatformRulePack.platform == platform).delete()
             db.commit()
         finally:
             db.close()

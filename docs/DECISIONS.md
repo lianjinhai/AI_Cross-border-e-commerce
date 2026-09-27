@@ -2620,3 +2620,60 @@ D38（第二批清单启动）、`docs/子代理实施索引-20260923.md` 第二
 
 **关联**：架构 §10.4.1 / §18.3.1、规范 §11 DEBT-36、D40（字段级核心拆分）、
 `docs/子代理实施索引-20260923.md` 第三十一轮。
+
+---
+
+## D42：ListingReviewDecision Tool 补批 + listing_review.py 迁移 —— Agent 侧迁移第五例（2026-09-27）
+
+**背景**：§18.3 第 2 步继续推进。`listing_review.py` 的 5 个直连读取点里，复核结论
+（`ListingReviewDecision`）没有 Tool 归属——它是 DEBT-36 七类目标里最后一个「合规
+记忆」表。先补批（§10.4.1「只增不改」），再迁移。
+
+### 一、交付物
+
+| 文件 | 变更 | 职责 |
+|---|---|---|
+| `backend/app/tools/compliance.py` | +1 方法 | `get_review_decisions()`：复核结论读取（listing_id / product_id / platform / decision / human_override / limit），`decision` 枚举校验（BAD_PARAM）、`human_override` 三形态收口（bool / "true" / "1"），排序 `id desc` 与 `check_listing` 同口径 |
+| `backend/app/agents/listing_review.py` | 迁移（3, 2 → 0, 0） | 5 处直连读取全部改走 Tool（Listing / Product / 规则包 / 合规报告 / 复核结论）；1 处写路径（复核结论落库）保留并标注；规则判定继续用 `validate_listing_fields`（T-53，D40 起） |
+| `backend/tests/test_agent_layer_boundaries.py` | 基线 | `listing_review.py` (3, 2) → **(0, 0)**；棘轮之和 41 → **36** |
+| `backend/tests/test_tool_layer.py` | +1 条 + 覆盖清单 | listing_review 迁移判别力（5 个 `tool:*` 审计 action + 写路径反向断言）；真库覆盖 22 → 23 条；冻结清单硬计数 27 → 28 |
+| 文档 | 同步 | §10.4.1 一行、§18.3.1（5/9 文件、之和 36）、DEBT-36、D42 索引 |
+
+### 二、四个关键决策
+
+| # | 决策 | 备选与被否原因 |
+|---|---|---|
+| 1 | **`decision` 过滤在 Tool 层做枚举校验（BAD_PARAM）** | 调用方传脏值时应立刻失败，而不是静默返回空集——空集与「确实没有该结论」不可区分（与 T-7 同类：静默退化会掩盖实现缺陷） |
+| 2 | **排序用 `id desc` 而不是 `created_at desc`** | 同一秒内多行的 `created_at` 完全并列，次序不稳定；与 `check_listing` 取最新的口径逐字一致（T-53：同一语义只留一份） |
+| 3 | **「人工覆盖」用 `human_override=True` 过滤，而不是取最新结论再判 reviewer** | 旧实现等价于「取最新一条人工批准」；直接过滤布尔列把语义写进查询，三形态输入由 Tool 统一收口 |
+| 4 | **`check_updates()` 保留 services 直连（不迁移）** | 它只在 `ERP_RULES_URL` 配置时触发，写的是平台级规则包（`tenant_id=NULL`，不含租户数据），属 services 既有能力；本步迁移范围是 Agent 的**租户数据读取**。在此登记，避免审计时被当成漏迁 |
+
+### 三、判别力验证（实测）
+
+| 验证 | 变异 | 结果 |
+|---|---|---|
+| listing_review 迁移可判别 | `_listing` 改回 `self.db.get(Listing, ...)` | ✅ 两道门禁同时命中：棘轮「1 > 基线 0」+ 审计断言「缺 `tool:listing.get_listings`」；还原后 sha256 字节一致 |
+| 写路径未被顺手删 | —— | 用例内断言 `ListingReviewDecision` 落库恰 1 行、结论为 approved |
+| 冻结清单数量 | —— | `len(doc) == 27` → **28**、真库覆盖 22 → **23**（两处硬计数同步，防止补批漏改文档） |
+
+### 四、验证结果
+
+| 验证 | 结果 |
+|---|---|
+| 后端回归（正序 / 反序） | ✅ **403 passed**（正反序一致） |
+| `ruff check app/ tests/ scripts/` | ✅ 全绿 |
+| 文档校验 | ✅ A~K 全 PASS（10 项，编号无 J） |
+| 主库 | 未触碰（本轮无迁移文件；E2E 隔离性校验前后 sha256 一致） |
+
+### 五、剩余工作（诚实记录）
+
+- DEBT-36 仍未关闭：`AdCampaign` / `OpportunitySupplierMatch` / `SupplierCatalogProduct` /
+  `ForecastSnapshot` 四类仍无 Tool 归属；
+- `platform_rules.validate_against_rules` 的 ORM 适配器仍被 `services/adapters/base.py`
+  使用（Agent 调用点已清零，D40 起）——适配器应随最后一个调用方迁移后删除；
+- 棘轮之和 41 → **36**（其中 3 处为写路径），剩余 **33** 处读取点待迁；
+- 下一个迁移目标：`pricing.py`（需先补 `AdCampaign` 清单项）或 `orchestrator.py`
+  （6 处 `func.count`/`sum`，需先补统计类方法）或 `discovery.py`（11 + 4）。
+
+**关联**：架构 §10.4.1 / §18.3.1、规范 §11 DEBT-36、D40（字段级核心拆分，本 Agent 复用）、
+`docs/子代理实施索引-20260923.md` 第三十二轮。
