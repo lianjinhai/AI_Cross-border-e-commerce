@@ -2677,3 +2677,62 @@ D38（第二批清单启动）、`docs/子代理实施索引-20260923.md` 第二
 
 **关联**：架构 §10.4.1 / §18.3.1、规范 §11 DEBT-36、D40（字段级核心拆分，本 Agent 复用）、
 `docs/子代理实施索引-20260923.md` 第三十二轮。
+
+---
+
+## D43：Supply Tool 补批（目录/预测）+ factory_opportunity.py 迁移 —— Agent 侧迁移第六例（2026-09-27）
+
+**背景**：§18.3 第 2 步继续推进。`factory_opportunity.py` 的 5 个直连读取点里，
+私域工厂目录（`SupplierCatalogProduct` + `Supplier` 联表）与销量预测快照
+（`ForecastSnapshot`）没有 Tool 归属——两者合计覆盖 DEBT-36 七类目标中的三类。
+二者同属 supply 域，补进 **Supply Tool**（`supply:read` 已有，不需新权限、不需
+迁移），再迁移。
+
+### 一、交付物
+
+| 文件 | 变更 | 职责 |
+|---|---|---|
+| `backend/app/tools/supply.py` | +2 方法 | `get_catalog_products(supplier_id / status / limit)`：目录商品 + 供应商摘要（双层租户过滤，上限 200）；`get_forecast_snapshot(product_id)`：最近一次预测快照（`id desc`，只给门禁需要的字段，不含特征/候选模型大 JSON） |
+| `backend/app/agents/factory_opportunity.py` | 迁移（4, 1 → 2, 0） | 3 处纯读取改走 Tool（目录 / 商品 / 预测）；2 处写路径（匹配快照 / 报价 upsert 前的行查找）保留并标注 |
+| `backend/tests/test_agent_layer_boundaries.py` | 基线 | `factory_opportunity.py` (4, 1) → **(2, 0)**；棘轮之和 36 → **33** |
+| `backend/tests/test_tool_layer.py` | +1 条 + 覆盖清单 + 夹具 | factory_opportunity 迁移判别力（3 个 `tool:*` 审计 action + 两处写路径反向断言）；真库覆盖 23 → 25 条（探针夹具补预测快照）；冻结清单硬计数 28 → 30 |
+| 文档 | 同步 | §10.4.1 两行 + 补批说明、§18.3.1（6/9 文件、之和 33）、DEBT-36、D43 索引 |
+
+### 二、四个关键决策
+
+| # | 决策 | 备选与被否原因 |
+|---|---|---|
+| 1 | **目录商品返回上限 200 条（`id` 倒序）** | 目录是工厂自维护长表，全量进上下文违 §10.2；与 D41 报价候选上限 200 同款边界——真实超出时应继续下推筛选，而不是抬高上限 |
+| 2 | **时间字段沿用 `ts()` 字符串，Agent 侧解析（`_parse_ts`）** | Tool 层时间口径必须唯一（前端 / Agent 共用一种格式）；若 Tool 直接返回 datetime 就产生第二套口径。解析失败按「不新鲜」处理，fail-closed |
+| 3 | **预测快照排序用 `id desc`** | 与 D42 复核结论同款：同批写入的 `created_at` 秒级并列，`id` 才是唯一单调次序 |
+| 4 | **两处写路径保留 `query` 行查找（基线 (2, 0)）** | 匹配快照 / 报价 upsert 需要 ORM 行对象；§9.1 要求写操作走 Action（第 3 步），本步只迁移纯读取，写路径集中标注并配反向断言（两表必须真的落库） |
+
+### 三、判别力验证（实测）
+
+| 验证 | 变异 | 结果 |
+|---|---|---|
+| factory_opportunity 迁移可判别 | `_catalogs` 改回 `self.db.query(SupplierCatalogProduct, Supplier)` 联表 | ✅ 两道门禁同时命中：棘轮「3 > 基线 2」+ 审计断言「缺 `tool:supply.get_catalog_products`」；还原后 sha256 字节一致 |
+| 写路径未被顺手删 | —— | 用例内断言 `OpportunitySupplierMatch` / `SupplierOffer` 各落 1 行 |
+| 冻结清单数量 | —— | `len(doc) == 28` → **30**、真库覆盖 23 → **25**（两处硬计数同步，防止补批漏改文档） |
+
+### 四、验证结果
+
+| 验证 | 结果 |
+|---|---|
+| 后端回归（正序 / 反序） | ✅ **404 passed**（正反序一致） |
+| `ruff check app/ tests/ scripts/` | ✅ 全绿 |
+| 文档校验 | ✅ A~K 全 PASS（10 项，编号无 J） |
+| 主库 | 未触碰（本轮无迁移文件；E2E 隔离性校验前后 sha256 一致） |
+
+### 五、剩余工作（诚实记录）
+
+- DEBT-36 只差最后一类：`AdCampaign`（需新 Tool，或补进既有 Tool 的清单项）；
+- `platform_rules.validate_against_rules` 的 ORM 适配器仍被 `services/adapters/base.py`
+  使用（Agent 调用点已清零）；
+- 棘轮之和 36 → **33**（其中 5 处为写路径），剩余 **28** 处读取点待迁；
+- 下一个迁移目标：`orchestrator.py`（6 处 `func.count`/`sum` 聚合，含 `AdCampaign`
+  求和，需先解决 AdCampaign 归属）或 `pricing.py`（4 + 3，同样卡在 AdCampaign）
+  或 `discovery.py`（11 + 4）。
+
+**关联**：架构 §10.4.1 / §18.3.1、规范 §11 DEBT-36、D42（`id desc` 口径同源）、
+`docs/子代理实施索引-20260923.md` 第三十三轮。

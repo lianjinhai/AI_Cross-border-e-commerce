@@ -11,9 +11,9 @@ from __future__ import annotations
 
 from sqlalchemy import func
 
-from ..models import Supplier, SupplierOffer
+from ..models import ForecastSnapshot, Supplier, SupplierCatalogProduct, SupplierOffer
 from .base import BaseTool, Reading, as_int, clamp_limit, reading, ts
-from .contract import ToolSpec
+from .contract import ERR_NOT_FOUND, ToolError, ToolSpec
 
 
 def supplier_dict(s: Supplier) -> dict:
@@ -32,6 +32,35 @@ def offer_dict(o: SupplierOffer) -> dict:
             "price": o.price, "currency": o.currency, "moq": o.moq,
             "ship_days": o.ship_days, "in_stock": o.in_stock,
             "created_at": ts(o.created_at)}
+
+
+def catalog_product_dict(c: SupplierCatalogProduct, supplier: Supplier) -> dict:
+    """私域工厂目录商品 + 所属供应商摘要（供匹配打分读取）。
+
+    供应商只带打分需要的字段（id/名称/地区/尽调状态/能力），不带联系方式等档案
+    字段——Tool 返回体只给调用方需要的部分（§10.2 data_scope）。
+    """
+    return {"id": c.id, "supplier_id": c.supplier_id, "factory_sku": c.factory_sku,
+            "title": c.title, "category": c.category,
+            "capabilities": c.capabilities or [], "images": c.images or [],
+            "unit_price": float(c.unit_price or 0), "currency": c.currency,
+            "moq": c.moq, "lead_days": c.lead_days,
+            "monthly_capacity": c.monthly_capacity, "available_qty": c.available_qty,
+            "status": c.status, "confirmed_at": ts(c.confirmed_at),
+            "supplier": {"id": supplier.id, "name": supplier.name,
+                         "region": supplier.region,
+                         "verification_status": supplier.verification_status,
+                         "capabilities": supplier.capabilities or []}}
+
+
+def forecast_snapshot_dict(f: ForecastSnapshot) -> dict:
+    """预测快照摘要：只给门禁与营收推算需要的字段（不含特征/候选模型等大 JSON）。"""
+    return {"id": f.id, "product_id": f.product_id, "version": f.version,
+            "training_cutoff": ts(f.training_cutoff),
+            "selected_model": f.selected_model,
+            "point_forecast": f.point_forecast, "lower_bound": f.lower_bound,
+            "upper_bound": f.upper_bound, "wape": f.wape, "bias": f.bias,
+            "confidence": f.confidence, "created_at": ts(f.created_at)}
 
 
 def _as_id_list(value) -> list[int]:
@@ -58,6 +87,10 @@ class SupplyTool(BaseTool):
                  writes=False, summary="读取供应商报价，可按供应商或商品过滤"),
         ToolSpec(tool="supply", method="get_offer_stats", permission="supply:read",
                  writes=False, summary="报价聚合（条数/均价/最低/最高），可按供应商过滤"),
+        ToolSpec(tool="supply", method="get_catalog_products", permission="supply:read",
+                 writes=False, summary="读取私域工厂目录商品（含供应商摘要）"),
+        ToolSpec(tool="supply", method="get_forecast_snapshot", permission="supply:read",
+                 writes=False, summary="读取商品最近一次销量预测快照"),
         ToolSpec(tool="supply", method="create_purchase_order", permission="purchase:write",
                  writes=True, summary="创建采购单（须经 Action System）"),
     )
@@ -124,3 +157,43 @@ class SupplyTool(BaseTool):
         return reading({"count": int(count or 0), "avg_price": money(avg_price),
                         "min_price": money(min_price), "max_price": money(max_price)},
                        table="supplier_offers", supplier_id=sid)
+
+    def _get_catalog_products(self, supplier_id=None, status: str = "active",
+                              limit=200) -> Reading:
+        """私域工厂目录读取：与 `get_supplier_offers` 同款双层租户过滤（见模块 docstring）。
+
+        返回上限 200 条（按 id 倒序，最新在前）：目录是工厂自维护的长表，全量进
+        Agent 上下文违 §10.2；若真实出现 >200 条，正确解法是继续下推筛选条件，
+        而不是抬高上限（与 D41 报价候选上限 200 同款边界，见 D43）。
+        """
+        n = clamp_limit(limit, default=200, maximum=200)
+        sid = None if supplier_id in (None, "") else as_int(supplier_id, "supplier_id")
+        state = (status or "").strip()
+        query = (self.db.query(SupplierCatalogProduct, Supplier)
+                 .join(Supplier, Supplier.id == SupplierCatalogProduct.supplier_id)
+                 .filter(SupplierCatalogProduct.tenant_id == self.context.tenant_id,
+                         Supplier.tenant_id == self.context.tenant_id))
+        if sid is not None:
+            query = query.filter(SupplierCatalogProduct.supplier_id == sid)
+        if state:
+            query = query.filter(SupplierCatalogProduct.status == state)
+        rows = query.order_by(SupplierCatalogProduct.id.desc()).limit(n).all()
+        return reading([catalog_product_dict(c, s) for c, s in rows],
+                       table="supplier_catalog_products",
+                       catalog_product_ids=[c.id for c, _ in rows])
+
+    def _get_forecast_snapshot(self, product_id) -> Reading:
+        """商品最近一次预测快照。
+
+        为什么排序用 `id` 而不是 `created_at`：同一批训练的多个版本时间戳可能相同
+        （秒级精度），`id` 才是唯一单调的次序（与 D42 复核结论同款口径）。
+        """
+        pid = as_int(product_id, "product_id")
+        row = (self.db.query(ForecastSnapshot)
+               .filter(ForecastSnapshot.tenant_id == self.context.tenant_id,
+                       ForecastSnapshot.product_id == pid)
+               .order_by(ForecastSnapshot.id.desc()).first())
+        if row is None:
+            raise ToolError(ERR_NOT_FOUND, "商品 %s 尚无销量预测快照" % pid)
+        return reading(forecast_snapshot_dict(row), table="forecast_snapshots",
+                       forecast_id=row.id, product_id=pid)

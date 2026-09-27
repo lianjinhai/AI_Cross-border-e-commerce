@@ -85,10 +85,12 @@ def _doc_manifest() -> dict:
 def test_manifest_matches_architecture_doc():
     """注册表必须与 §10.4 + §10.4.1 冻结清单**逐条一致**（数量、权限、读写属性）。"""
     doc = _doc_manifest()
-    assert len(doc) == 28, "§10.4 + §10.4.1 应含 28 个方法，解析到 %d 个：%s" % (len(doc), sorted(doc))
+    assert len(doc) == 30, "§10.4 + §10.4.1 应含 30 个方法，解析到 %d 个：%s" % (len(doc), sorted(doc))
     assert "listing.get_listings" in doc, "§10.4.1 第二批表格未被解析到（区段边界写错？）"
     assert "conversation.get_conversations" in doc, "§10.4.1 的 Conversation Tool 未被解析到"
     assert "compliance.get_review_decisions" in doc, "§10.4.1 的 Compliance Tool 补批未被解析到"
+    assert "supply.get_catalog_products" in doc, "§10.4.1 的 Supply Tool 目录补批未被解析到"
+    assert "supply.get_forecast_snapshot" in doc, "§10.4.1 的 Supply Tool 预测补批未被解析到"
 
     got = registry.tool_specs()
     assert set(got) == set(doc), (
@@ -386,6 +388,7 @@ def probe_tenant(client):
         AiLog,
         ComplianceReport,
         ExchangeRate,
+        ForecastSnapshot,
         Listing,
         Product,
         ProductScore,
@@ -415,6 +418,11 @@ def probe_tenant(client):
         db.add(ExchangeRate(tenant_id=tenant.id, base_currency="USD",
                             quote_currency="CNY", rate=7.12,
                             effective_at=datetime.utcnow() - timedelta(days=1)))
+        db.add(ForecastSnapshot(tenant_id=tenant.id, product_id=product.id,
+                                version="probe-1",
+                                training_cutoff=datetime.utcnow() - timedelta(days=1),
+                                selected_model="probe", point_forecast=12.0,
+                                confidence="high"))
         db.commit()
         ids = {"tenant_id": tenant.id, "product_id": product.id,
                "listing_id": listing.id}
@@ -431,6 +439,8 @@ def probe_tenant(client):
             ComplianceReport.tenant_id == ids["tenant_id"]).delete()
         db.query(ExchangeRate).filter(
             ExchangeRate.tenant_id == ids["tenant_id"]).delete()
+        db.query(ForecastSnapshot).filter(
+            ForecastSnapshot.tenant_id == ids["tenant_id"]).delete()
         db.query(Listing).filter(Listing.id == ids["listing_id"]).delete()
         db.query(Product).filter(Product.id == ids["product_id"]).delete()
         db.query(Tenant).filter(Tenant.id == ids["tenant_id"]).delete()
@@ -444,8 +454,9 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
 
     判定口径：`ok=True`，或**预期内**的数据缺失（NOT_FOUND）。
     INTERNAL / BAD_PARAM 一律算失败——它们意味着实现有缺陷，而不是数据不存在。
-    探针夹具刻意把评分/合规报告/汇率都造齐，使 `score_opportunity`、
-    `check_product`、`get_fx_rate` 走的是成功分支而不是 NOT_FOUND 分支。
+    探针夹具刻意把评分/合规报告/汇率/预测快照都造齐，使 `score_opportunity`、
+    `check_product`、`get_fx_rate`、`get_forecast_snapshot` 走的是成功分支而不是
+    NOT_FOUND 分支。
     """
     from app.db import SessionLocal
 
@@ -462,6 +473,8 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
         ("supply", "search_suppliers", {"limit": 5}),
         ("supply", "get_supplier_offers", {"limit": 5}),
         ("supply", "get_offer_stats", {}),
+        ("supply", "get_catalog_products", {"limit": 5}),
+        ("supply", "get_forecast_snapshot", {"product_id": product_id}),
         ("compliance", "get_platform_rules", {}),
         ("compliance", "check_product", {"product_id": product_id}),
         ("order", "get_orders", {"limit": 5}),
@@ -478,7 +491,7 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
         ("conversation", "get_conversations", {"limit": 5}),
         ("compliance", "get_review_decisions", {"limit": 5}),
     ]
-    assert len(calls) == 23, "真库覆盖清单应为 23 条，实际 %d" % len(calls)
+    assert len(calls) == 25, "真库覆盖清单应为 25 条，实际 %d" % len(calls)
     # 完整性（T-53）：除 memory.recall（Phase 6 未到，实现显式 NOT_IMPLEMENTED）外，
     # 冻结清单里的每个只读方法都必须在这里真跑一遍——否则第二批新增的方法会静默漏测。
     expected = {spec.key for spec in registry.tool_specs().values()
@@ -505,9 +518,10 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
                                              result.error["code"], result.error["detail"]))
     assert not failures, "只读方法在真实库上执行失败：\n  " + "\n  ".join(failures)
     # 反向断言：若哪天实现整体退化成「一律 NOT_FOUND」，上一条断言仍会全绿。
-    # 探针数据（商品/Listing/评分/合规报告/汇率）齐备时，23 个方法应全部走成功分支。
-    assert ok_count == 23, (
-        "只读方法成功 %d/23——是否有实现静默退化成 NOT_FOUND？" % ok_count)
+    # 探针数据（商品/Listing/评分/合规报告/汇率/预测快照）齐备时，25 个方法应全部
+    # 走成功分支。
+    assert ok_count == 25, (
+        "只读方法成功 %d/25——是否有实现静默退化成 NOT_FOUND？" % ok_count)
 
 
 def test_compliance_agent_reads_go_through_tool_layer(probe_tenant):
@@ -950,6 +964,110 @@ def test_supplier_agent_reads_go_through_tool_layer(client):
             db.query(Order).filter(Order.tenant_id == ids["tenant_id"]).delete()
             db.query(Supplier).filter(Supplier.tenant_id == ids["tenant_id"]).delete()
             db.query(Product).filter(Product.id == ids["product_id"]).delete()
+            db.query(Tenant).filter(Tenant.id == ids["tenant_id"]).delete()
+            db.commit()
+        finally:
+            db.close()
+
+
+def test_factory_opportunity_agent_reads_go_through_tool_layer(client):
+    """判别力：factory_opportunity 的私域目录/商品/预测读取必须留下 `mode=tool` 审计。
+
+    自带探针租户（商品 + 已尽调供应商 + 活跃目录商品 + 高可信预测快照），夹具内建
+    内删（规范 T-2）。参数 `client` 只为拉起会话级建库夹具（单跑本用例也要有表）。
+    """
+    from datetime import datetime, timedelta
+
+    from app.agents.factory_opportunity import FactoryOpportunityAgent
+    from app.db import SessionLocal
+    from app.models import (
+        AiLog,
+        ForecastSnapshot,
+        OpportunitySupplierMatch,
+        Product,
+        Supplier,
+        SupplierCatalogProduct,
+        SupplierOffer,
+        Tenant,
+    )
+
+    db = SessionLocal()
+    try:
+        tenant = Tenant(name="ToolLayer工厂机会探针租户")
+        db.add(tenant)
+        db.commit()
+        product = Product(tenant_id=tenant.id, sku="TOOL-FACTORY-1",
+                          title="Tool Layer 工厂机会探针商品", category="家居",
+                          attrs={"sale_price": 29.9, "material": "cotton"})
+        db.add(product)
+        db.commit()
+        supplier = Supplier(tenant_id=tenant.id, name="探针私域工厂",
+                            verification_status="verified",
+                            capabilities=["cotton", "家居"])
+        db.add(supplier)
+        db.commit()
+        catalog = SupplierCatalogProduct(
+            tenant_id=tenant.id, supplier_id=supplier.id, factory_sku="F-1",
+            title="Tool Layer 工厂机会探针商品", category="家居",
+            capabilities=["cotton", "家居"], images=["https://cdn.example.com/f.jpg"],
+            unit_price=30.0, currency="CNY", moq=10, lead_days=5,
+            monthly_capacity=1000, available_qty=500, status="active",
+            confirmed_at=datetime.utcnow() - timedelta(days=1))
+        db.add(catalog)
+        db.commit()
+        db.add(ForecastSnapshot(tenant_id=tenant.id, product_id=product.id,
+                                version="probe-1",
+                                training_cutoff=datetime.utcnow() - timedelta(days=1),
+                                selected_model="probe", point_forecast=50.0,
+                                confidence="high"))
+        db.commit()
+        ids = {"tenant_id": tenant.id, "product_id": product.id,
+               "supplier_id": supplier.id, "catalog_id": catalog.id}
+    finally:
+        db.close()
+
+    try:
+        agent = FactoryOpportunityAgent(ids["tenant_id"])
+        try:
+            result = agent.scan_private_supply_batch({"product_ids": [ids["product_id"]]})
+        finally:
+            agent.close()
+        assert len(result["candidates"]) == 1, result
+        assert result["candidates"][0]["score"] > 0
+
+        db = SessionLocal()
+        try:
+            actions = {r.action for r in db.query(AiLog)
+                       .filter(AiLog.tenant_id == ids["tenant_id"],
+                               AiLog.mode == "tool").all()}
+            match_rows = db.query(OpportunitySupplierMatch).filter(
+                OpportunitySupplierMatch.tenant_id == ids["tenant_id"]).count()
+            offer_rows = db.query(SupplierOffer).filter(
+                SupplierOffer.tenant_id == ids["tenant_id"]).count()
+        finally:
+            db.close()
+        expected = {"tool:supply.get_catalog_products", "tool:product.get_products",
+                    "tool:supply.get_forecast_snapshot"}
+        assert expected <= actions, (
+            "factory_opportunity 的读取没有全部走 Tool 层——§18.3 第 2 步的迁移被回退了？缺失：%s"
+            % sorted(expected - actions))
+        # 反向断言：两处写路径（匹配快照 / 报价 upsert）必须仍然生效——它们是
+        # 第 3 步欠账，迁移期间不得被顺手删掉（删掉等于「扫描点了没反应」）。
+        assert match_rows == 1 and offer_rows == 1
+    finally:
+        db = SessionLocal()
+        try:
+            db.query(AiLog).filter(AiLog.tenant_id == ids["tenant_id"]).delete()
+            db.query(OpportunitySupplierMatch).filter(
+                OpportunitySupplierMatch.tenant_id == ids["tenant_id"]).delete()
+            db.query(SupplierOffer).filter(
+                SupplierOffer.tenant_id == ids["tenant_id"]).delete()
+            db.query(ForecastSnapshot).filter(
+                ForecastSnapshot.tenant_id == ids["tenant_id"]).delete()
+            db.query(SupplierCatalogProduct).filter(
+                SupplierCatalogProduct.tenant_id == ids["tenant_id"]).delete()
+            db.query(Product).filter(Product.id == ids["product_id"]).delete()
+            db.query(Supplier).filter(Supplier.id == ids["supplier_id"]).delete()
             db.query(Tenant).filter(Tenant.id == ids["tenant_id"]).delete()
             db.commit()
         finally:
