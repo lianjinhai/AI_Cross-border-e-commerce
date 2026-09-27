@@ -16,6 +16,7 @@ from __future__ import annotations
 from .base import BaseTool
 from .compliance import ComplianceTool
 from .contract import ToolSpec
+from .conversation import ConversationTool
 from .finance import FinanceTool
 from .knowledge import KnowledgeTool
 from .listing import ListingTool
@@ -31,7 +32,8 @@ from .supply import SupplyTool
 TOOLS: dict[str, type[BaseTool]] = {
     cls.name: cls for cls in (ProductTool, StoreTool, OrderTool, SupplyTool,
                               FinanceTool, MarketTool, ComplianceTool,
-                              MemoryTool, KnowledgeTool, ListingTool)
+                              MemoryTool, KnowledgeTool, ListingTool,
+                              ConversationTool)
 }
 
 

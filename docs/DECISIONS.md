@@ -2438,3 +2438,63 @@ D35（第 1 步）、D36（K 项门禁）、`docs/子代理实施索引-20260923
 
 **关联**：架构 §10.4.1 / §18.3.1、规范 §11 **DEBT-36**、D37（Tool 基础设施）、
 `docs/子代理实施索引-20260923.md` 第二十八轮。
+
+---
+
+## D39：Conversation Tool 与 support:read 权限 —— Agent 侧迁移第二例（2026-09-27）
+
+**背景**：§18.3 第 2 步继续推进，下一个迁移目标是 `support.py`（4 处直连读取）。
+它的读取目标之一是 `Conversation`——DEBT-36 列的七类目标之一，而 Phase 1 权限目录
+（`docs/phase1_interfaces.md` §4）里**没有会话域的权限 key**。因此本轮同时做两件事：
+补 Conversation Tool + 补 `support:read`。
+
+### 一、交付物
+
+| 文件 | 变更 | 职责 |
+|---|---|---|
+| `backend/migrations/versions/20260927_17_support_read_permission.py` | 新增 | 把 `support:read` 写入 `permissions` 目录 + `role_permissions` 映射（OWNER / OPERATOR / READ_ONLY）；含 `downgrade()`、幂等 |
+| `backend/app/services/workspace_context.py` | +1 key | `_READ_PERMISSIONS` 增 `support:read`（代码常量与表必须一致，否则表胜出） |
+| `docs/phase1_interfaces.md` | §4 +1 行 | 冻结目录「只增不改」补 `support:read` |
+| `backend/app/tools/conversation.py` | 新增 60 行 | §10.4.1 第二批清单第二项：`ConversationTool.get_conversations()`，只读；字段口径**不含 buyer_name** |
+| `backend/app/tools/order.py` | +3 | `get_orders` 增加 `order_id` 参数（按 id 精确查） |
+| `backend/app/agents/support.py` | 迁移 | 3 处读取改走 Tool（Conversation / Order / Product）+ 知识检索走 Knowledge Tool；写路径 `_touch_conversation` 集中一处 |
+| `backend/tests/test_tool_layer.py` | +2 条 | PII 字段口径断言 + support 迁移判别力（审计行证明） |
+| `backend/tests/test_workspace_context.py`、`test_workspace_dual_read.py` | 同步 | 只读角色期望集合 + 迁移夹具补 Revision 17 |
+
+### 二、四个关键决策
+
+| # | 决策 | 备选与被否原因 |
+|---|---|---|
+| 1 | **只加 `support:read`，不加写 key** | 会话写入仍走业务 API；Agent 侧写操作必须经 Action 层（§9.1），现在加写 key 是无消费方的投机 |
+| 2 | **Conversation Tool 的字段口径排除 `buyer_name`** | Tool 返回值会被审计落库（`tools/audit.py` 记录结果载荷）；审计层只能按模式脱敏，认不出人名——PII 必须在字段口径处就排除（与 `order_dict` 同款纪律） |
+| 3 | **不返回消息正文** | 消息正文是 PII 高发区；其唯一消费方已通过 `knowledge_learning.latest_question_text` 取数，那条路径的查询口径必须与候选回填一致（T-53），不能在这里写第二份 |
+| 4 | **权限 key 必须走迁移** | 权限读取优先走表，表与常量漂移时**表胜出**——只改常量线上不生效（Revision 15 已固化的教训） |
+
+### 三、判别力验证（实测）
+
+| 验证 | 变异 | 结果 |
+|---|---|---|
+| support 迁移可判别 | 会话读取改回 `self.db.get(Conversation, ...)` | ✅ 两道门禁同时命中：棘轮「2 > 基线 1」+ 审计断言「缺 `tool:conversation.get_conversations`」；还原后 42 passed |
+| PII 字段口径 | —— | `conversation_dict` 断言 `buyer_name` 不在返回体；反向断言 `order_id` / `product_id` 保留 |
+| 迁移幂等与回滚 | 主库 upgrade（冷备后） | ✅ `[Revision 17] permissions 新增 support:read` + 3 条角色映射；`migration_preflight` P0_fail=0 |
+
+### 四、验证结果
+
+| 验证 | 结果 |
+|---|---|
+| 后端回归（正序 / 反序） | ✅ **399 passed**（正反序一致） |
+| `ruff check app/ tests/ scripts/` | ✅ 全绿 |
+| 文档校验 | ✅ A~K 全 PASS（10 项，编号无 J） |
+| 主库迁移 | ✅ 冷备 `backups/erp-20260927-101115.db`（sha256 `a5664e75…`）→ `alembic upgrade head` → preflight P0_fail=0 |
+| 基线 | `docs/baseline.json`：后端 397 → **399**，前端 72 不变 |
+
+### 五、剩余工作（诚实记录）
+
+- DEBT-36 未关闭：第二批清单已补 `Listing` / `Conversation`；`AdCampaign` /
+  `OpportunitySupplierMatch` / `SupplierCatalogProduct` / `ForecastSnapshot` /
+  `ListingReviewDecision` 五类仍无 Tool 归属；
+- 棘轮之和 57 → **53**（其中 2 处为写路径，属第 3 步），剩余 **51** 处读取点待迁；
+- 下一个迁移目标：`listing.py`（读取目标 Product / Listing / ComplianceReport 均已具备 Tool）。
+
+**关联**：架构 §10.4.1 / §18.3.1、规范 §11 DEBT-36、`docs/phase1_interfaces.md` §4、
+D38（第二批清单启动）、`docs/子代理实施索引-20260923.md` 第二十九轮。

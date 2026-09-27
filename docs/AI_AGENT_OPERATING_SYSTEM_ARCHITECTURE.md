@@ -804,6 +804,7 @@ ToolResult {
 | Tool | 方法 | 所需权限 | 读/写 |
 |---|---|---|---|
 | **Listing Tool** | `get_listings()` | `listing:read` | 读 |
+| **Conversation Tool** | `get_conversations()` | `support:read` | 读 |
 
 ### 10.5 写操作的特殊约束
 
@@ -1401,7 +1402,7 @@ Platform Identity（`superadmin`，ADR-F03 相关）**没有业务 Workspace**�
 | 步 | 状态 | 证据 / 剩余工作 |
 |---|---|---|
 | 1 | ✅ **完成**（D35） | 8 条冻结契约落在 `backend/app/agents/contracts.py`；`SupportAgent` 显式未登记（DEBT-34） |
-| 2 | 🔶 **前半完成、后半已启动**（D37 / D38） | 基础设施（D37）：§10.4 的 9 个 Tool / 22 个方法、`call()` 六步管线、审计、注册表与清单自检。第二批清单（D38）：`Listing Tool` 已交付（合计 10 个 Tool / 23 个方法，§10.4.1）。**Agent 侧迁移 1/57**：`compliance.py` 的读取点全部改走 Tool（由 `ai_logs` 的 `mode=tool` 行与测试证明）。进度锚点：`tests/test_agent_layer_boundaries.py::_ORM_CALL_BASELINE` 之和 = **56**（其中 1 处是写路径，属第 3 步）→ 剩余 **55** 处读取点仍受 DEBT-36 约束（六类目标尚无 Tool 归属） |
+| 2 | 🔶 **前半完成、后半已启动**（D37 / D38 / D39） | 基础设施（D37）：§10.4 的 9 个 Tool / 22 个方法、`call()` 六步管线、审计、注册表与清单自检。第二批清单：`Listing Tool`（D38）、`Conversation Tool`（D39，前置补 `support:read` 权限 key，走迁移）已交付（合计 11 个 Tool / 24 个方法，§10.4.1）。**Agent 侧迁移 2/9 文件**：`compliance.py`、`support.py` 的读取点全部改走 Tool（由 `ai_logs` 的 `mode=tool` 行与测试证明）。进度锚点：`tests/test_agent_layer_boundaries.py::_ORM_CALL_BASELINE` 之和 = **53**（其中 2 处是写路径，属第 3 步）→ 剩余 **51** 处读取点仍受 DEBT-36 约束（五类目标尚无 Tool 归属） |
 | 3 | ⏳ 未开始 | 高风险：`listing.publish`、`pricing.reprice_batch`、`ads.optimize_budget` 仍直改并 `commit`（违 §9.1） |
 | 4 | ⏳ 未开始 | Orchestrator 仍同步直调 |
 | 5 | ⏳ 未开始 | `BaseAgent.SessionLocal()` 仍自持会话；完成后才能关闭 DEBT-35 |

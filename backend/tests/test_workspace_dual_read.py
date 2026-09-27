@@ -76,6 +76,9 @@ def migrated_db(tmp_path):
     # 必须在此执行——权限读取优先走表，不跑该迁移则表缺少新 key，
     # 与代码常量的一致性断言会失败（这正是本套测试要守护的漂移）。
     _run_revision(path, "20260924_15_compliance_check_permission")
+    # Revision 17：新增 support:read 权限（Conversation Tool 前置，D39）。
+    # 同 Revision 15：权限读取优先走表，不跑该迁移则表缺 key，一致性断言会失败。
+    _run_revision(path, "20260927_17_support_read_permission")
     return path
 
 

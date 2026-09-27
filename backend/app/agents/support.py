@@ -1,8 +1,7 @@
 """客服 Agent：意图识别 + 按意图自动回复（对应规划第十三章）。"""
 from datetime import datetime
 
-from ..ai.knowledge import retrieve
-from ..models import Conversation, Message, Order, Product
+from ..models import Conversation, Message
 from .base import BaseAgent
 
 _INTENT_KEYWORDS = {
@@ -33,12 +32,43 @@ class SupportAgent(BaseAgent):
                 return intent
         return "other"
 
-    def _template(self, intent: str, conv: Conversation, text: str) -> str:
+    # ---- 读取：全部经 Tool 层（§18.3 第 2 步）----
+    def _conversation(self, conversation_id: int) -> dict:
+        """读会话走 Conversation Tool：跨租户与不存在都返回空列表，判定等价。"""
+        got = self.tool("conversation").call("get_conversations",
+                                             conversation_id=conversation_id)
+        rows = got.data if got.ok and isinstance(got.data, list) else []
+        if not rows:
+            raise ValueError(f"会话 {conversation_id} 不存在")
+        return rows[0]
+
+    def _order(self, order_id) -> dict | None:
+        """读订单走 Order Tool（按 id 精确查）。查不到返回 None，由调用方给兜底文案。"""
+        if not order_id:
+            return None
+        got = self.tool("order").call("get_orders", order_id=order_id)
+        rows = got.data if got.ok and isinstance(got.data, list) else []
+        return rows[0] if rows else None
+
+    def _product(self, product_id) -> dict | None:
+        """读商品走 Product Tool（按 id 精确查）。"""
+        if not product_id:
+            return None
+        got = self.tool("product").call("get_products", product_id=product_id)
+        rows = got.data if got.ok and isinstance(got.data, list) else []
+        return rows[0] if rows else None
+
+    def _knowledge(self, text: str) -> list[dict]:
+        """知识检索走 Knowledge Tool（可审计、可限流）；失败降级为空列表。"""
+        got = self.tool("knowledge").call("search", query=text, top_k=2)
+        return got.data if got.ok and isinstance(got.data, list) else []
+
+    def _template(self, intent: str, conv: dict, text: str) -> str:
         if intent == "order_status":
-            order = self.db.get(Order, conv.order_id) if conv.order_id else None
+            order = self._order(conv.get("order_id"))
             if order:
-                return (f"您好！您的订单 {order.external_no} 当前状态为「{_STATUS_CN.get(order.status, order.status)}」"
-                        f"（{order.platform}，共 {order.qty} 件）。如有疑问随时告诉我～")
+                return (f"您好！您的订单 {order['external_no']} 当前状态为「{_STATUS_CN.get(order['status'], order['status'])}」"
+                        f"（{order['platform']}，共 {order['qty']} 件）。如有疑问随时告诉我～")
             return "麻烦提供一下订单号，我马上为您查询订单状态～"
         if intent == "logistics":
             return ("亲，您的包裹已交由国际物流承运，一般 7-15 个工作日送达。"
@@ -49,13 +79,13 @@ class SupportAgent(BaseAgent):
                     "如需人工协助，工作时间 2 小时内会有专属客服联系您。")
         if intent == "product_qa":
             info = ""
-            if conv.product_id:
-                p = self.db.get(Product, conv.product_id)
+            if conv.get("product_id"):
+                p = self._product(conv["product_id"])
                 if p:
-                    a = p.attrs or {}
-                    info = (f"您咨询的「{p.title}」：材质 {a.get('material', '详情见页面')}，"
+                    a = p["attrs"] or {}
+                    info = (f"您咨询的「{p['title']}」：材质 {a.get('material', '详情见页面')}，"
                             f"重量 {a.get('weight_kg', '-')}kg，多色可选。")
-            docs = retrieve(self.db, self.tenant_id, text, top_k=2)
+            docs = self._knowledge(text)
             # M4：记录知识命中情况，供候选记录条件判断（复核修正 10）
             self._last_kb_hit = bool(docs)
             extra = f"相关说明：{docs[0]['content'][:120]}" if docs else ""
@@ -65,9 +95,7 @@ class SupportAgent(BaseAgent):
 
     def auto_reply(self, conversation_id: int) -> dict:
         self._last_kb_hit = False  # M4：知识命中标记（每次调用重置）
-        conv = self.db.get(Conversation, conversation_id)
-        if not conv or conv.tenant_id != self.tenant_id:
-            raise ValueError(f"会话 {conversation_id} 不存在")
+        conv = self._conversation(conversation_id)
         # 待答问题文本由 knowledge_learning 统一提供：候选哈希与答案回填必须用
         # 完全一致的查询口径，两处各写一遍会漂移（回填失配或答非所问）。
         from ..services import knowledge_learning
@@ -79,10 +107,13 @@ class SupportAgent(BaseAgent):
         def rule() -> dict:
             return {"reply": self._template(intent, conv, text), "intent": intent}
 
+        # 订单状态在 prompt 与规则模板里都要用：这里取一次，避免两处各写一遍查询。
+        # 旧实现在订单缺失时会 AttributeError（None.status）——改为显式兜底「无」。
+        order = self._order(conv.get("order_id"))
         system = "你是跨境电商多语言智能客服，语气温专业友好，不承诺无法兑现的事项。只返回 JSON。"
         prompt = (f"买家消息: {text[:500]}\n意图: {intent}；"
-                  f"平台: {conv.platform}；订单状态: "
-                  + (str(self.db.get(Order, conv.order_id).status) if conv.order_id else "无")
+                  f"平台: {conv['platform']}；订单状态: "
+                  + (str(order["status"]) if order else "无")
                   + "。请生成一条 80 字内的中文自动回复。"
                     "返回 JSON: {\"reply\":\"...\"}")
         result, _mode = self.ask_json("auto_reply", system, prompt, fallback=rule, small_task=True)
@@ -92,7 +123,7 @@ class SupportAgent(BaseAgent):
         row = Message(tenant_id=self.tenant_id, conversation_id=conversation_id, role="agent",
                       content=reply, intent=result.get("intent", intent), auto=True)
         self.db.add(row)
-        conv.last_message_at = datetime.utcnow()
+        self._touch_conversation(conversation_id)
         self.db.commit()
 
         # M4 知识自进化：仅当「意图未分类」或「知识库无任何命中」时记录候选
@@ -107,3 +138,14 @@ class SupportAgent(BaseAgent):
         return {"id": row.id, "conversation_id": conversation_id, "role": "agent",
                 "content": reply, "intent": row.intent, "auto": True,
                 "created_at": row.created_at.strftime("%Y-%m-%d %H:%M:%S")}
+
+    def _touch_conversation(self, conversation_id: int) -> None:
+        """更新会话的最后消息时间（写路径）。
+
+        §18.3 第 3 步（Action 层）的欠账：这仍是一次 Agent 直改业务数据（§9.1），
+        不在本步（读取路径迁移）范围内。集中在这一处，第 3 步改由 Action 执行时
+        只有一处要动。
+        """
+        conv = self.db.get(Conversation, conversation_id)
+        if conv and conv.tenant_id == self.tenant_id:
+            conv.last_message_at = datetime.utcnow()

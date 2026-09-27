@@ -80,8 +80,13 @@ settlement:read         settlement:write
 refund:read             refund:write
 compliance:read         compliance:approve
 ai:read                 ai:write
+support:read
 platform:admin
 ```
+
+**2026-09-27 追加（D39）**：`support:read` —— 客服会话读取，补批规则「只增不改」；
+归入只读角色集合（`OWNER` / `OPERATOR` / `READ_ONLY`），与 `/api/support` 读端点的
+现状一致（仅要求登录）。消费方：架构 §10.4.1 的 Conversation Tool。
 
 角色 → 权限默认映射（Phase 1 基线，后续由 `role_permissions` 表承载）：
 

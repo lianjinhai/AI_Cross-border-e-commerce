@@ -203,7 +203,7 @@ def test_costing_service_has_no_agent_dependency(name):
 
 # ---------------------------------------------------------------- §18.3 第 2 步棘轮
 
-# Agent 内直连数据库的调用点基线（2026-09-27 实测：query 34 + get 22 = 56）。
+# Agent 内直连数据库的调用点基线（2026-09-27 实测：query 34 + get 19 = 53）。
 #
 # 为什么用「只减不增」的棘轮，而不是直接断言 0：
 #   §18.3 第 2 步的 Agent 侧迁移依赖「第二批 Tool 清单」补齐（规范 §11 DEBT-36），
@@ -222,7 +222,10 @@ _ORM_CALL_BASELINE = {
     "orchestrator.py": (6, 0),
     "pricing.py": (4, 3),
     "supplier.py": (5, 2),
-    "support.py": (0, 4),
+    # support.py 的读取点已迁完（Conversation / Order / Product / Knowledge Tool）；
+    # 剩下的 1 次 get 是**写路径**（`_touch_conversation` 更新 last_message_at），
+    # 属 §18.3 第 3 步（Action 层）范围，不随读取迁移下降。
+    "support.py": (0, 1),
 }
 # 写操作（self.db.commit）不在本棘轮范围内：§18.3 第 3 步（Action 层）才处置，
 # 本步只收敛**读取**路径。

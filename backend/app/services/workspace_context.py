@@ -63,6 +63,11 @@ _READ_PERMISSIONS = frozenset({
     "workspace:read", "product:read", "supply:read", "listing:read", "order:read",
     "finance:read", "purchase:read", "settlement:read", "refund:read",
     "compliance:read", "ai:read",
+    # support:read（2026-09-27，D39）：客服会话读取。Phase 1 目录原先没有这个域，
+    # 而 Conversation Tool（架构 §10.4.1）必须有权限 key 才能进 Tool 层闸门。
+    # 授予范围与现状一致：/api/support 的读端点只要求登录，本 key 归入只读角色集合。
+    # 只加读、不加写：会话写入当前仍走业务 API，且 Agent 侧写操作必须经 Action 层。
+    "support:read",
 })
 _WRITE_PERMISSIONS = frozenset({
     "workspace:write", "product:write", "supply:write", "listing:write", "order:write",

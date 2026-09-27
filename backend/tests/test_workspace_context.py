@@ -51,7 +51,7 @@ def test_permission_mapping_matches_contract():
     assert read_only == frozenset({
         "ai:read", "compliance:read", "finance:read", "listing:read", "order:read",
         "product:read", "purchase:read", "refund:read", "settlement:read",
-        "supply:read", "workspace:read"}), read_only
+        "supply:read", "workspace:read", "support:read"}), read_only
     assert not any(p.endswith(":write") for p in read_only), read_only
 
     compliance = wc.ROLE_PERMISSIONS[wc.ROLE_COMPLIANCE]

@@ -85,8 +85,9 @@ def _doc_manifest() -> dict:
 def test_manifest_matches_architecture_doc():
     """注册表必须与 §10.4 + §10.4.1 冻结清单**逐条一致**（数量、权限、读写属性）。"""
     doc = _doc_manifest()
-    assert len(doc) == 23, "§10.4 + §10.4.1 应含 23 个方法，解析到 %d 个：%s" % (len(doc), sorted(doc))
+    assert len(doc) == 24, "§10.4 + §10.4.1 应含 24 个方法，解析到 %d 个：%s" % (len(doc), sorted(doc))
     assert "listing.get_listings" in doc, "§10.4.1 第二批表格未被解析到（区段边界写错？）"
+    assert "conversation.get_conversations" in doc, "§10.4.1 的 Conversation Tool 未被解析到"
 
     got = registry.tool_specs()
     assert set(got) == set(doc), (
@@ -111,6 +112,8 @@ def test_doc_parser_has_discriminating_power():
     assert doc["product.get_products"] == {"permission": "product:read", "writes": False}
     assert doc["product.create_listing_draft"]["writes"] is True
     assert doc["listing.get_listings"] == {"permission": "listing:read", "writes": False}
+    assert doc["conversation.get_conversations"] == {"permission": "support:read",
+                                                     "writes": False}
     assert doc["memory.recall"] == {"permission": "ai:read", "writes": False}
     assert doc["memory.remember"] == {"permission": "ai:write", "writes": True}
 
@@ -156,6 +159,23 @@ def test_toolresult_requires_error_when_not_ok():
 def test_toolresult_rejects_error_when_ok():
     with pytest.raises(ValueError):
         ToolResult(ok=True, error={"code": "X", "detail": "y"})
+
+
+def test_conversation_tool_dict_excludes_buyer_pii():
+    """字段口径不得含买家 PII：Tool 结果会被审计落库（§15.4）。
+
+    这是**结构性**防泄漏：审计层只能按模式脱敏（手机号/邮箱），认不出「张三」是
+    人名。所以 PII 必须在字段口径处就排除，而不是指望下游拦。
+    """
+    from app.models import Conversation
+    from app.tools.conversation import conversation_dict
+
+    data = conversation_dict(Conversation(tenant_id=1, platform="shopee",
+                                          buyer_name="张三", order_id=7, product_id=8,
+                                          status="open"))
+    assert "buyer_name" not in data, "买家姓名属 PII，不得进 Tool 返回体（会被审计落库）"
+    assert data["order_id"] == 7 and data["product_id"] == 8
+    assert data["platform"] == "shopee" and data["status"] == "open"
 
 
 def test_context_requires_workspace_id():
@@ -451,8 +471,9 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
         ("knowledge", "search", {"query": "选品 合规"}),
         ("listing", "get_listings", {"limit": 5}),
         ("compliance", "check_listing", {"listing_id": listing_id}),
+        ("conversation", "get_conversations", {"limit": 5}),
     ]
-    assert len(calls) == 18, "真库覆盖清单应为 18 条，实际 %d" % len(calls)
+    assert len(calls) == 19, "真库覆盖清单应为 19 条，实际 %d" % len(calls)
     # 完整性（T-53）：除 memory.recall（Phase 6 未到，实现显式 NOT_IMPLEMENTED）外，
     # 冻结清单里的每个只读方法都必须在这里真跑一遍——否则第二批新增的方法会静默漏测。
     expected = {spec.key for spec in registry.tool_specs().values()
@@ -479,9 +500,9 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
                                              result.error["code"], result.error["detail"]))
     assert not failures, "只读方法在真实库上执行失败：\n  " + "\n  ".join(failures)
     # 反向断言：若哪天实现整体退化成「一律 NOT_FOUND」，上一条断言仍会全绿。
-    # 探针数据（商品/Listing/评分/合规报告/汇率）齐备时，18 个方法应全部走成功分支。
-    assert ok_count == 18, (
-        "只读方法成功 %d/18——是否有实现静默退化成 NOT_FOUND？" % ok_count)
+    # 探针数据（商品/Listing/评分/合规报告/汇率）齐备时，19 个方法应全部走成功分支。
+    assert ok_count == 19, (
+        "只读方法成功 %d/19——是否有实现静默退化成 NOT_FOUND？" % ok_count)
 
 
 def test_compliance_agent_reads_go_through_tool_layer(probe_tenant):
@@ -519,6 +540,70 @@ def test_compliance_agent_reads_go_through_tool_layer(probe_tenant):
     # 反向断言：`_sync_listing_risk` 的回写必须仍然生效——它是 §18.3 第 3 步的欠账，
     # 但在迁移期间不得被顺手删掉（删掉等于「高风险 Listing 可发布」）。
     assert risk_written == listing_report["risk_level"]
+
+
+def test_support_agent_reads_go_through_tool_layer():
+    """判别力：support 的会话/订单读取必须留下 `mode=tool` 审计（§18.3 第 2 步）。
+
+    自带探针租户（会话 + 买家消息 + 订单），夹具内建内删：不依赖演示数据，
+    不给后续用例制造隐含前提（规范 T-2）。审计行与知识候选都是 `tenants` 的
+    外键子表，必须一并回收，否则删不掉租户。
+    """
+    from app.agents.support import SupportAgent
+    from app.db import SessionLocal
+    from app.models import AiLog, Conversation, KnowledgeCandidate, Message, Order, Tenant
+
+    db = SessionLocal()
+    try:
+        tenant = Tenant(name="ToolLayer客服探针租户")
+        db.add(tenant)
+        db.commit()
+        order = Order(tenant_id=tenant.id, platform="shopee", external_no="TOOL-SUPPORT-1",
+                      status="paid", qty=2)
+        db.add(order)
+        db.commit()
+        conv = Conversation(tenant_id=tenant.id, platform="shopee", buyer_name="探针买家",
+                            order_id=order.id, status="open")
+        db.add(conv)
+        db.commit()
+        db.add(Message(tenant_id=tenant.id, conversation_id=conv.id, role="buyer",
+                       content="我的订单什么时候发货？", intent="order_status"))
+        db.commit()
+        ids = {"tenant_id": tenant.id, "order_id": order.id, "conversation_id": conv.id}
+    finally:
+        db.close()
+
+    try:
+        agent = SupportAgent(ids["tenant_id"])
+        try:
+            out = agent.auto_reply(ids["conversation_id"])
+        finally:
+            agent.close()
+        assert out["conversation_id"] == ids["conversation_id"] and out["auto"] is True
+
+        db = SessionLocal()
+        try:
+            actions = {r.action for r in db.query(AiLog)
+                       .filter(AiLog.tenant_id == ids["tenant_id"],
+                               AiLog.mode == "tool").all()}
+        finally:
+            db.close()
+        assert {"tool:conversation.get_conversations", "tool:order.get_orders"} <= actions, (
+            "support 的读取没有全部走 Tool 层——§18.3 第 2 步的迁移被回退了？"
+            "实际审计到的 Tool 调用：%s" % sorted(actions))
+    finally:
+        db = SessionLocal()
+        try:
+            db.query(AiLog).filter(AiLog.tenant_id == ids["tenant_id"]).delete()
+            db.query(KnowledgeCandidate).filter(
+                KnowledgeCandidate.tenant_id == ids["tenant_id"]).delete()
+            db.query(Message).filter(Message.tenant_id == ids["tenant_id"]).delete()
+            db.query(Conversation).filter(Conversation.id == ids["conversation_id"]).delete()
+            db.query(Order).filter(Order.id == ids["order_id"]).delete()
+            db.query(Tenant).filter(Tenant.id == ids["tenant_id"]).delete()
+            db.commit()
+        finally:
+            db.close()
 
 
 def test_read_methods_reject_bad_params_without_touching_db(recorded, legacy_ctx):

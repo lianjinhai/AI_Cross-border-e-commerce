@@ -34,16 +34,19 @@ class OrderTool(BaseTool):
     name = "order"
     specs = (
         ToolSpec(tool="order", method="get_orders", permission="order:read",
-                 writes=False, summary="列出本租户订单，可按状态/店铺过滤"),
+                 writes=False, summary="列出本租户订单，可按订单/状态/店铺过滤"),
         ToolSpec(tool="order", method="analyze_sales", permission="order:read",
                  writes=False, summary="按窗口汇总销售额、退款与平台分布"),
     )
 
-    def _get_orders(self, limit=50, status: str = "", shop_id=None) -> Reading:
+    def _get_orders(self, limit=50, status: str = "", shop_id=None, order_id=None) -> Reading:
         n = clamp_limit(limit)
         # 参数校验先于数据库访问：见 supply.py 同款说明。
         sid = None if shop_id is None else as_int(shop_id, "shop_id")
+        oid = None if order_id is None else as_int(order_id, "order_id")
         query = self.db.query(Order).filter(Order.tenant_id == self.context.tenant_id)
+        if oid is not None:
+            query = query.filter(Order.id == oid)
         state = (status or "").strip()
         if state:
             query = query.filter(Order.status == state)
