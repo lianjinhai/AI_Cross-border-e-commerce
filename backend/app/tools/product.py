@@ -41,10 +41,13 @@ class ProductTool(BaseTool):
     )
 
     # ---------------------------------------------------------------- 只读实现
-    def _get_products(self, limit=50, keyword: str = "") -> Reading:
+    def _get_products(self, limit=50, keyword: str = "", product_id=None) -> Reading:
         n = clamp_limit(limit)
+        pid = None if product_id is None else as_int(product_id, "product_id")
         query = self.db.query(Product).filter(
             Product.tenant_id == self.context.tenant_id)
+        if pid is not None:
+            query = query.filter(Product.id == pid)
         text = (keyword or "").strip()
         if text:
             like = "%" + text + "%"

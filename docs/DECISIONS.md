@@ -2378,3 +2378,63 @@ Agent 只做引用；`required_permissions` 的取值由 `_ALL_KNOWN_PERMISSIONS
 **关联**：`docs/AI_AGENT_OPERATING_SYSTEM_ARCHITECTURE.md` §10 / §18.3（含新增
 §18.3.1 迁移进度）、规范 **L-7** / §2 目录结构 / §11 台账 **DEBT-35** / **DEBT-36**、
 D35（第 1 步）、D36（K 项门禁）、`docs/子代理实施索引-20260923.md` 第二十七轮。
+
+---
+
+## D38：Agent 侧迁移启动 —— 第二批 Tool 清单 + compliance 首个迁移（2026-09-27）
+
+**背景**：D37 交付了 Tool Layer 基础设施，但 §18.3 第 2 步的「后半」（把 Agent 内
+57 个直连 ORM 读取点改成 Tool 调用）被 DEBT-36 卡住：§10.4 第一批清单覆盖不了
+`Listing` 等七类读取目标。本轮做三件事：补第二批清单第一项、把 `compliance.py`
+的读取点迁完、给「Agent 侧迁移」建立可判别的回归测试。
+
+### 一、交付物
+
+| 文件 | 变更 | 职责 |
+|---|---|---|
+| `backend/app/tools/listing.py` | 新增 64 行 | §10.4.1 第二批清单第一项：`ListingTool.get_listings()`（权限 `listing:read`，只读）。`listing_dict()` 是 Listing 对外字段的唯一口径 |
+| `backend/app/tools/registry.py` | +1 | 注册 `ListingTool`（10 个 Tool / 23 个方法） |
+| `backend/app/tools/product.py` | +3 | `get_products` 增加 `product_id` 参数（按 id 精确查，供 compliance 单点迁移） |
+| `backend/app/agents/base.py` | +19 | `tool_context()` / `tool(name)`：Agent 取用 Tool 的唯一入口 |
+| `backend/app/agents/compliance.py` | 迁移 | 4 个读取点改走 Tool（Product / Listing / Knowledge ×2）；写路径 `_sync_listing_risk` 集中到一处 |
+| `backend/tests/test_tool_layer.py` | +90 | 清单解析扩到 §10.4.1；真库覆盖清单与冻结清单自动比对；新增 compliance 迁移判别力用例 |
+| `backend/tests/test_agent_layer_boundaries.py` | 基线 | `compliance.py` (0, 2) → (0, 1) |
+
+### 二、四个关键决策
+
+| # | 决策 | 备选与被否原因 |
+|---|---|---|
+| 1 | **第二批清单「只增不改」**：§10.4 的 22 条一字不动，新条目追加到 §10.4.1 | 直接改 §10.4 会让冻结清单失去可引用性——外部引用无法区分改前/改后 |
+| 2 | **Agent 取用 Tool 收在 `BaseAgent.tool()`**，不在各 Agent 手写 `legacy_context(...)` | 手写必然出现漏写 `permissions=None`：未校验被静默当成已校验（T-53） |
+| 3 | **写路径不强行迁**：`_sync_listing_risk` 保留直连并集中一处，棘轮记 (0, 1) | 写操作要经 Action System（§10.5，第 3 步）；硬迁只是换一种形式绕开边界，删回写则高风险 Listing 可发布 |
+| 4 | **「已迁移」由审计行证明**，不靠人工看代码 | 回退成 `self.db.get(...)` 时返回值完全相同，只有 `ai_logs` 里的 `mode=tool` 行会消失 |
+
+### 三、判别力验证（实测）
+
+| 验证 | 变异 | 结果 |
+|---|---|---|
+| 真库覆盖完整性 | —— | 断言「真库调用清单 == 冻结只读清单 − memory.recall」，漏测/多测都会红 |
+| Agent 迁移可判别 | compliance 的商品读取改回 `self.db.get(Product, ...)` | ✅ 两道门禁同时命中：棘轮「2 > 基线 1」+ 审计断言「缺 `tool:product.get_products`」；还原后字节一致 |
+| 清单解析扩区段 | —— | `len(doc) == 23`，且显式断言 `listing.get_listings` 在解析结果内（防区段边界写错） |
+
+### 四、验证结果
+
+| 验证 | 结果 |
+|---|---|
+| 后端回归（正序 / 反序） | ✅ **390 passed**（正反序一致） |
+| `ruff check app/ tests/ scripts/` | ✅ 全绿 |
+| 文档校验 | ✅ A~K 全 PASS（10 项，编号无 J） |
+| E2E 可行性（真启动服务） | ✅ **7 步全 PASS**；主库 sha256 前后一致（`2a0b5de9…`，3169 行） |
+| 基线 | `docs/baseline.json`：后端 389 → **390**，前端 72 不变 |
+
+### 五、剩余工作（诚实记录）
+
+- DEBT-36 未关闭：第二批清单只补了 `Listing`，`Conversation` / `AdCampaign` /
+  `OpportunitySupplierMatch` / `SupplierCatalogProduct` / `ForecastSnapshot` /
+  `ListingReviewDecision` 六类仍无 Tool 归属；
+- Agent 侧读取点：棘轮之和 57 → 56（其中 1 处是写路径），**读取点 55 处待迁**；
+- 下一个迁移目标：`support.py`（4 处 `get`，读取目标 Order / Product / Conversation，
+  需先补 Conversation Tool）。
+
+**关联**：架构 §10.4.1 / §18.3.1、规范 §11 **DEBT-36**、D37（Tool 基础设施）、
+`docs/子代理实施索引-20260923.md` 第二十八轮。

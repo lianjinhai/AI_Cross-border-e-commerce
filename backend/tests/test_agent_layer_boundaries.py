@@ -203,7 +203,7 @@ def test_costing_service_has_no_agent_dependency(name):
 
 # ---------------------------------------------------------------- §18.3 第 2 步棘轮
 
-# Agent 内直连数据库的调用点基线（2026-09-26 实测：query 34 + get 23 = 57）。
+# Agent 内直连数据库的调用点基线（2026-09-27 实测：query 34 + get 22 = 56）。
 #
 # 为什么用「只减不增」的棘轮，而不是直接断言 0：
 #   §18.3 第 2 步的 Agent 侧迁移依赖「第二批 Tool 清单」补齐（规范 §11 DEBT-36），
@@ -211,7 +211,10 @@ def test_costing_service_has_no_agent_dependency(name):
 #   一处就下调一次基线，任何人都不能在不知情的情况下新增直连调用。
 #   本表之和即 §18.3 第 2 步的剩余工作量。
 _ORM_CALL_BASELINE = {
-    "compliance.py": (0, 2),
+    # compliance.py 的读取点已迁完（Product / Listing / Knowledge Tool）；
+    # 剩下的 1 次 get 是**写路径**（`_sync_listing_risk` 回写 Listing.risk_level），
+    # 属 §18.3 第 3 步（Action 层）范围，不随读取迁移下降。
+    "compliance.py": (0, 1),
     "discovery.py": (11, 4),
     "factory_opportunity.py": (4, 1),
     "listing.py": (1, 5),

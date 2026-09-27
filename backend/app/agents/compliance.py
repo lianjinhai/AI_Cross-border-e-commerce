@@ -1,8 +1,7 @@
 """合规 Agent：品牌侵权 / 违禁宣称 / 图片风险 / 平台规则四维检测（对应规划第十章）。"""
 import re
 
-from ..ai.knowledge import retrieve
-from ..models import ComplianceReport, Listing, Product
+from ..models import ComplianceReport, Listing
 from .base import BaseAgent
 from .contracts import CONTRACTS
 
@@ -19,8 +18,18 @@ class ComplianceAgent(BaseAgent):
     # Agent OS §6.2 契约（§18.3 第 1 步）：声明能力边界，供 Guardrail / Runtime 读取。
     agent_contract = CONTRACTS["risk_compliance"]
 
+    def _knowledge(self, query: str, top_k: int) -> list[dict]:
+        """知识检索统一走 Knowledge Tool（§18.3 第 2 步）——每次读取可审计、可限流。
+
+        为什么不像以前那样直接调 `ai.knowledge.retrieve`：检索结果会进入 Agent 的
+        推理依据，属于「读了什么数据」的一部分；绕开 Tool 层则 Trace 里查不到依据
+        （§19 验收项 5）。检索失败不抛异常，降级为空列表（与旧实现一致）。
+        """
+        result = self.tool("knowledge").call("search", query=query, top_k=top_k)
+        return result.data if result.ok and isinstance(result.data, list) else []
+
     def _brand_words(self) -> list[str]:
-        docs = retrieve(self.db, self.tenant_id, "商标黑名单 品牌 侵权", top_k=2)
+        docs = self._knowledge("商标黑名单 品牌 侵权", top_k=2)
         words = set(w.lower() for w in _BUILTIN_BRANDS)
         for d in docs:
             words |= set(w.lower() for w in re.findall(r"[A-Za-z][A-Za-z0-9 ]{1,20}", d["content"])
@@ -62,19 +71,25 @@ class ComplianceAgent(BaseAgent):
     def check(self, target_type: str, ref_id: int) -> dict:
         """检测并生成报告。target_type: product / listing。"""
         if target_type == "product":
-            obj = self.db.get(Product, ref_id)
-            if not obj or obj.tenant_id != self.tenant_id:
+            # 读取走 Product Tool（§18.3 第 2 步）。跨租户与不存在都返回空列表，
+            # 与旧实现「取不到 或 tenant_id 不符」的判定等价，且不泄露他家数据。
+            got = self.tool("product").call("get_products", product_id=ref_id)
+            rows = got.data if got.ok and isinstance(got.data, list) else []
+            if not rows:
                 raise ValueError(f"商品 {ref_id} 不存在")
-            text = obj.title + " " + str(obj.attrs or {})
-            images = obj.images or []
-            product_id, listing_id = obj.id, None
+            obj = rows[0]
+            text = obj["title"] + " " + str(obj["attrs"] or {})
+            images = obj["images"] or []
+            product_id, listing_id = obj["id"], None
         elif target_type == "listing":
-            obj = self.db.get(Listing, ref_id)
-            if not obj or obj.tenant_id != self.tenant_id:
+            got = self.tool("listing").call("get_listings", listing_id=ref_id)
+            rows = got.data if got.ok and isinstance(got.data, list) else []
+            if not rows:
                 raise ValueError(f"Listing {ref_id} 不存在")
-            text = " ".join([obj.title, obj.description] + list(obj.bullets or []) + list(obj.keywords or []))
+            obj = rows[0]
+            text = " ".join([obj["title"], obj["description"]] + list(obj["bullets"] or []) + list(obj["keywords"] or []))
             images = []
-            product_id, listing_id = None, obj.id
+            product_id, listing_id = None, obj["id"]
         else:
             raise ValueError("target_type 必须是 product 或 listing")
 
@@ -82,7 +97,7 @@ class ComplianceAgent(BaseAgent):
             return self._scan(text, images)
 
         system = "你是跨境电商合规审核引擎（广告法/知识产权/平台规则）。只返回 JSON。"
-        rules_ctx = retrieve(self.db, self.tenant_id, "违禁词 商标 图片 平台规则", top_k=3)
+        rules_ctx = self._knowledge("违禁词 商标 图片 平台规则", top_k=3)
         prompt = (f"审核以下{target_type}内容，输出问题列表与合规分。"
                   f"参考平台规则: {[d['title'] for d in rules_ctx]}。"
                   "返回 JSON: {\"issues\":[{\"type\":\"brand|claim|image|platform\",\"level\":\"high|mid|low\","
@@ -100,13 +115,25 @@ class ComplianceAgent(BaseAgent):
         )
         self.db.add(row)
         if target_type == "listing":
-            obj.risk_level = row.risk_level
+            self._sync_listing_risk(listing_id, row.risk_level)
         self.db.commit()
         out = {"id": row.id, "target_type": target_type, "product_id": product_id,
                "listing_id": listing_id, "risk_level": row.risk_level, "score": row.score,
                "issues": row.issues, "suggestions": row.suggestions, "model": row.model,
                "created_at": row.created_at.strftime("%Y-%m-%d %H:%M:%S")}
         return out
+
+    def _sync_listing_risk(self, listing_id: int, risk_level: str) -> None:
+        """把合规结论回写到 `Listing.risk_level`（冗余副本，发布门禁读的是它）。
+
+        §18.3 第 3 步（Action 层）的欠账：这仍是一次 Agent 直改业务数据（§9.1），
+        不在本步（读取路径迁移）范围内。保留的理由：发布门禁当前读
+        `Listing.risk_level` 而非最新 ComplianceReport，直接删掉会让「高风险
+        Listing 可发布」。集中在这一处，是为了第 3 步改由 Action 执行时只有一处要动。
+        """
+        obj = self.db.get(Listing, listing_id)
+        if obj and obj.tenant_id == self.tenant_id:
+            obj.risk_level = risk_level
 
     def check_product(self, product_id: int) -> dict:
         return self.check("product", product_id)

@@ -8,6 +8,7 @@ ask_json() 是核心模式：优先 LLM 产出结构化 JSON，任何失败自�
 from ..ai.llm import ModelRouter
 from ..db import SessionLocal
 from ..models import AiLog
+from ..tools import legacy_context, open_tool
 
 
 class BaseAgent:
@@ -26,6 +27,24 @@ class BaseAgent:
 
     def __exit__(self, *exc):
         self.close()
+
+    # ---- Tool Layer（§10 / D37）：Agent 访问业务数据的唯一通道 ----
+    def tool_context(self):
+        """本 Agent 的 Tool 调用上下文（兼容期：权限未校验，调用会被标记 degraded）。
+
+        为什么收在基类：`legacy_context` 的参数必须逐字一致，散落到各 Agent 手写
+        就会出现「有人漏写 permissions=None」——「未校验」被静默当成「已校验」
+        （T-53）。迁移期的缺口与代价见 docs/DECISIONS.md D37 / DEBT-35。
+        """
+        return legacy_context(self.tenant_id, self.name)
+
+    def tool(self, name: str):
+        """取一个绑定本 Agent 身份与会话的 Tool（§18.3 第 2 步的迁移入口）。
+
+        用法：``self.tool("product").call("get_products", product_id=1)``。
+        返回 ``ToolResult``（ok / data / evidence / degraded / error），失败不抛异常。
+        """
+        return open_tool(name, self.tool_context(), self.db)
 
     # ---- LLM + 规则双模 ----
     def ask_json(self, action: str, system: str, prompt: str,

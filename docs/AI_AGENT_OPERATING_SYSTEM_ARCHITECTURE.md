@@ -789,6 +789,22 @@ ToolResult {
 | **Memory Tool** | `recall()` / `remember()` | `ai:read` / `ai:write` | 读/写 |
 | **Knowledge Tool** | `search()` | `ai:read` | 读 |
 
+### 10.4.1 第二批 Tool 清单（冻结，2026-09-26 追加）
+
+**补批规则**：**只增不改**。§10.4 的 22 条一字不动，新条目一律追加到本表。
+清单完整性由 `backend/tests/test_tool_layer.py::test_manifest_matches_architecture_doc`
+解析本页两张表格后与注册表逐条比对（含权限与读/写属性）。
+
+**为什么需要补批**：§10.4 的第一批清单聚焦「机会 → 供应 → 商品 → 渠道」主干，
+而现有 Agent 的 57 个读取点还覆盖 `Conversation` / `Listing` / `AdCampaign` /
+`OpportunitySupplierMatch` / `SupplierCatalogProduct` / `ForecastSnapshot` /
+`ListingReviewDecision` 七类目标（DEBT-36）。缺归属则 §18.3 第 2 步后半无法落地。
+**迁移进度见 §18.3.1**（唯一进度记录，本表只声明清单）。
+
+| Tool | 方法 | 所需权限 | 读/写 |
+|---|---|---|---|
+| **Listing Tool** | `get_listings()` | `listing:read` | 读 |
+
 ### 10.5 写操作的特殊约束
 
 **所有写操作 Tool 必须经 Action System**：
@@ -1379,7 +1395,7 @@ Platform Identity（`superadmin`，ADR-F03 相关）**没有业务 Workspace**�
 | 步 | 状态 | 证据 / 剩余工作 |
 |---|---|---|
 | 1 | ✅ **完成**（D35） | 8 条冻结契约落在 `backend/app/agents/contracts.py`；`SupportAgent` 显式未登记（DEBT-34） |
-| 2 | 🔶 **前半完成**（D37） | Tool Layer 基础设施已交付：§10.4 的 9 个 Tool / 22 个方法、`call()` 六步管线、审计、注册表与清单自检、27 条测试。**后半未完成**：Agent 侧 57 个读取点尚未迁移——卡在 DEBT-36（§10.4 第一批清单覆盖不了 `Conversation` / `Listing` / `AdCampaign` 等七类读取目标，需第二批清单决策）。进度锚点：`tests/test_agent_layer_boundaries.py::_ORM_CALL_BASELINE` 之和 |
+| 2 | 🔶 **前半完成、后半已启动**（D37 / D38） | 基础设施（D37）：§10.4 的 9 个 Tool / 22 个方法、`call()` 六步管线、审计、注册表与清单自检。第二批清单（D38）：`Listing Tool` 已交付（合计 10 个 Tool / 23 个方法，§10.4.1）。**Agent 侧迁移 1/57**：`compliance.py` 的读取点全部改走 Tool（由 `ai_logs` 的 `mode=tool` 行与测试证明）。进度锚点：`tests/test_agent_layer_boundaries.py::_ORM_CALL_BASELINE` 之和 = **56**（其中 1 处是写路径，属第 3 步）→ 剩余 **55** 处读取点仍受 DEBT-36 约束（六类目标尚无 Tool 归属） |
 | 3 | ⏳ 未开始 | 高风险：`listing.publish`、`pricing.reprice_batch`、`ads.optimize_budget` 仍直改并 `commit`（违 §9.1） |
 | 4 | ⏳ 未开始 | Orchestrator 仍同步直调 |
 | 5 | ⏳ 未开始 | `BaseAgent.SessionLocal()` 仍自持会话；完成后才能关闭 DEBT-35 |

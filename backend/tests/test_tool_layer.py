@@ -11,8 +11,8 @@
 违规并证明它会被抓到（规范 T-55：豁免与放行必须配反向断言）。
 
 **与架构文档的关系**：`test_manifest_matches_architecture_doc` 直接解析
-`docs/AI_AGENT_OPERATING_SYSTEM_ARCHITECTURE.md` 的 §10.4 表格并与注册表比对
-——「文档改了、代码没改」会在 CI 变红，而不是靠人工核对。
+`docs/AI_AGENT_OPERATING_SYSTEM_ARCHITECTURE.md` 的 §10.4 + §10.4.1 两张表格
+并与注册表比对——「文档改了、代码没改」会在 CI 变红，而不是靠人工核对。
 """
 import re
 import sys
@@ -47,7 +47,7 @@ from app.tools.contract import (  # noqa: E402
 
 
 def _doc_manifest() -> dict:
-    """解析架构文档 §10.4 表格 -> ``{"<tool>.<method>": {permission, writes}}``。
+    """解析架构文档 §10.4 + §10.4.1 两张表格 -> ``{"<tool>.<method>": {permission, writes}}``。
 
     表格形态（Tool 名只在首行出现，后续行首列为空即续行）：
         | **Product Tool** | `get_products()` | `product:read` | 读 |
@@ -56,6 +56,8 @@ def _doc_manifest() -> dict:
     一行里出现多个方法/权限时按出现顺序一一对应。
     """
     text = ARCH_DOC.read_text(encoding="utf-8")
+    # 区段取「§10.4 标题 → §10.5 标题」之间：§10.4.1（第二批清单）夹在其中，
+    # 因此无需再切一刀。若哪天把第二批挪出这个区间，本测试会因数量不符立刻变红。
     section = text.split("### 10.4", 1)[1].split("### 10.5", 1)[0]
     out: dict = {}
     tool = ""
@@ -81,9 +83,10 @@ def _doc_manifest() -> dict:
 
 
 def test_manifest_matches_architecture_doc():
-    """注册表必须与 §10.4 冻结清单**逐条一致**（数量、权限、读写属性）。"""
+    """注册表必须与 §10.4 + §10.4.1 冻结清单**逐条一致**（数量、权限、读写属性）。"""
     doc = _doc_manifest()
-    assert len(doc) == 22, "§10.4 应含 22 个方法，解析到 %d 个：%s" % (len(doc), sorted(doc))
+    assert len(doc) == 23, "§10.4 + §10.4.1 应含 23 个方法，解析到 %d 个：%s" % (len(doc), sorted(doc))
+    assert "listing.get_listings" in doc, "§10.4.1 第二批表格未被解析到（区段边界写错？）"
 
     got = registry.tool_specs()
     assert set(got) == set(doc), (
@@ -107,6 +110,7 @@ def test_doc_parser_has_discriminating_power():
     doc = _doc_manifest()
     assert doc["product.get_products"] == {"permission": "product:read", "writes": False}
     assert doc["product.create_listing_draft"]["writes"] is True
+    assert doc["listing.get_listings"] == {"permission": "listing:read", "writes": False}
     assert doc["memory.recall"] == {"permission": "ai:read", "writes": False}
     assert doc["memory.remember"] == {"permission": "ai:write", "writes": True}
 
@@ -357,7 +361,15 @@ def probe_tenant(client):
     from datetime import datetime, timedelta
 
     from app.db import SessionLocal
-    from app.models import AiLog, ComplianceReport, ExchangeRate, Product, ProductScore, Tenant
+    from app.models import (
+        AiLog,
+        ComplianceReport,
+        ExchangeRate,
+        Listing,
+        Product,
+        ProductScore,
+        Tenant,
+    )
 
     db = SessionLocal()
     try:
@@ -369,6 +381,12 @@ def probe_tenant(client):
                           attrs={"sale_price": 19.99, "weight_kg": 0.3})
         db.add(product)
         db.commit()
+        listing = Listing(tenant_id=tenant.id, product_id=product.id, platform="shopee",
+                          language="en", title="Tool Layer 真库探针 Listing",
+                          description="probe listing", bullets=["bullet"],
+                          keywords=["probe"], status="draft")
+        db.add(listing)
+        db.commit()
         db.add(ProductScore(tenant_id=tenant.id, product_id=product.id,
                             demand=70, competition=40, profit=65, risk=20, total=72))
         db.add(ComplianceReport(tenant_id=tenant.id, target_type="product",
@@ -377,7 +395,8 @@ def probe_tenant(client):
                             quote_currency="CNY", rate=7.12,
                             effective_at=datetime.utcnow() - timedelta(days=1)))
         db.commit()
-        ids = {"tenant_id": tenant.id, "product_id": product.id}
+        ids = {"tenant_id": tenant.id, "product_id": product.id,
+               "listing_id": listing.id}
     finally:
         db.close()
     yield ids
@@ -391,6 +410,7 @@ def probe_tenant(client):
             ComplianceReport.tenant_id == ids["tenant_id"]).delete()
         db.query(ExchangeRate).filter(
             ExchangeRate.tenant_id == ids["tenant_id"]).delete()
+        db.query(Listing).filter(Listing.id == ids["listing_id"]).delete()
         db.query(Product).filter(Product.id == ids["product_id"]).delete()
         db.query(Tenant).filter(Tenant.id == ids["tenant_id"]).delete()
         db.commit()
@@ -410,6 +430,7 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
 
     tenant_id = probe_tenant["tenant_id"]
     product_id = probe_tenant["product_id"]
+    listing_id = probe_tenant["listing_id"]
     ctx = legacy_context(tenant_id=tenant_id, agent_type="market_intelligence")
     calls = [
         ("product", "get_products", {"limit": 5}),
@@ -428,8 +449,18 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
         ("finance", "get_unit_economics", {"product_id": product_id}),
         ("finance", "get_fx_rate", {"base": "USD", "quote": "CNY"}),
         ("knowledge", "search", {"query": "选品 合规"}),
+        ("listing", "get_listings", {"limit": 5}),
+        ("compliance", "check_listing", {"listing_id": listing_id}),
     ]
-    assert len(calls) == 16, "只读方法应为 16 个，实际 %d" % len(calls)
+    assert len(calls) == 18, "真库覆盖清单应为 18 条，实际 %d" % len(calls)
+    # 完整性（T-53）：除 memory.recall（Phase 6 未到，实现显式 NOT_IMPLEMENTED）外，
+    # 冻结清单里的每个只读方法都必须在这里真跑一遍——否则第二批新增的方法会静默漏测。
+    expected = {spec.key for spec in registry.tool_specs().values()
+                if not spec.writes and spec.key != "memory.recall"}
+    covered = {"%s.%s" % (tool_name, method) for tool_name, method, _ in calls}
+    assert covered == expected, (
+        "真库覆盖清单与冻结清单不一致：漏测 %s / 多测 %s"
+        % (sorted(expected - covered), sorted(covered - expected)))
 
     failures = []
     ok_count = 0
@@ -448,9 +479,46 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
                                              result.error["code"], result.error["detail"]))
     assert not failures, "只读方法在真实库上执行失败：\n  " + "\n  ".join(failures)
     # 反向断言：若哪天实现整体退化成「一律 NOT_FOUND」，上一条断言仍会全绿。
-    # 探针数据（商品/评分/合规报告/汇率）齐备时，16 个方法应全部走成功分支。
-    assert ok_count == 16, (
-        "只读方法成功 %d/16——是否有实现静默退化成 NOT_FOUND？" % ok_count)
+    # 探针数据（商品/Listing/评分/合规报告/汇率）齐备时，18 个方法应全部走成功分支。
+    assert ok_count == 18, (
+        "只读方法成功 %d/18——是否有实现静默退化成 NOT_FOUND？" % ok_count)
+
+
+def test_compliance_agent_reads_go_through_tool_layer(probe_tenant):
+    """判别力：compliance 的读取已迁到 Tool 层——每次读取必须留下 `mode=tool` 审计。
+
+    为什么断言审计行而不是返回值：把实现改回 `self.db.get(Product, ...)` 时返回值
+    完全相同，只有审计行会消失——没有这条，「已迁移」就只能靠人工看代码（T-55）。
+    """
+    from app.agents.compliance import ComplianceAgent
+    from app.db import SessionLocal
+    from app.models import AiLog, Listing
+
+    tenant_id = probe_tenant["tenant_id"]
+    agent = ComplianceAgent(tenant_id)
+    try:
+        report = agent.check_product(probe_tenant["product_id"])
+        listing_report = agent.check_listing(probe_tenant["listing_id"])
+    finally:
+        agent.close()
+    assert report["product_id"] == probe_tenant["product_id"]
+    assert listing_report["listing_id"] == probe_tenant["listing_id"]
+
+    db = SessionLocal()
+    try:
+        actions = {r.action for r in db.query(AiLog)
+                   .filter(AiLog.tenant_id == tenant_id, AiLog.mode == "tool").all()}
+        listing = db.get(Listing, probe_tenant["listing_id"])
+        risk_written = listing.risk_level
+    finally:
+        db.close()
+    assert {"tool:product.get_products", "tool:listing.get_listings",
+            "tool:knowledge.search"} <= actions, (
+        "compliance 的读取没有全部走 Tool 层——§18.3 第 2 步的迁移被回退了？"
+        "实际审计到的 Tool 调用：%s" % sorted(actions))
+    # 反向断言：`_sync_listing_risk` 的回写必须仍然生效——它是 §18.3 第 3 步的欠账，
+    # 但在迁移期间不得被顺手删掉（删掉等于「高风险 Listing 可发布」）。
+    assert risk_written == listing_report["risk_level"]
 
 
 def test_read_methods_reject_bad_params_without_touching_db(recorded, legacy_ctx):

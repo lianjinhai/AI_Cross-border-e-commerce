@@ -18,6 +18,7 @@ from .compliance import ComplianceTool
 from .contract import ToolSpec
 from .finance import FinanceTool
 from .knowledge import KnowledgeTool
+from .listing import ListingTool
 from .market import MarketTool
 from .memory import MemoryTool
 from .order import OrderTool
@@ -25,12 +26,12 @@ from .product import ProductTool
 from .store import StoreTool
 from .supply import SupplyTool
 
-# 顺序 = 架构文档 §10.4 表格顺序，便于人工比对（比对本身由
+# 顺序 = 架构文档 §10.4 / §10.4.1 表格顺序，便于人工比对（比对本身由
 # tests/test_tool_layer.py::test_manifest_matches_architecture_doc 自动完成）。
 TOOLS: dict[str, type[BaseTool]] = {
     cls.name: cls for cls in (ProductTool, StoreTool, OrderTool, SupplyTool,
                               FinanceTool, MarketTool, ComplianceTool,
-                              MemoryTool, KnowledgeTool)
+                              MemoryTool, KnowledgeTool, ListingTool)
 }
 
 
