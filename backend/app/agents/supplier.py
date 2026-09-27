@@ -1,10 +1,12 @@
-"""供应链 Agent：最优货源匹配 / 供应商评分 / 销量预测与缺货预警（对应规划第十四章）。"""
+"""供应链 Agent：最优货源匹配 / 供应商评分 / 销量预测与缺货预警（对应规划第十四章）。
+
+§18.3 第 2 步：读取全部经 Tool 层；写路径（评分快照 / 预测快照）集中标注，
+属第 3 步（Action 层）欠账。
+"""
 import math
 from datetime import datetime, timedelta
 
-from sqlalchemy import func
-
-from ..models import ForecastSnapshot, Order, Product, Supplier, SupplierOffer, SupplierScore
+from ..models import ForecastSnapshot, SupplierScore
 from .base import BaseAgent
 from .contracts import CONTRACTS
 
@@ -14,36 +16,66 @@ class SupplierAgent(BaseAgent):
     # Agent OS §6.2 契约（§18.3 第 1 步）：声明能力边界，供 Guardrail / Runtime 读取。
     agent_contract = CONTRACTS["supply_intelligence"]
 
+    # ---- 读取：全部经 Tool 层（§18.3 第 2 步）----
+    def _offers(self, **filters) -> list[dict]:
+        """读报价走 Supply Tool；读不到时返回空列表，由调用方按「无报价」处理。"""
+        got = self.tool("supply").call("get_supplier_offers", **filters)
+        return got.data if got.ok and isinstance(got.data, list) else []
+
+    def _suppliers(self, **filters) -> list[dict]:
+        got = self.tool("supply").call("search_suppliers", **filters)
+        return got.data if got.ok and isinstance(got.data, list) else []
+
+    def _offer_stats(self, **filters) -> dict:
+        got = self.tool("supply").call("get_offer_stats", **filters)
+        return got.data if got.ok and isinstance(got.data, dict) else {}
+
+    def _product(self, product_id) -> dict:
+        got = self.tool("product").call("get_products", product_id=product_id)
+        rows = got.data if got.ok and isinstance(got.data, list) else []
+        if not rows:
+            raise ValueError(f"商品 {product_id} 不存在")
+        return rows[0]
+
+    def _daily_sales(self, product_id: int, days: int = 84,
+                     platform: str = "", country: str = "") -> list[dict]:
+        got = self.tool("order").call("get_daily_sales", product_id=product_id, days=days,
+                                      platform=platform, country=country)
+        return got.data if got.ok and isinstance(got.data, list) else []
+
     # ---------------- 最优货源 ----------------
     def match_best(self, product_id: int) -> dict:
         """按 价格40% + 发货时效30% + 供应商口碑30% 选最优报价。"""
-        rows = (self.db.query(SupplierOffer, Supplier)
-                .join(Supplier, Supplier.id == SupplierOffer.supplier_id)
-                .filter(SupplierOffer.tenant_id == self.tenant_id,
-                        SupplierOffer.product_id == product_id,
-                        SupplierOffer.in_stock.is_(True))
-                .all())
+        offers = self._offers(product_id=product_id, in_stock=True, limit=200)
+        if not offers:
+            return {}
+        # 供应商档案一次取回：逐个查会产生 N 次调用与 N 行审计（同一个目标）。
+        by_id = {s["id"]: s for s in self._suppliers(
+            supplier_ids=[o["supplier_id"] for o in offers], limit=200)}
+        # 与旧 INNER JOIN 等价：报价的供应商不可见时该报价不参与评选。
+        rows = [(o, by_id[o["supplier_id"]]) for o in offers if o["supplier_id"] in by_id]
         if not rows:
             return {}
-        prices = [o.price for o, _ in rows]
+        prices = [o["price"] for o, _ in rows]
         pmin, pmax = min(prices), max(prices)
         best, best_score = None, -1.0
         for offer, sup in rows:
-            price_score = 100 if pmax == pmin else 100 * (pmax - offer.price) / (pmax - pmin)
-            ship_score = max(0.0, 100 - offer.ship_days * 8)
-            trust = (sup.rating / 5 * 50 + sup.stability / 2)
+            price_score = 100 if pmax == pmin else 100 * (pmax - offer["price"]) / (pmax - pmin)
+            ship_score = max(0.0, 100 - offer["ship_days"] * 8)
+            trust = (sup["rating"] / 5 * 50 + sup["stability"] / 2)
             score = 0.4 * price_score + 0.3 * ship_score + 0.3 * trust
             if score > best_score:
                 best, best_score = (offer, sup), score
         offer, sup = best
         return {
             "product_id": product_id,
-            "supplier": {"id": sup.id, "name": sup.name, "region": sup.region,
-                         "rating": sup.rating, "ship_days": sup.ship_days, "stability": sup.stability},
-            "offer": {"id": offer.id, "price": offer.price, "moq": offer.moq,
-                      "ship_days": offer.ship_days, "in_stock": offer.in_stock},
-            "reason": f"综合得分 {best_score:.0f}：价格 ¥{offer.price}、{offer.ship_days} 天发货、"
-                      f"供应商评分 {sup.rating}（{sup.name}）",
+            "supplier": {"id": sup["id"], "name": sup["name"], "region": sup["region"],
+                         "rating": sup["rating"], "ship_days": sup["ship_days"],
+                         "stability": sup["stability"]},
+            "offer": {"id": offer["id"], "price": offer["price"], "moq": offer["moq"],
+                      "ship_days": offer["ship_days"], "in_stock": offer["in_stock"]},
+            "reason": f"综合得分 {best_score:.0f}：价格 ¥{offer['price']}、"
+                      f"{offer['ship_days']} 天发货、供应商评分 {sup['rating']}（{sup['name']}）",
         }
 
     def match_best_batch(self, params: dict | None = None, context: dict | None = None) -> dict:
@@ -64,29 +96,28 @@ class SupplierAgent(BaseAgent):
 
     # ---------------- 供应商评分 ----------------
     def score_supplier(self, supplier_id: int) -> dict:
-        sup = self.db.get(Supplier, supplier_id)
-        if not sup or sup.tenant_id != self.tenant_id:
+        sups = self._suppliers(supplier_ids=[supplier_id], limit=1)
+        if not sups:
             raise ValueError(f"供应商 {supplier_id} 不存在")
-        offers = (self.db.query(SupplierOffer)
-                  .filter(SupplierOffer.tenant_id == self.tenant_id,
-                          SupplierOffer.supplier_id == supplier_id).all())
-        avg_price = sum(o.price for o in offers) / len(offers) if offers else 0
-        all_avg = (self.db.query(func.avg(SupplierOffer.price))
-                   .filter(SupplierOffer.tenant_id == self.tenant_id).scalar()) or avg_price or 1
-        quality = round(sup.rating / 5 * 100, 1)
+        sup = sups[0]
+        # 均价与全站均价都在 SQL 侧聚合：报价条数上限（200）不会污染这里的均值。
+        avg_price = float(self._offer_stats(supplier_id=supplier_id).get("avg_price") or 0)
+        all_avg = float(self._offer_stats().get("avg_price") or 0) or avg_price or 1
+        quality = round(sup["rating"] / 5 * 100, 1)
         cost = round(max(0.0, 100 - (avg_price / all_avg - 0.8) * 100), 1) if avg_price else 60.0
-        delivery = round(max(0.0, (14 - sup.ship_days) / 14 * 100), 1)
-        stability = round(sup.stability, 1)
+        delivery = round(max(0.0, (14 - sup["ship_days"]) / 14 * 100), 1)
+        stability = round(sup["stability"], 1)
         total = round(0.35 * quality + 0.25 * cost + 0.2 * delivery + 0.2 * stability, 1)
         reasons = [
-            f"平台评分 {sup.rating}/5 → 质量 {quality}",
+            f"平台评分 {sup['rating']}/5 → 质量 {quality}",
             f"均价 ¥{avg_price:.2f}（全站均价 ¥{all_avg:.2f}）→ 成本 {cost}",
-            f"{sup.ship_days} 天发货 → 时效 {delivery}",
+            f"{sup['ship_days']} 天发货 → 时效 {delivery}",
             f"履约稳定性 {stability}",
         ]
         row = SupplierScore(tenant_id=self.tenant_id, supplier_id=supplier_id,
                             quality=quality, cost=cost, delivery=delivery,
                             stability=stability, total=total, reasons=reasons, model="rule")
+        # 写路径（新建评分快照）：§18.3 第 3 步（Action 层）欠账，见 D41。
         self.db.add(row)
         self.db.commit()
         return {"supplier_id": supplier_id, "quality": quality, "cost": cost,
@@ -95,27 +126,18 @@ class SupplierAgent(BaseAgent):
 
     # ---------------- 销量预测 / 缺货预警 ----------------
     def forecast(self, product_id: int) -> dict:
-        p = self.db.get(Product, product_id)
-        if not p or p.tenant_id != self.tenant_id:
-            raise ValueError(f"商品 {product_id} 不存在")
+        p = self._product(product_id)
         # 12 周用于训练与滚动回测；旧版仅看 4 周，极易被促销/断货周误导。
-        since = datetime.utcnow() - timedelta(days=84)
-        order_query = (self.db.query(func.date(Order.created_at), func.sum(Order.qty))
-                .filter(Order.tenant_id == self.tenant_id, Order.product_id == product_id,
-                        Order.created_at >= since, Order.status != "refunded",
-                        Order.source.in_(("api", "import"))))
-        dims = p.attrs or {}
-        if dims.get("platform"):
-            order_query = order_query.filter(Order.platform == str(dims["platform"]))
-        if dims.get("country"):
-            order_query = order_query.filter(Order.country == str(dims["country"]))
-        rows = order_query.group_by(func.date(Order.created_at)).all()
+        dims = p["attrs"] or {}
+        rows = self._daily_sales(product_id, days=84,
+                                 platform=str(dims.get("platform") or ""),
+                                 country=str(dims.get("country") or ""))
         buckets = [0.0] * 12  # 最旧 -> 最新
         now = datetime.utcnow()
-        for d, qty in rows:
-            day = datetime.strptime(str(d), "%Y-%m-%d")
+        for item in rows:
+            day = datetime.strptime(str(item["date"]), "%Y-%m-%d")
             week = min(11, max(0, 11 - int((now - day).days // 7)))
-            buckets[week] += float(qty or 0)
+            buckets[week] += float(item["qty"] or 0)
 
         nonzero = sum(v > 0 for v in buckets)
         def predict(history, model="auto"):
@@ -173,33 +195,34 @@ class SupplierAgent(BaseAgent):
             confidence, reason = "medium", "滚动回测 WAPE≤50%，建议人工复核促销和断货"
         else:
             confidence, reason = "low", "滚动回测误差较高，不应自动采购"
-        onhand = float((p.attrs or {}).get("onhand") or 0)
+        onhand = float((p["attrs"] or {}).get("onhand") or 0)
         risk = "high" if onhand < weekly_demand else ("mid" if onhand < weekly_demand * 2 else "low")
         candidates = [{"model": e["model"],
                        "forecast": round(max(0, predict(buckets, e["model"])[0]), 1),
                        "wape": round(e["wape"], 4) if e["wape"] is not None else None,
                        "bias": round(e["bias"], 4) if e["bias"] is not None else None}
                       for e in evaluations]
-        features = {"sale_price": float((p.attrs or {}).get("sale_price") or 0),
-                    "promotion_active": bool((p.attrs or {}).get("promotion_active")),
-                    "stockout_weeks": int((p.attrs or {}).get("stockout_weeks") or 0),
+        features = {"sale_price": float((p["attrs"] or {}).get("sale_price") or 0),
+                    "promotion_active": bool((p["attrs"] or {}).get("promotion_active")),
+                    "stockout_weeks": int((p["attrs"] or {}).get("stockout_weeks") or 0),
                     "calendar_month": now.month, "calendar_week": int(now.strftime("%W")),
-                    "platform": str((p.attrs or {}).get("platform") or "unknown")}
+                    "platform": str((p["attrs"] or {}).get("platform") or "unknown")}
         snapshot = ForecastSnapshot(
             tenant_id=self.tenant_id, product_id=product_id, version="demand-v2.0",
             training_cutoff=now, target_start=now, target_end=now + timedelta(days=7),
-            dimensions={"sku": p.sku, "platform": features["platform"],
-                                             "country": str((p.attrs or {}).get("country") or "unknown")},
+            dimensions={"sku": p["sku"], "platform": features["platform"],
+                        "country": str((p["attrs"] or {}).get("country") or "unknown")},
             features=features, candidates=candidates, selected_model=method,
             point_forecast=weekly_demand, lower_bound=round(lower, 1), upper_bound=round(upper, 1),
             wape=round(wape, 4) if wape is not None else None,
             bias=round(bias, 4) if bias is not None else None, confidence=confidence)
+        # 写路径（新建预测快照）：§18.3 第 3 步（Action 层）欠账，见 D41。
         self.db.add(snapshot); self.db.commit()
         # 自动采购使用租户级门禁，而非单个 SKU 在短窗口内看似良好的结果。
         # 门禁还要求足量真实订单、整体 WAPE/Bias 和覆盖率均达标。
         from ..services.commercial_analytics import forecast_monitoring
         commercial_gate = forecast_monitoring(self.db, self.tenant_id)["commercial_gate"]
-        return {"product_id": product_id, "title": p.title,
+        return {"product_id": product_id, "title": p["title"],
                 "weekly_demand": weekly_demand, "onhand": onhand, "shortage_risk": risk,
                 "suggest_restock_qty": max(0, int(round(weekly_demand * 4 - onhand))),
                 "trend": [{"week": f"W{i+1}", "demand": buckets[i]} for i in range(12)],
@@ -221,8 +244,8 @@ class SupplierAgent(BaseAgent):
         params, context = params or {}, context or {}
         ids = params.get("product_ids") or context.get("product_ids")
         if not ids:
-            ids = [r[0] for r in self.db.query(Product.id)
-                   .filter(Product.tenant_id == self.tenant_id, Product.status == "active").all()]
+            got = self.tool("product").call("get_product_ids", status="active", limit=300)
+            ids = got.data if got.ok and isinstance(got.data, list) else []
         forecasts, shortages = [], []
         for pid in ids[:300]:
             try:

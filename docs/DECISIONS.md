@@ -2562,3 +2562,61 @@ D38（第二批清单启动）、`docs/子代理实施索引-20260923.md` 第二
 
 **关联**：架构 §10.4.1 / §18.3.1、规范 §11 DEBT-36 / T-2、D38 / D39（Agent 侧迁移前两例）、
 `docs/子代理实施索引-20260923.md` 第三十轮。
+
+---
+
+## D41：第二批清单补 3 个方法 + supplier.py 迁移 —— Agent 侧迁移第四例（2026-09-27）
+
+**背景**：§18.3 第 2 步继续推进。`supplier.py` 的 7 个直连读取点里有 3 类没有 Tool
+归属：跨表聚合（均价）、按日聚合销量、批量取商品 id。直接改 Agent 只能把「SQL 查询」
+换成「读全量再在 Python 里算」——那是把复杂度换个地方藏，不是迁移。因此本轮先做一次
+**方法级补批**（§10.4.1「只增不改」），再迁移。
+
+### 一、交付物
+
+| 文件 | 变更 | 职责 |
+|---|---|---|
+| `backend/app/tools/supply.py` | +1 方法 / +2 参数 | `get_offer_stats()`（SQL 侧聚合条数/均价/最低/最高）；`search_suppliers(supplier_ids=…)`、`get_supplier_offers(in_stock=…)` |
+| `backend/app/tools/order.py` | +1 方法 | `get_daily_sales(product_id, days=84, platform, country)`：按日聚合销量，口径与预测训练集一致（排除退款、仅 api/import） |
+| `backend/app/tools/product.py` | +1 方法 | `get_product_ids(status, limit)`：批量任务只取 id，避免把商品库灌进上下文 |
+| `backend/app/agents/supplier.py` | 迁移（238 → 261 行） | 7 处直连读取全部改走 Tool（报价/供应商/商品/销量）；两处写路径（评分快照、预测快照）保留并标注 |
+| `backend/tests/test_agent_layer_boundaries.py` | 基线 | `supplier.py` (5, 2) → (0, 0)（首个读取点归零文件）；棘轮之和 48 → **41** |
+| `backend/tests/test_tool_layer.py` | +1 条 + 覆盖清单 | supplier 迁移判别力（5 个 `tool:*` 审计 action + 两处写路径反向断言）；真库覆盖 19 → 22 条 |
+| 文档 | 同步 | §10.4.1 三行、§18.3.1（4/9 文件、之和 41）、DEBT-36、D41 索引 |
+
+### 二、四个关键决策
+
+| # | 决策 | 备选与被否原因 |
+|---|---|---|
+| 1 | **聚合下推到 SQL，而不是把报价/订单全量取回再在 Agent 里算** | 12 周窗口内爆款可以有上万条订单；逐条进 Agent 上下文与审计等于把订单表搬进上下文（违 §10.2 data_scope）。聚合结果只有几十行 |
+| 2 | **`supplier_ids` 兼容「单值 / 列表 / 逗号串」** | 调用方既有 Agent（列表）也有脚本（字符串）；各写一套解析必然漂移（T-53），统一收口后脏值一律 BAD_PARAM |
+| 3 | **报价候选上限 200（按价格升序）** | Tool 层必须给返回体设界（§10.2）。这是本轮唯一的行为边界：某商品在库报价 >200 时，评选只在前 200 条（价格从低到高）内进行。若真实出现，正确解法是继续下推聚合，而不是抬高上限 |
+| 4 | **两处写路径保留 `self.db.add`（不在棘轮口径内）** | 棘轮只数 `query`/`get`；但写路径同样违 §9.1，属第 3 步。保留 + 反向断言（评分/预测快照必须真的落库），避免「迁移顺手把写删了」 |
+
+### 三、判别力验证（实测）
+
+| 验证 | 变异 | 结果 |
+|---|---|---|
+| supplier 迁移可判别 | `_offers` 改回 `self.db.query(SupplierOffer)` | ✅ 两道门禁同时命中：棘轮「1 > 基线 0」+ 审计断言「缺 `tool:supply.get_supplier_offers`」；还原后字节一致 |
+| 写路径未被顺手删 | —— | 用例内断言 `SupplierScore` / `ForecastSnapshot` 各落 1 行 |
+| 冻结清单数量 | —— | `len(doc) == 24` → **27**、真库覆盖 19 → **22**（两处硬计数同步，防止补批漏改文档） |
+
+### 四、验证结果
+
+| 验证 | 结果 |
+|---|---|
+| 后端回归（正序 / 反序） | ✅ **402 passed**（正反序一致） |
+| `ruff check app/ tests/ scripts/` | ✅ 全绿 |
+| 文档校验 | ✅ A~K 全 PASS（10 项，编号无 J） |
+| 主库 | 未触碰（本轮无迁移文件） |
+
+### 五、剩余工作（诚实记录）
+
+- DEBT-36 未关闭：`AdCampaign` / `OpportunitySupplierMatch` / `SupplierCatalogProduct` /
+  `ForecastSnapshot` / `ListingReviewDecision` 五类仍无 Tool 归属；
+- 棘轮之和 48 → **41**（其中 3 处为写路径），剩余 **38** 处读取点待迁；
+- 下一个迁移目标：`orchestrator.py`（6 处 `func.count`/`sum` 聚合，需先补统计类方法）
+  或 `listing_review.py`（3 + 2，需补 `ListingReviewDecision` 这一批清单项）。
+
+**关联**：架构 §10.4.1 / §18.3.1、规范 §11 DEBT-36、D40（字段级核心拆分）、
+`docs/子代理实施索引-20260923.md` 第三十一轮。

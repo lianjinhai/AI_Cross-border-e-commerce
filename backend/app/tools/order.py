@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from sqlalchemy import func
+
 from ..models import Order, RefundOrder
 from .base import BaseTool, Reading, as_int, clamp_limit, reading, ts
 from .contract import ToolSpec
@@ -37,6 +39,8 @@ class OrderTool(BaseTool):
                  writes=False, summary="列出本租户订单，可按订单/状态/店铺过滤"),
         ToolSpec(tool="order", method="analyze_sales", permission="order:read",
                  writes=False, summary="按窗口汇总销售额、退款与平台分布"),
+        ToolSpec(tool="order", method="get_daily_sales", permission="order:read",
+                 writes=False, summary="按日聚合单商品销量（排除退款单，仅 api/import 来源）"),
     )
 
     def _get_orders(self, limit=50, status: str = "", shop_id=None, order_id=None) -> Reading:
@@ -55,6 +59,34 @@ class OrderTool(BaseTool):
         rows = query.order_by(Order.id.desc()).limit(n).all()
         return reading([order_dict(o) for o in rows], table="orders",
                        order_ids=[o.id for o in rows])
+
+    def _get_daily_sales(self, product_id, days=84, platform: str = "",
+                         country: str = "") -> Reading:
+        """按日聚合销量：口径与需求预测的训练集一致（排除退款单、仅真实来源）。
+
+        为什么聚合在 SQL 里做而不是把订单取回来在 Python 里分组
+            12 周窗口内一个爆款可以有上万条订单，而 Tool 返回体会进 Agent 上下文
+            与审计；逐条返回等于把订单表搬进上下文。聚合后每天一行。
+        """
+        pid = as_int(product_id, "product_id")
+        window = clamp_limit(days, default=84, maximum=3650, name="days")
+        since = datetime.utcnow() - timedelta(days=window)
+        query = (self.db.query(func.date(Order.created_at), func.sum(Order.qty))
+                 .filter(Order.tenant_id == self.context.tenant_id,
+                         Order.product_id == pid,
+                         Order.created_at >= since,
+                         Order.status != "refunded",
+                         Order.source.in_(("api", "import"))))
+        name = (platform or "").strip()
+        if name:
+            query = query.filter(Order.platform == name)
+        region = (country or "").strip()
+        if region:
+            query = query.filter(Order.country == region)
+        rows = query.group_by(func.date(Order.created_at)).all()
+        return reading([{"date": str(d), "qty": float(q or 0)} for d, q in rows],
+                       table="orders", product_id=pid, since=ts(since),
+                       window_days=window, day_count=len(rows))
 
     def _analyze_sales(self, days=30) -> Reading:
         # 上限 3650 天（约 10 年）：不是业务限制，而是给「days=10**9」这类调用

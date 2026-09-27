@@ -85,7 +85,7 @@ def _doc_manifest() -> dict:
 def test_manifest_matches_architecture_doc():
     """注册表必须与 §10.4 + §10.4.1 冻结清单**逐条一致**（数量、权限、读写属性）。"""
     doc = _doc_manifest()
-    assert len(doc) == 24, "§10.4 + §10.4.1 应含 24 个方法，解析到 %d 个：%s" % (len(doc), sorted(doc))
+    assert len(doc) == 27, "§10.4 + §10.4.1 应含 27 个方法，解析到 %d 个：%s" % (len(doc), sorted(doc))
     assert "listing.get_listings" in doc, "§10.4.1 第二批表格未被解析到（区段边界写错？）"
     assert "conversation.get_conversations" in doc, "§10.4.1 的 Conversation Tool 未被解析到"
 
@@ -454,15 +454,18 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
     ctx = legacy_context(tenant_id=tenant_id, agent_type="market_intelligence")
     calls = [
         ("product", "get_products", {"limit": 5}),
+        ("product", "get_product_ids", {"status": "active", "limit": 5}),
         ("product", "analyze_product", {"product_id": product_id}),
         ("market", "get_trends", {"limit": 5}),
         ("market", "score_opportunity", {"product_id": product_id}),
         ("supply", "search_suppliers", {"limit": 5}),
         ("supply", "get_supplier_offers", {"limit": 5}),
+        ("supply", "get_offer_stats", {}),
         ("compliance", "get_platform_rules", {}),
         ("compliance", "check_product", {"product_id": product_id}),
         ("order", "get_orders", {"limit": 5}),
         ("order", "analyze_sales", {"days": 30}),
+        ("order", "get_daily_sales", {"product_id": product_id, "days": 30}),
         ("store", "list_connected_stores", {}),
         ("store", "get_store_metrics", {"days": 30}),
         ("finance", "calculate_profit", {"product_id": product_id}),
@@ -473,7 +476,7 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
         ("compliance", "check_listing", {"listing_id": listing_id}),
         ("conversation", "get_conversations", {"limit": 5}),
     ]
-    assert len(calls) == 19, "真库覆盖清单应为 19 条，实际 %d" % len(calls)
+    assert len(calls) == 22, "真库覆盖清单应为 22 条，实际 %d" % len(calls)
     # 完整性（T-53）：除 memory.recall（Phase 6 未到，实现显式 NOT_IMPLEMENTED）外，
     # 冻结清单里的每个只读方法都必须在这里真跑一遍——否则第二批新增的方法会静默漏测。
     expected = {spec.key for spec in registry.tool_specs().values()
@@ -500,9 +503,9 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
                                              result.error["code"], result.error["detail"]))
     assert not failures, "只读方法在真实库上执行失败：\n  " + "\n  ".join(failures)
     # 反向断言：若哪天实现整体退化成「一律 NOT_FOUND」，上一条断言仍会全绿。
-    # 探针数据（商品/Listing/评分/合规报告/汇率）齐备时，19 个方法应全部走成功分支。
-    assert ok_count == 19, (
-        "只读方法成功 %d/19——是否有实现静默退化成 NOT_FOUND？" % ok_count)
+    # 探针数据（商品/Listing/评分/合规报告/汇率）齐备时，22 个方法应全部走成功分支。
+    assert ok_count == 22, (
+        "只读方法成功 %d/22——是否有实现静默退化成 NOT_FOUND？" % ok_count)
 
 
 def test_compliance_agent_reads_go_through_tool_layer(probe_tenant):
@@ -735,6 +738,113 @@ def test_listing_publish_blocks_rule_violation(client):
         try:
             db.query(AiLog).filter(AiLog.tenant_id == ids["tenant_id"]).delete()
             db.query(Listing).filter(Listing.id == ids["listing_id"]).delete()
+            db.query(Product).filter(Product.id == ids["product_id"]).delete()
+            db.query(Tenant).filter(Tenant.id == ids["tenant_id"]).delete()
+            db.commit()
+        finally:
+            db.close()
+
+
+def test_supplier_agent_reads_go_through_tool_layer(client):
+    """判别力：supplier 的报价/供应商/商品/销量读取必须留下 `mode=tool` 审计。
+
+    自带探针租户（商品 + 两个供应商 + 在库报价 + 近 12 周订单），夹具内建内删
+    （规范 T-2）。参数 `client` 只为拉起会话级建库夹具（单跑本用例也要有表）。
+    """
+    from datetime import datetime, timedelta
+
+    from app.agents.supplier import SupplierAgent
+    from app.db import SessionLocal
+    from app.models import (
+        AiLog,
+        ForecastSnapshot,
+        Order,
+        Product,
+        Supplier,
+        SupplierOffer,
+        SupplierScore,
+        Tenant,
+    )
+
+    now = datetime.utcnow()
+    db = SessionLocal()
+    try:
+        tenant = Tenant(name="ToolLayer供应链探针租户")
+        db.add(tenant)
+        db.commit()
+        product = Product(tenant_id=tenant.id, sku="TOOL-SUPPLY-1",
+                          title="Tool Layer 供应链探针商品", status="active",
+                          attrs={"onhand": 10, "sale_price": 19.9})
+        dear = Supplier(tenant_id=tenant.id, name="探针供应商甲", region="深圳",
+                        rating=4.5, ship_days=3, stability=90.0)
+        cheap = Supplier(tenant_id=tenant.id, name="探针供应商乙", region="义乌",
+                         rating=3.0, ship_days=9, stability=60.0)
+        db.add_all([product, dear, cheap])
+        db.commit()
+        db.add_all([
+            SupplierOffer(tenant_id=tenant.id, supplier_id=dear.id, product_id=product.id,
+                          price=12.0, currency="CNY", moq=10, ship_days=3, in_stock=True),
+            SupplierOffer(tenant_id=tenant.id, supplier_id=cheap.id, product_id=product.id,
+                          price=9.0, currency="CNY", moq=50, ship_days=9, in_stock=True),
+        ])
+        for days_ago, qty in ((7, 20), (14, 15), (21, 5)):
+            db.add(Order(tenant_id=tenant.id, platform="shopee",
+                         external_no="TOOL-SUP-%d" % days_ago, product_id=product.id,
+                         qty=qty, amount=100.0, currency="USD", status="paid",
+                         source="api", created_at=now - timedelta(days=days_ago)))
+        db.commit()
+        ids = {"tenant_id": tenant.id, "product_id": product.id, "supplier_id": dear.id}
+    finally:
+        db.close()
+
+    try:
+        agent = SupplierAgent(ids["tenant_id"])
+        try:
+            best = agent.match_best(ids["product_id"])
+            score = agent.score_supplier(ids["supplier_id"])
+            fc = agent.forecast(ids["product_id"])
+        finally:
+            agent.close()
+        # 综合分：乙 = 0.4×100(价) + 0.3×28(时效) + 0.3×60(口碑) = 66.4 > 甲 49.8。
+        # 口径写死在这里是刻意的：分项权重若被改动，本断言立刻红。
+        assert best["supplier"]["id"] != ids["supplier_id"], "低价侧报价应胜出"
+        assert best["offer"]["price"] == 9.0
+        assert best["supplier"]["name"] == "探针供应商乙"
+        assert score["total"] > 0
+        assert fc["product_id"] == ids["product_id"]
+
+        db = SessionLocal()
+        try:
+            actions = {r.action for r in db.query(AiLog)
+                       .filter(AiLog.tenant_id == ids["tenant_id"],
+                               AiLog.mode == "tool").all()}
+            score_rows = db.query(SupplierScore).filter(
+                SupplierScore.tenant_id == ids["tenant_id"]).count()
+            snap_rows = db.query(ForecastSnapshot).filter(
+                ForecastSnapshot.tenant_id == ids["tenant_id"]).count()
+        finally:
+            db.close()
+        expected = {"tool:supply.get_supplier_offers", "tool:supply.search_suppliers",
+                    "tool:supply.get_offer_stats", "tool:product.get_products",
+                    "tool:order.get_daily_sales"}
+        assert expected <= actions, (
+            "supplier 的读取没有全部走 Tool 层——§18.3 第 2 步的迁移被回退了？缺失：%s"
+            % sorted(expected - actions))
+        # 反向断言：两处写路径（评分快照 / 预测快照）必须仍然落库——它们是第 3 步欠账，
+        # 迁移期间不得被顺手删掉（删掉等于「评分/预测点了没反应」）。
+        assert score_rows == 1 and snap_rows == 1
+    finally:
+        db = SessionLocal()
+        try:
+            db.query(AiLog).filter(AiLog.tenant_id == ids["tenant_id"]).delete()
+            db.query(SupplierScore).filter(
+                SupplierScore.tenant_id == ids["tenant_id"]).delete()
+            db.query(ForecastSnapshot).filter(
+                ForecastSnapshot.tenant_id == ids["tenant_id"]).delete()
+            db.query(SupplierOffer).filter(
+                SupplierOffer.tenant_id == ids["tenant_id"]).delete()
+            db.query(Order).filter(Order.tenant_id == ids["tenant_id"]).delete()
+            db.query(Supplier).filter(Supplier.tenant_id == ids["tenant_id"]).delete()
             db.query(Product).filter(Product.id == ids["product_id"]).delete()
             db.query(Tenant).filter(Tenant.id == ids["tenant_id"]).delete()
             db.commit()

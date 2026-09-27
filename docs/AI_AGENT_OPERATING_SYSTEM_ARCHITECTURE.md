@@ -799,12 +799,15 @@ ToolResult {
 而现有 Agent 的 57 个读取点还覆盖 `Conversation` / `Listing` / `AdCampaign` /
 `OpportunitySupplierMatch` / `SupplierCatalogProduct` / `ForecastSnapshot` /
 `ListingReviewDecision` 七类目标（DEBT-36）。缺归属则 §18.3 第 2 步后半无法落地。
-**迁移进度见 §18.3.1**（唯一进度记录，本表只声明清单）。
+**第二批还包含既有 Tool 的方法补批**（Supply / Order / Product 各 1 个方法，为 supplier.py 的聚合读取提供归属）；**迁移进度见 §18.3.1**（唯一进度记录，本表只声明清单）。
 
 | Tool | 方法 | 所需权限 | 读/写 |
 |---|---|---|---|
 | **Listing Tool** | `get_listings()` | `listing:read` | 读 |
 | **Conversation Tool** | `get_conversations()` | `support:read` | 读 |
+| **Supply Tool** | `get_offer_stats()` | `supply:read` | 读 |
+| **Order Tool** | `get_daily_sales()` | `order:read` | 读 |
+| **Product Tool** | `get_product_ids()` | `product:read` | 读 |
 
 ### 10.5 写操作的特殊约束
 
@@ -1402,7 +1405,7 @@ Platform Identity（`superadmin`，ADR-F03 相关）**没有业务 Workspace**�
 | 步 | 状态 | 证据 / 剩余工作 |
 |---|---|---|
 | 1 | ✅ **完成**（D35） | 8 条冻结契约落在 `backend/app/agents/contracts.py`；`SupportAgent` 显式未登记（DEBT-34） |
-| 2 | 🔶 **前半完成、后半进行中**（D37 / D38 / D39 / D40） | 基础设施（D37）：§10.4 的 9 个 Tool / 22 个方法、`call()` 六步管线、审计、注册表与清单自检。第二批清单：`Listing Tool`（D38）、`Conversation Tool`（D39，前置补 `support:read` 权限 key，走迁移）已交付（合计 11 个 Tool / 24 个方法，§10.4.1）。**Agent 侧迁移 3/9 文件**：`compliance.py`、`support.py`、`listing.py` 的读取点全部改走 Tool（由 `ai_logs` 的 `mode=tool` 行与测试证明）；`listing.py` 的写路径收敛到 `_write_listing` 单点，规则判定改用 `services/platform_rules.validate_listing_fields`（D40）。进度锚点：`tests/test_agent_layer_boundaries.py::_ORM_CALL_BASELINE` 之和 = **48**（其中 3 处是写路径，属第 3 步）→ 剩余 **45** 处读取点仍受 DEBT-36 约束（五类目标尚无 Tool 归属） |
+| 2 | 🔶 **前半完成、后半进行中**（D37 / D38 / D39 / D40 / D41） | 基础设施（D37）：§10.4 的 9 个 Tool / 22 个方法、`call()` 六步管线、审计、注册表与清单自检。第二批清单：`Listing Tool`（D38）、`Conversation Tool`（D39，前置补 `support:read` 权限 key，走迁移）已交付（合计 11 个 Tool / 27 个方法，§10.4.1）。**Agent 侧迁移 4/9 文件**：`compliance.py`、`support.py`、`listing.py`、`supplier.py` 的读取点全部改走 Tool（由 `ai_logs` 的 `mode=tool` 行与测试证明）；写路径分别收敛到 `listing._write_listing` 与两处快照插入，规则判定改用 `services/platform_rules.validate_listing_fields`（D40 / D41）。进度锚点：`tests/test_agent_layer_boundaries.py::_ORM_CALL_BASELINE` 之和 = **41**（其中 3 处是写路径，属第 3 步）→ 剩余 **38** 处读取点仍受 DEBT-36 约束（五类目标尚无 Tool 归属） |
 | 3 | ⏳ 未开始 | 高风险：`listing.publish` / `listing.optimize` 的写已集中到 `_write_listing`（D40），但仍是 Agent 直改 + `commit`（违 §9.1）；`pricing.reprice_batch`、`ads.optimize_budget` 待办 |
 | 4 | ⏳ 未开始 | Orchestrator 仍同步直调 |
 | 5 | ⏳ 未开始 | `BaseAgent.SessionLocal()` 仍自持会话；完成后才能关闭 DEBT-35 |

@@ -34,6 +34,8 @@ class ProductTool(BaseTool):
     specs = (
         ToolSpec(tool="product", method="get_products", permission="product:read",
                  writes=False, summary="列出本租户商品，可按关键词过滤"),
+        ToolSpec(tool="product", method="get_product_ids", permission="product:read",
+                 writes=False, summary="列出本租户商品 id（批量任务用，按状态过滤）"),
         ToolSpec(tool="product", method="analyze_product", permission="product:read",
                  writes=False, summary="单商品的评分/经营表现/采购成本综合分析"),
         ToolSpec(tool="product", method="create_listing_draft", permission="listing:write",
@@ -55,6 +57,24 @@ class ProductTool(BaseTool):
         rows = query.order_by(Product.id.desc()).limit(n).all()
         return reading([product_dict(p) for p in rows], table="products",
                        product_ids=[p.id for p in rows])
+
+    def _get_product_ids(self, status: str = "", limit=300) -> Reading:
+        """只返回商品 id。
+
+        为什么单开一个方法而不是让调用方 `get_products(limit=500)` 再取 id
+            批量任务（如全量需求预测）只需要 id 清单；拉全量商品行会把整个商品库
+            灌进 Agent 上下文与审计（§10.2 的 data_scope 纪律）。`order_by(id)`
+            让「取前 N 个」有确定顺序，不依赖数据库的隐式行序。
+        """
+        n = clamp_limit(limit, default=300, maximum=500)
+        query = self.db.query(Product.id).filter(
+            Product.tenant_id == self.context.tenant_id)
+        state = (status or "").strip()
+        if state:
+            query = query.filter(Product.status == state)
+        rows = query.order_by(Product.id).limit(n).all()
+        return reading([r[0] for r in rows], table="products",
+                       status=state, count=len(rows))
 
     def _analyze_product(self, product_id: int) -> Reading:
         product = self._owned(product_id)
