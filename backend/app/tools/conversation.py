@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 
+from sqlalchemy import func
+
 from ..models import Conversation
 from .base import BaseTool, Reading, as_int, clamp_limit, reading, ts
 from .contract import ERR_BAD_PARAM, ToolError, ToolSpec
@@ -38,6 +40,8 @@ class ConversationTool(BaseTool):
     specs = (
         ToolSpec(tool="conversation", method="get_conversations", permission="support:read",
                  writes=False, summary="列出本租户客服会话，可按会话/状态过滤（不含买家姓名）"),
+        ToolSpec(tool="conversation", method="count_conversations", permission="support:read",
+                 writes=False, summary="统计本租户客服会话数量，可按状态过滤"),
     )
 
     def _get_conversations(self, conversation_id=None, status: str = "", limit=50) -> Reading:
@@ -58,3 +62,22 @@ class ConversationTool(BaseTool):
         rows = query.order_by(Conversation.id.desc()).limit(n).all()
         return reading([conversation_dict(c) for c in rows], table="conversations",
                        conversation_ids=[c.id for c in rows])
+
+    def _count_conversations(self, status: str = "") -> Reading:
+        """会话计数（总调度 / 看板用）：只返回数量，不取回会话行。
+
+        与 `get_conversations` 同款状态校验：状态拼错时调用方拿到 BAD_PARAM，
+        而不是一个「查不到所以是 0」的假计数。
+        """
+        state = (status or "").strip()
+        if state and state not in _STATUSES:
+            raise ToolError(ERR_BAD_PARAM,
+                            "status 必须是 %s 之一，实际 %r"
+                            % ("/".join(_STATUSES), status))
+        query = self.db.query(func.count(Conversation.id)).filter(
+            Conversation.tenant_id == self.context.tenant_id)
+        if state:
+            query = query.filter(Conversation.status == state)
+        count = int(query.scalar() or 0)
+        return reading({"count": count, "status": state}, table="conversations",
+                       status=state, count=count)

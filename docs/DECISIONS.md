@@ -2794,3 +2794,64 @@ D38（第二批清单启动）、`docs/子代理实施索引-20260923.md` 第二
 
 **关联**：架构 §10.4.1 / §18.3.1、规范 §11 DEBT-36、D41（`get_product_ids` 复用）、
 D43（返回体边界同款）、`docs/子代理实施索引-20260923.md` 第三十四轮。
+
+---
+
+## D45：Tool 计数 / 汇总补批 + orchestrator.py 迁移 —— Agent 侧迁移第八例（2026-09-28）
+
+**背景**：§18.3 第 2 步进入收尾。`orchestrator.py` 的 6 处直连读取全是**聚合查询**
+（`func.count` / `func.sum`）：草稿 Listing 数、待处理会话数、在售商品数、近 30 天
+经营概况（GMV / 订单 / 利润）、广告花费与收入、供应商候选清单。这些聚合口径与
+页面（BI 页、工作台）同源，散在 Agent 里就没人能保证两处一致。
+
+### 一、交付物
+
+| 文件 | 变更 | 职责 |
+|---|---|---|
+| `backend/app/tools/conversation.py` | +1 方法 | `count_conversations(status)`：会话计数（状态校验与 `get_conversations` 同源，拼错报 BAD_PARAM 而不是静默当 0） |
+| `backend/app/tools/listing.py` | +1 方法 | `count_listings(status)`：上架内容计数（同款状态校验） |
+| `backend/app/tools/product.py` | +5 方法 | `count_products(status / category)`、`get_categories(status / limit)`（剔空、按名升序）、`get_latest_performance(product_id)`（只读缓存行不重算；`id desc`）、`get_sold_product_ids(min_units / limit)`（探索配额判定）、`find_duplicate(dedupe_hash / exclude_id)`（无重复返回 None，不报 NOT_FOUND） |
+| `backend/app/tools/order.py` | +1 方法 | `get_sales_summary(days)`：经营概况口径（**整体排除退款单**）的 GMV / 订单数 / 利润；与 `analyze_sales`（含退款单毛量 + 退款明细，用于对账）口径不同、各自成立 |
+| `backend/app/tools/finance.py` | +1 方法 | `get_campaign_totals()`：广告总花费 / 总收入（SQL 侧聚合，不取回活动行；ROI 除法边界留给调用方） |
+| `backend/app/tools/market.py` | +2 方法 | `get_latest_scores(limit)`：每个商品最新评分（`max(id)` 取最新，避免秒级时间戳并列；上限 500）；`pick_trend()`：随机取一条趋势（保留原兜底语义） |
+| `backend/app/agents/orchestrator.py` | 迁移（6, 0 → 0, 0） | 6 处读取全部改走 Tool（Conversation / Listing / Supply / Order / Finance / Product）；供应商候选改由 Supply Tool 排序（rating desc）并显式声明上限 10；`chat()` 的 AiLog 写入保留并标注为第 3 步欠账 |
+| `backend/tests/test_agent_layer_boundaries.py` | 基线 | `orchestrator.py` (6, 0) → **(0, 0)**；棘轮之和 27 → **21** |
+| `backend/tests/test_tool_layer.py` | 清单 + 覆盖 + 判别力 | 冻结清单硬计数 32 → **43**（第三批 11 个只读方法一次补批）；真库覆盖 27 → **38** 条且全部走成功分支（探针夹具补趋势 + 经营表现两行）；新增 orchestrator 判别力用例（6 个 `tool:*` 审计 action + chat 留痕反向断言）；坏参数用例 +6 |
+| 文档 | 同步 | §10.4.1 十一行 + 补批说明、§18.3.1（8/9 文件、之和 21）、DEBT-36、D45 + ADR 索引 |
+
+### 二、四个关键决策
+
+| # | 决策 | 备选与被否原因 |
+|---|---|---|
+| 1 | **`count_*` 系列状态拼错报 BAD_PARAM，不静默返回 0** | 「查不到所以是 0」会把调用方写错的枚举值伪装成正常计数；与 `get_conversations` / `get_listings` 同款校验（T-53） |
+| 2 | **`get_sales_summary` 与 `analyze_sales` 并存** | 两者口径不同：对账要「含退款单毛量 + 退款明细」，经营概况要「排除退款单」。合并成一个必有一处失真；T-53 管的是「同一口径不得有两份」，不是「不同口径必须合并」 |
+| 3 | **`get_latest_scores` 用 `max(id)` 而不是 `created_at` 取最新** | 同一批写入的评分时间戳可能相同（秒级），id 才是唯一单调次序（D42 同款结论）；口径唯一才能让选品排名可复现 |
+| 4 | **`pick_trend` 保留随机兜底，不改成「取搜索量最高」** | 兜底的原意是给无类目匹配的商品分布多样的需求分；改成取最高会把兜底变成新的单点偏差，且属顺手改业务语义（迁移不做语义变更） |
+
+### 三、判别力验证（实测）
+
+| 验证 | 变异 | 结果 |
+|---|---|---|
+| orchestrator 迁移可判别 | `_do_support` 改回 `self.db.query(Conversation)` | ✅ 棘轮命中「orchestrator.py 的 self.db.query：1 > 基线 0」 |
+| 审计断言可判别 | 同上（补延迟 import 让返回值等价） | ✅ 审计断言命中「缺 `tool:conversation.count_conversations`」；还原后 sha256 字节一致 |
+| 冻结清单数量 | —— | `len(doc) == 32` → **43**、真库覆盖 27 → **38**（两处硬计数同步） |
+| chat 写路径未被顺手删 | —— | 用例断言 4 次 `chat()` 各留 1 条 `agent=orchestrator` 审计 |
+
+### 四、验证结果
+
+| 验证 | 结果 |
+|---|---|
+| 后端回归（正序 / 反序） | ✅ **406 passed**（正反序一致；`docs/baseline.json` 已刷新） |
+| `ruff check app/ tests/ scripts/` | ✅ 全绿 |
+| 文档校验 | ✅ A~K 全 PASS |
+| 主库 | 未触碰（本轮无迁移文件；E2E 隔离性校验前后 sha256 一致） |
+
+### 五、剩余工作（诚实记录）
+
+- 棘轮之和 27 → **21**（其中 6 处为写路径），剩余 **15** 处读取点全在 `discovery.py`；
+- 第三批 11 个方法中 6 个（Market / Product 批量读取）的消费方是 `discovery.py`，
+  在 D46 完成迁移前只有清单归属、没有调用方——这是有意的「清单先行」；
+- `orchestrator.chat` 的 AiLog 落库仍是 Agent 直写（第 3 步欠账）。
+
+**关联**：架构 §10.4.1 / §18.3.1、规范 §11 DEBT-36、D42（`id desc` 口径）、
+D44（返回体边界同款）、`docs/子代理实施索引-20260923.md` 第三十五轮。

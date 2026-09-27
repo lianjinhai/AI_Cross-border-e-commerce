@@ -20,6 +20,8 @@
 
 from __future__ import annotations
 
+from sqlalchemy import func
+
 from ..models import AdCampaign, Product
 from ..services.costing import calc_profit, cost_elements, latest_fx
 from .base import BaseTool, Reading, as_int, clamp_limit, reading, ts
@@ -47,6 +49,8 @@ class FinanceTool(BaseTool):
                  writes=False, summary="读取最近一条生效汇率"),
         ToolSpec(tool="finance", method="get_campaigns", permission="finance:read",
                  writes=False, summary="读取广告活动（预算/花费/收入/点击），可按状态或商品过滤"),
+        ToolSpec(tool="finance", method="get_campaign_totals", permission="finance:read",
+                 writes=False, summary="广告总花费/总收入聚合（经营概况 ROI 的输入）"),
     )
 
     def _calculate_profit(self, product_id: int, price=None) -> Reading:
@@ -105,3 +109,14 @@ class FinanceTool(BaseTool):
         rows = query.order_by(AdCampaign.id.desc()).limit(n).all()
         return reading([campaign_dict(c) for c in rows], table="ad_campaigns",
                        campaign_ids=[c.id for c in rows])
+
+    def _get_campaign_totals(self) -> Reading:
+        """广告总花费 / 总收入（经营概况 ROI 的输入）：在 SQL 侧聚合，不取回活动行。
+
+        ROI = (revenue - spend) / spend 归调用方按自身场景计算：本 Tool 只保证
+        两个总量的口径唯一；spend 为 0 的除法边界属于调用方的业务判断。
+        """
+        row = (self.db.query(func.sum(AdCampaign.spend), func.sum(AdCampaign.revenue))
+               .filter(AdCampaign.tenant_id == self.context.tenant_id).first())
+        spend, revenue = float(row[0] or 0), float(row[1] or 0)
+        return reading({"spend": spend, "revenue": revenue}, table="ad_campaigns")

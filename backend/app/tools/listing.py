@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+from sqlalchemy import func
+
 from ..models import Listing
 from .base import BaseTool, Reading, as_int, clamp_limit, reading, ts
 from .contract import ERR_BAD_PARAM, ToolError, ToolSpec
@@ -42,6 +44,8 @@ class ListingTool(BaseTool):
         ToolSpec(tool="listing", method="get_published_product_ids",
                  permission="listing:read", writes=False,
                  summary="已发布 Listing 的商品 id 去重清单"),
+        ToolSpec(tool="listing", method="count_listings", permission="listing:read",
+                 writes=False, summary="统计本租户上架内容数量，可按状态过滤"),
     )
 
     def _get_listings(self, listing_id=None, product_id=None, status: str = "",
@@ -81,3 +85,21 @@ class ListingTool(BaseTool):
                         Listing.status == "published")
                 .distinct().order_by(Listing.product_id).limit(n).all())
         return reading([r[0] for r in rows], table="listings", count=len(rows))
+
+    def _count_listings(self, status: str = "") -> Reading:
+        """上架内容计数（总调度 / 工作台用）：只返回数量，不取回内容行。
+
+        与 `get_listings` 同款状态校验（状态拼错即 BAD_PARAM，不静默当 0）。
+        """
+        state = (status or "").strip()
+        if state and state not in _STATUSES:
+            raise ToolError(ERR_BAD_PARAM,
+                            "status 必须是 %s 之一，实际 %r"
+                            % ("/".join(_STATUSES), status))
+        query = self.db.query(func.count(Listing.id)).filter(
+            Listing.tenant_id == self.context.tenant_id)
+        if state:
+            query = query.filter(Listing.status == state)
+        count = int(query.scalar() or 0)
+        return reading({"count": count, "status": state}, table="listings",
+                       status=state, count=count)

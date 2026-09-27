@@ -228,7 +228,10 @@ _ORM_CALL_BASELINE = {
     # 剩下的 1 处 `self.db.add` 是**写路径**（复核结论落库），不在棘轮口径内，
     # 同属第 3 步（Action 层）欠账，见 D42。
     "listing_review.py": (0, 0),
-    "orchestrator.py": (6, 0),
+    # orchestrator.py 的读取点已迁完（Conversation / Listing / Supply / Order /
+    # Finance / Product Tool）；`chat()` 里的 AiLog 写入是**写路径**，不在棘轮
+    # 口径（query/get）内，属 §18.3 第 3 步（Action/Runtime 层）欠账，见 D45。
+    "orchestrator.py": (0, 0),
     # pricing.py 的读取点已迁完（Product / Market / Listing / Finance Tool，两个
     # Agent 共 7 处读取）；剩下的 1 次 get 是**写路径**（`optimize_budget` 调整预算
     # 需要 ORM 行对象），属第 3 步（Action 层）范围，见 D44。

@@ -799,7 +799,7 @@ ToolResult {
 而现有 Agent 的 57 个读取点还覆盖 `Conversation` / `Listing` / `AdCampaign` /
 `OpportunitySupplierMatch` / `SupplierCatalogProduct` / `ForecastSnapshot` /
 `ListingReviewDecision` 七类目标（DEBT-36）。缺归属则 §18.3 第 2 步后半无法落地。
-**第二批还包含既有 Tool 的方法补批**（Listing / Conversation / Supply / Order / Product / Compliance / Finance 共 10 个方法，为 supplier.py / listing_review.py / factory_opportunity.py / pricing.py 的聚合读取提供归属）；**迁移进度见 §18.3.1**（唯一进度记录，本表只声明清单）。
+**第二批还包含既有 Tool 的方法补批**（Listing / Conversation / Supply / Order / Product / Compliance / Finance 共 10 个方法，为 supplier.py / listing_review.py / factory_opportunity.py / pricing.py 的聚合读取提供归属）；**第三批补批（D45，2026-09-28）追加 11 个只读方法**（计数 / 汇总 / 批量评分 / 类目 / 查重），为 orchestrator.py 与 discovery.py 的读取迁移提供归属，全部复用既有权限 key、零新增权限；**迁移进度见 §18.3.1**（唯一进度记录，本表只声明清单）。
 
 | Tool | 方法 | 所需权限 | 读/写 |
 |---|---|---|---|
@@ -813,6 +813,17 @@ ToolResult {
 | **Supply Tool** | `get_forecast_snapshot()` | `supply:read` | 读 |
 | **Finance Tool** | `get_campaigns()` | `finance:read` | 读 |
 | **Listing Tool** | `get_published_product_ids()` | `listing:read` | 读 |
+| **Product Tool** | `count_products()` | `product:read` | 读 |
+| **Product Tool** | `get_categories()` | `product:read` | 读 |
+| **Product Tool** | `get_latest_performance()` | `product:read` | 读 |
+| **Product Tool** | `get_sold_product_ids()` | `product:read` | 读 |
+| **Product Tool** | `find_duplicate()` | `product:read` | 读 |
+| **Order Tool** | `get_sales_summary()` | `order:read` | 读 |
+| **Finance Tool** | `get_campaign_totals()` | `finance:read` | 读 |
+| **Market Tool** | `get_latest_scores()` | `product:read` | 读 |
+| **Market Tool** | `pick_trend()` | `product:read` | 读 |
+| **Listing Tool** | `count_listings()` | `listing:read` | 读 |
+| **Conversation Tool** | `count_conversations()` | `support:read` | 读 |
 
 ### 10.5 写操作的特殊约束
 
@@ -1410,7 +1421,7 @@ Platform Identity（`superadmin`，ADR-F03 相关）**没有业务 Workspace**�
 | 步 | 状态 | 证据 / 剩余工作 |
 |---|---|---|
 | 1 | ✅ **完成**（D35） | 8 条冻结契约落在 `backend/app/agents/contracts.py`；`SupportAgent` 显式未登记（DEBT-34） |
-| 2 | 🔶 **前半完成、后半进行中**（D37 / D38 / D39 / D40 / D41 / D42 / D43 / D44） | 基础设施（D37）：§10.4 的 9 个 Tool / 22 个方法、`call()` 六步管线、审计、注册表与清单自检。第二批清单：`Listing Tool`（D38）、`Conversation Tool`（D39）、`Compliance Tool.get_review_decisions`（D42）、`Supply Tool` 的目录 / 预测两个方法（D43）、`Finance Tool.get_campaigns` 与 `Listing Tool.get_published_product_ids`（D44）已交付（合计 11 个 Tool / 32 个方法，§10.4.1）。**Agent 侧迁移 7/9 文件**：`compliance.py`、`support.py`、`listing.py`、`supplier.py`、`listing_review.py`、`factory_opportunity.py`、`pricing.py` 的读取点全部改走 Tool（由 `ai_logs` 的 `mode=tool` 行与测试证明）；写路径分别收敛到 `listing._write_listing`、两处快照插入、复核结论落库、匹配/报价 upsert 与预算调整，规则判定改用 `services/platform_rules.validate_listing_fields`（D40 / D41 / D42 / D43 / D44）。进度锚点：`tests/test_agent_layer_boundaries.py::_ORM_CALL_BASELINE` 之和 = **27**（其中 6 处是写路径，属第 3 步）→ 剩余 **21** 处读取点待迁（DEBT-36 的七类目标已全部有 Tool 归属） |
+| 2 | 🔶 **前半完成、后半进行中**（D37 / D38 / D39 / D40 / D41 / D42 / D43 / D44 / D45） | 基础设施（D37）：§10.4 的 9 个 Tool / 22 个方法、`call()` 六步管线、审计、注册表与清单自检。第二批清单：`Listing Tool`（D38）、`Conversation Tool`（D39）、`Compliance Tool.get_review_decisions`（D42）、`Supply Tool` 的目录 / 预测两个方法（D43）、`Finance Tool.get_campaigns` 与 `Listing Tool.get_published_product_ids`（D44）已交付；第三批补批（D45）：计数 / 汇总 / 批量评分 / 类目 / 查重等 11 个只读方法（合计 11 个 Tool / 43 个方法，§10.4.1）。**Agent 侧迁移 8/9 文件**：`compliance.py`、`support.py`、`listing.py`、`supplier.py`、`listing_review.py`、`factory_opportunity.py`、`pricing.py`、`orchestrator.py` 的读取点全部改走 Tool（由 `ai_logs` 的 `mode=tool` 行与测试证明）；写路径分别收敛到 `listing._write_listing`、两处快照插入、复核结论落库、匹配/报价 upsert、预算调整与 `orchestrator.chat` 的 AiLog 落库，规则判定改用 `services/platform_rules.validate_listing_fields`（D40 / D41 / D42 / D43 / D44 / D45）。进度锚点：`tests/test_agent_layer_boundaries.py::_ORM_CALL_BASELINE` 之和 = **21**（其中 6 处是写路径，属第 3 步）→ 剩余 **15** 处读取点待迁（全部在 `discovery.py`；DEBT-36 的七类目标已全部有 Tool 归属） |
 | 3 | ⏳ 未开始 | 高风险：`listing.publish` / `listing.optimize` 的写已集中到 `_write_listing`（D40），但仍是 Agent 直改 + `commit`（违 §9.1）；`pricing.reprice_batch`、`ads.optimize_budget` 待办 |
 | 4 | ⏳ 未开始 | Orchestrator 仍同步直调 |
 | 5 | ⏳ 未开始 | `BaseAgent.SessionLocal()` 仍自持会话；完成后才能关闭 DEBT-35 |

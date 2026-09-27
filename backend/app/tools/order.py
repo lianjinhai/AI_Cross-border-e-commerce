@@ -41,6 +41,8 @@ class OrderTool(BaseTool):
                  writes=False, summary="按窗口汇总销售额、退款与平台分布"),
         ToolSpec(tool="order", method="get_daily_sales", permission="order:read",
                  writes=False, summary="按日聚合单商品销量（排除退款单，仅 api/import 来源）"),
+        ToolSpec(tool="order", method="get_sales_summary", permission="order:read",
+                 writes=False, summary="经营概况口径的销售汇总（排除退款单）：GMV/订单数/利润"),
     )
 
     def _get_orders(self, limit=50, status: str = "", shop_id=None, order_id=None) -> Reading:
@@ -130,3 +132,24 @@ class OrderTool(BaseTool):
             table="orders", since=ts(since),
             order_ids=[o.id for o in orders],
             refund_ids=[r.id for r in refunds])
+
+    def _get_sales_summary(self, days=30) -> Reading:
+        """近 N 天销售汇总（经营概况口径）：GMV / 订单数 / 真实利润。
+
+        为什么与 `analyze_sales` 并存而不是复用它
+            两者口径不同且都成立：`analyze_sales` 给的是**含退款单**的毛量与
+            退款明细（用于对账），本方法按经营概况口径**整体排除退款单**
+            （用于 GMV / ROI 播报）。T-53 要求「同一口径只有一份」，不是把不同
+            口径强行合并成一个——合并后必有一处失真。
+        """
+        window = clamp_limit(days, default=30, maximum=3650, name="days")
+        since = datetime.utcnow() - timedelta(days=window)
+        row = (self.db.query(func.sum(Order.amount), func.count(Order.id),
+                             func.sum(Order.profit))
+               .filter(Order.tenant_id == self.context.tenant_id,
+                       Order.created_at >= since,
+                       Order.status != "refunded").first())
+        gmv, orders, profit = float(row[0] or 0), int(row[1] or 0), float(row[2] or 0)
+        return reading({"gmv": gmv, "orders": orders, "profit": profit,
+                        "window_days": window, "since": ts(since)},
+                       table="orders", window_days=window, since=ts(since))

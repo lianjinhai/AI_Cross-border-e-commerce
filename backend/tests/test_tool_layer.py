@@ -85,7 +85,7 @@ def _doc_manifest() -> dict:
 def test_manifest_matches_architecture_doc():
     """注册表必须与 §10.4 + §10.4.1 冻结清单**逐条一致**（数量、权限、读写属性）。"""
     doc = _doc_manifest()
-    assert len(doc) == 32, "§10.4 + §10.4.1 应含 32 个方法，解析到 %d 个：%s" % (len(doc), sorted(doc))
+    assert len(doc) == 43, "§10.4 + §10.4.1 应含 43 个方法，解析到 %d 个：%s" % (len(doc), sorted(doc))
     assert "listing.get_listings" in doc, "§10.4.1 第二批表格未被解析到（区段边界写错？）"
     assert "conversation.get_conversations" in doc, "§10.4.1 的 Conversation Tool 未被解析到"
     assert "compliance.get_review_decisions" in doc, "§10.4.1 的 Compliance Tool 补批未被解析到"
@@ -93,6 +93,10 @@ def test_manifest_matches_architecture_doc():
     assert "supply.get_forecast_snapshot" in doc, "§10.4.1 的 Supply Tool 预测补批未被解析到"
     assert "finance.get_campaigns" in doc, "§10.4.1 的 Finance Tool 广告补批未被解析到"
     assert "listing.get_published_product_ids" in doc, "§10.4.1 的 Listing Tool 补批未被解析到"
+    assert "conversation.count_conversations" in doc, "§10.4.1 的 Conversation Tool 计数补批未被解析到"
+    assert "order.get_sales_summary" in doc, "§10.4.1 的 Order Tool 汇总补批未被解析到"
+    assert "market.get_latest_scores" in doc, "§10.4.1 的 Market Tool 批量评分补批未被解析到"
+    assert "product.find_duplicate" in doc, "§10.4.1 的 Product Tool 查重补批未被解析到"
 
     got = registry.tool_specs()
     assert set(got) == set(doc), (
@@ -119,6 +123,9 @@ def test_doc_parser_has_discriminating_power():
     assert doc["listing.get_listings"] == {"permission": "listing:read", "writes": False}
     assert doc["conversation.get_conversations"] == {"permission": "support:read",
                                                      "writes": False}
+    assert doc["order.get_sales_summary"] == {"permission": "order:read", "writes": False}
+    assert doc["product.find_duplicate"] == {"permission": "product:read", "writes": False}
+    assert doc["market.pick_trend"] == {"permission": "product:read", "writes": False}
     assert doc["memory.recall"] == {"permission": "ai:read", "writes": False}
     assert doc["memory.remember"] == {"permission": "ai:write", "writes": True}
 
@@ -392,7 +399,9 @@ def probe_tenant(client):
         ExchangeRate,
         ForecastSnapshot,
         Listing,
+        MarketTrend,
         Product,
+        ProductPerformance,
         ProductScore,
         Tenant,
     )
@@ -425,6 +434,14 @@ def probe_tenant(client):
                                 training_cutoff=datetime.utcnow() - timedelta(days=1),
                                 selected_model="probe", point_forecast=12.0,
                                 confidence="high"))
+        # 趋势与经营表现两行也让新补批方法（pick_trend / get_latest_performance）
+        # 走成功分支——否则它们只会以 NOT_FOUND 通过覆盖测试，等于没测实现。
+        db.add(MarketTrend(tenant_id=tenant.id, keyword="probe trend", platform="google",
+                           search_volume=1000, growth_30d=50, competition=40))
+        db.add(ProductPerformance(tenant_id=tenant.id, product_id=product.id,
+                                  window_days=30, units_sold=3, revenue=59.97,
+                                  profit=12.0, margin=0.2, refund_rate=0.0,
+                                  sell_through=0.1, performance_score=62))
         db.commit()
         ids = {"tenant_id": tenant.id, "product_id": product.id,
                "listing_id": listing.id}
@@ -443,6 +460,9 @@ def probe_tenant(client):
             ExchangeRate.tenant_id == ids["tenant_id"]).delete()
         db.query(ForecastSnapshot).filter(
             ForecastSnapshot.tenant_id == ids["tenant_id"]).delete()
+        db.query(MarketTrend).filter(MarketTrend.tenant_id == ids["tenant_id"]).delete()
+        db.query(ProductPerformance).filter(
+            ProductPerformance.tenant_id == ids["tenant_id"]).delete()
         db.query(Listing).filter(Listing.id == ids["listing_id"]).delete()
         db.query(Product).filter(Product.id == ids["product_id"]).delete()
         db.query(Tenant).filter(Tenant.id == ids["tenant_id"]).delete()
@@ -456,9 +476,9 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
 
     判定口径：`ok=True`，或**预期内**的数据缺失（NOT_FOUND）。
     INTERNAL / BAD_PARAM 一律算失败——它们意味着实现有缺陷，而不是数据不存在。
-    探针夹具刻意把评分/合规报告/汇率/预测快照都造齐，使 `score_opportunity`、
-    `check_product`、`get_fx_rate`、`get_forecast_snapshot` 走的是成功分支而不是
-    NOT_FOUND 分支。
+    探针夹具刻意把评分/合规报告/汇率/预测快照/趋势/经营表现都造齐，使
+    `score_opportunity`、`check_product`、`get_fx_rate`、`get_forecast_snapshot`、
+    `pick_trend`、`get_latest_performance` 走的是成功分支而不是 NOT_FOUND 分支。
     """
     from app.db import SessionLocal
 
@@ -494,8 +514,19 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
         ("compliance", "get_review_decisions", {"limit": 5}),
         ("finance", "get_campaigns", {"limit": 5}),
         ("listing", "get_published_product_ids", {}),
+        ("product", "count_products", {"status": "active"}),
+        ("product", "get_categories", {"status": "active"}),
+        ("product", "get_latest_performance", {"product_id": product_id}),
+        ("product", "get_sold_product_ids", {}),
+        ("product", "find_duplicate", {"dedupe_hash": "probe-dedupe-none"}),
+        ("order", "get_sales_summary", {"days": 30}),
+        ("finance", "get_campaign_totals", {}),
+        ("market", "get_latest_scores", {}),
+        ("market", "pick_trend", {}),
+        ("listing", "count_listings", {"status": "draft"}),
+        ("conversation", "count_conversations", {"status": "open"}),
     ]
-    assert len(calls) == 27, "真库覆盖清单应为 27 条，实际 %d" % len(calls)
+    assert len(calls) == 38, "真库覆盖清单应为 38 条，实际 %d" % len(calls)
     # 完整性（T-53）：除 memory.recall（Phase 6 未到，实现显式 NOT_IMPLEMENTED）外，
     # 冻结清单里的每个只读方法都必须在这里真跑一遍——否则第二批新增的方法会静默漏测。
     expected = {spec.key for spec in registry.tool_specs().values()
@@ -522,10 +553,10 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
                                              result.error["code"], result.error["detail"]))
     assert not failures, "只读方法在真实库上执行失败：\n  " + "\n  ".join(failures)
     # 反向断言：若哪天实现整体退化成「一律 NOT_FOUND」，上一条断言仍会全绿。
-    # 探针数据（商品/Listing/评分/合规报告/汇率/预测快照）齐备时，27 个方法应全部
-    # 走成功分支。
-    assert ok_count == 27, (
-        "只读方法成功 %d/27——是否有实现静默退化成 NOT_FOUND？" % ok_count)
+    # 探针数据（商品/Listing/评分/合规报告/汇率/预测快照/趋势/经营表现）齐备时，
+    # 38 个方法应全部走成功分支。
+    assert ok_count == 38, (
+        "只读方法成功 %d/38——是否有实现静默退化成 NOT_FOUND？" % ok_count)
 
 
 def test_compliance_agent_reads_go_through_tool_layer(probe_tenant):
@@ -1192,6 +1223,51 @@ def test_pricing_and_ads_agents_reads_go_through_tool_layer(client):
             db.close()
 
 
+def test_orchestrator_reads_go_through_tool_layer(probe_tenant):
+    """判别力：orchestrator 的经营概况/铺货/客服/供应商读取必须留下 `mode=tool` 审计。
+
+    为什么断言审计行而不是返回值：把实现改回 `self.db.query(...)` 时返回值几乎
+    相同（同一批数据），只有审计行会消失——没有这条，「已迁移」就只能靠人工看
+    代码（T-55）。
+    """
+    from app.agents.orchestrator import OrchestratorAgent
+    from app.db import SessionLocal
+    from app.models import AiLog
+
+    tenant_id = probe_tenant["tenant_id"]
+    agent = OrchestratorAgent(tenant_id)
+    try:
+        bi = agent.chat("经营情况")
+        listing = agent.chat("铺货建议")
+        support = agent.chat("客服消息")
+        supplier = agent.chat("供应商评分")
+    finally:
+        agent.close()
+    assert bi["intent"] == "bi" and listing["intent"] == "listing"
+    assert support["intent"] == "support" and supplier["intent"] == "supplier"
+    assert listing["data"]["draft_listings"] == 1, listing
+    assert bi["data"]["orders"] == 0, bi
+
+    db = SessionLocal()
+    try:
+        actions = {r.action for r in db.query(AiLog)
+                   .filter(AiLog.tenant_id == tenant_id, AiLog.mode == "tool").all()}
+        chat_logs = db.query(AiLog).filter(
+            AiLog.tenant_id == tenant_id, AiLog.agent == "orchestrator",
+            AiLog.action == "chat").count()
+    finally:
+        db.close()
+    expected = {"tool:order.get_sales_summary", "tool:finance.get_campaign_totals",
+                "tool:product.count_products", "tool:listing.count_listings",
+                "tool:conversation.count_conversations", "tool:supply.search_suppliers"}
+    assert expected <= actions, (
+        "orchestrator 的读取没有全部走 Tool 层——§18.3 第 2 步的迁移被回退了？"
+        "缺失：%s" % sorted(expected - actions))
+    # 反向断言：chat 的 AiLog 写路径（第 3 步欠账）必须仍然生效——删掉等于对话
+    # 不再留痕。
+    assert chat_logs == 4, chat_logs
+
+
 def test_read_methods_reject_bad_params_without_touching_db(recorded, legacy_ctx):
     """参数校验必须是 BAD_PARAM，而不是把脏值送进查询后炸成 INTERNAL。
 
@@ -1208,6 +1284,12 @@ def test_read_methods_reject_bad_params_without_touching_db(recorded, legacy_ctx
             ("order", "get_orders", {"shop_id": "abc"}),
             ("knowledge", "search", {"query": "   "}),
         ("knowledge", "search", {"query": "x", "top_k": 999}),
+        ("conversation", "count_conversations", {"status": "bogus"}),
+        ("listing", "count_listings", {"status": "bogus"}),
+        ("product", "get_sold_product_ids", {"min_units": -1}),
+        ("product", "find_duplicate", {"dedupe_hash": "   "}),
+        ("product", "get_latest_performance", {"product_id": "abc"}),
+        ("order", "get_sales_summary", {"days": 0}),
     ]
     for tool_name, method, params in cases:
         result = registry.open_tool(tool_name, legacy_ctx, db=None).call(method, **params)

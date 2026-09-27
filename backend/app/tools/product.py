@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 
 from ..models import Product, ProductPerformance, ProductScore
 from ..services.costing import best_purchase
 from .base import BaseTool, Reading, as_int, clamp_limit, reading, ts
-from .contract import ERR_NOT_FOUND, ToolError, ToolSpec
+from .contract import ERR_BAD_PARAM, ERR_NOT_FOUND, ToolError, ToolSpec
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,16 @@ class ProductTool(BaseTool):
                  writes=False, summary="列出本租户商品，可按关键词过滤"),
         ToolSpec(tool="product", method="get_product_ids", permission="product:read",
                  writes=False, summary="列出本租户商品 id（批量任务用，按状态过滤）"),
+        ToolSpec(tool="product", method="count_products", permission="product:read",
+                 writes=False, summary="统计本租户商品数量，可按状态/类目过滤"),
+        ToolSpec(tool="product", method="get_categories", permission="product:read",
+                 writes=False, summary="列出本租户商品类目（去重、剔空、按名称升序）"),
+        ToolSpec(tool="product", method="get_latest_performance", permission="product:read",
+                 writes=False, summary="商品最近一次经营表现（只读缓存行，不触发重算）"),
+        ToolSpec(tool="product", method="get_sold_product_ids", permission="product:read",
+                 writes=False, summary="有真实销量的商品 id 清单（探索配额判定用）"),
+        ToolSpec(tool="product", method="find_duplicate", permission="product:read",
+                 writes=False, summary="按指纹查重：返回同租户内相同 dedupe_hash 的商品 id"),
         ToolSpec(tool="product", method="analyze_product", permission="product:read",
                  writes=False, summary="单商品的评分/经营表现/采购成本综合分析"),
         ToolSpec(tool="product", method="create_listing_draft", permission="listing:write",
@@ -75,6 +85,92 @@ class ProductTool(BaseTool):
         rows = query.order_by(Product.id).limit(n).all()
         return reading([r[0] for r in rows], table="products",
                        status=state, count=len(rows))
+
+    def _count_products(self, status: str = "", category: str = "") -> Reading:
+        """商品计数（BI 概况 / 竞争度评估用）：只返回数量，不取回商品行。
+
+        status / category 为空 = 不过滤；两个口径都进证据，调用方据此判断
+        「这个数是在什么口径下算出来的」。
+        """
+        state = (status or "").strip()
+        cat = (category or "").strip()
+        query = self.db.query(func.count(Product.id)).filter(
+            Product.tenant_id == self.context.tenant_id)
+        if state:
+            query = query.filter(Product.status == state)
+        if cat:
+            query = query.filter(Product.category == cat)
+        count = int(query.scalar() or 0)
+        return reading({"count": count, "status": state, "category": cat},
+                       table="products", status=state, category=cat, count=count)
+
+    def _get_categories(self, status: str = "active", limit=50) -> Reading:
+        """类目清单（去重、剔空、按名称升序）。
+
+        为什么剔除空类目：调用方（趋势池扩展）会拿它拼「<类目> wholesale」关键词，
+        空串会拼出一个无意义的搜索词。
+        """
+        n = clamp_limit(limit, default=50, maximum=200)
+        state = (status or "").strip()
+        query = (self.db.query(Product.category)
+                 .filter(Product.tenant_id == self.context.tenant_id,
+                         Product.category != ""))
+        if state:
+            query = query.filter(Product.status == state)
+        rows = query.distinct().order_by(Product.category).limit(n).all()
+        return reading([r[0] for r in rows], table="products", status=state,
+                       count=len(rows))
+
+    def _get_latest_performance(self, product_id) -> Reading:
+        """商品最近一次经营表现（只读缓存行）。
+
+        不触发重算：重算口径在 `services/product_performance`（唯一实现），
+        本方法只读它的落库结果。排序用 id 而非 computed_at（秒级时间戳可能并列，
+        见 D42 复核结论）。
+        """
+        pid = as_int(product_id, "product_id")
+        row = (self.db.query(ProductPerformance)
+               .filter(ProductPerformance.tenant_id == self.context.tenant_id,
+                       ProductPerformance.product_id == pid)
+               .order_by(ProductPerformance.id.desc()).first())
+        if row is None:
+            raise ToolError(ERR_NOT_FOUND, "商品 %s 尚无经营表现记录" % pid)
+        return reading(self._perf_dict(row), table="product_performance",
+                       product_id=pid, performance_id=row.id)
+
+    def _get_sold_product_ids(self, min_units=1, limit=500) -> Reading:
+        """有真实销量的商品 id 清单（选品探索配额判定：哪些商品不算「新品」）。"""
+        floor = as_int(min_units, "min_units")
+        if floor < 0:
+            raise ToolError(ERR_BAD_PARAM, "min_units 必须 >= 0，实际 %r" % min_units)
+        n = clamp_limit(limit, default=500, maximum=500)
+        rows = (self.db.query(ProductPerformance.product_id)
+                .filter(ProductPerformance.tenant_id == self.context.tenant_id,
+                        ProductPerformance.units_sold > floor)
+                .distinct().order_by(ProductPerformance.product_id).limit(n).all())
+        return reading([r[0] for r in rows], table="product_performance",
+                       min_units=floor, count=len(rows))
+
+    def _find_duplicate(self, dedupe_hash: str, exclude_id=None) -> Reading:
+        """按指纹查重：返回同租户内相同 `dedupe_hash` 的商品 id（无匹配 -> None）。
+
+        为什么返回 None 而不是 NOT_FOUND：「没查到重复」是查重业务的正常结论，
+        不是数据缺失——报 NOT_FOUND 会迫使调用方用异常表达正常分支。
+        """
+        digest = (dedupe_hash or "").strip()
+        if not digest:
+            raise ToolError(ERR_BAD_PARAM, "dedupe_hash 不能为空")
+        exclude = None if exclude_id is None else as_int(exclude_id, "exclude_id")
+        query = (self.db.query(Product.id)
+                 .filter(Product.tenant_id == self.context.tenant_id,
+                         Product.dedupe_hash == digest,
+                         Product.status != "deleted"))
+        if exclude is not None:
+            query = query.filter(Product.id != exclude)
+        row = query.order_by(Product.id).first()
+        duplicate_id = row[0] if row else None
+        return reading({"duplicate_id": duplicate_id}, table="products",
+                       dedupe_hash=digest, duplicate_id=duplicate_id)
 
     def _analyze_product(self, product_id: int) -> Reading:
         product = self._owned(product_id)

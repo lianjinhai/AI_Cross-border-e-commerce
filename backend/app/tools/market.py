@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from sqlalchemy import func
+
 from ..models import MarketTrend, Product, ProductPerformance, ProductScore
 from .base import BaseTool, Reading, as_int, clamp_limit, reading, ts
 from .contract import ERR_NOT_FOUND, ToolError, ToolSpec
@@ -28,6 +30,10 @@ class MarketTool(BaseTool):
                  writes=False, summary="读取市场趋势/关键词，按搜索量倒序"),
         ToolSpec(tool="market", method="score_opportunity", permission="product:read",
                  writes=False, summary="读取指定商品的最新机会评分与经营表现"),
+        ToolSpec(tool="market", method="get_latest_scores", permission="product:read",
+                 writes=False, summary="每个商品的最新机会评分（批量选品排名用）"),
+        ToolSpec(tool="market", method="pick_trend", permission="product:read",
+                 writes=False, summary="随机取一条市场趋势（无类目匹配时的需求兜底）"),
     )
 
     def _get_trends(self, limit=20, keyword: str = "") -> Reading:
@@ -75,3 +81,38 @@ class MarketTool(BaseTool):
                  "computed_at": ts(perf.computed_at)}},
             table="product_scores", product_id=pid, score_id=score.id,
             performance_id=perf.id if perf else None)
+
+    def _get_latest_scores(self, limit=500) -> Reading:
+        """每个商品的最新一条机会评分（批量排名用，按商品 id 升序）。
+
+        为什么用 `max(id)` 取「最新」而不是 `created_at`：同一批写入的多条评分
+        时间戳可能相同（秒级精度），id 才是唯一单调的次序（与 D42 复核结论同款
+        口径）。上限 500 个商品；超出时应分批处理，而不是抬高上限（D44 同款边界）。
+        """
+        n = clamp_limit(limit, default=500, maximum=500)
+        newest = (self.db.query(func.max(ProductScore.id).label("score_id"))
+                  .filter(ProductScore.tenant_id == self.context.tenant_id)
+                  .group_by(ProductScore.product_id).subquery())
+        rows = (self.db.query(ProductScore)
+                .join(newest, ProductScore.id == newest.c.score_id)
+                .order_by(ProductScore.product_id).limit(n).all())
+        return reading([{"product_id": s.product_id, "demand": s.demand,
+                         "competition": s.competition, "profit": s.profit,
+                         "risk": s.risk, "total": s.total,
+                         "reasons": s.reasons or [], "model": s.model}
+                        for s in rows],
+                       table="product_scores", count=len(rows))
+
+    def _pick_trend(self) -> Reading:
+        """随机取一条趋势：类目无匹配趋势时的需求兜底（保留原 DiscoveryAgent 语义）。
+
+        为什么保留随机而不是「取搜索量最高的一条」：兜底的原意是让无类目匹配的
+        商品拿到分布多样的需求分，而不是全体同一个最高分（那会把兜底变成新的
+        单点偏差）。
+        """
+        row = (self.db.query(MarketTrend)
+               .filter(MarketTrend.tenant_id == self.context.tenant_id)
+               .order_by(func.random()).first())
+        if row is None:
+            raise ToolError(ERR_NOT_FOUND, "本租户暂无市场趋势数据")
+        return reading(trend_dict(row), table="market_trends", trend_id=row.id)

@@ -1,13 +1,15 @@
 """总调度 Agent（Commerce Orchestrator，对应规划第四章 4.1）：
 
 理解用户目标 → 意图路由 → 调度专业 Agent → 汇总结果。
+
+读取纪律（§18.3 第 2 步 / D45）
+    本模块所有业务读取都走 Tool 层（Conversation / Listing / Supply / Order /
+    Finance / Product Tool）；`chat()` 末尾的 `AiLog` 写入是 §18.3 第 3 步
+    （Action 层）欠账，迁移期间不得删除（否则对话不再留痕），见架构文档
+    「Agent 与 Runtime 的边界」现状说明。
 """
-from datetime import datetime, timedelta
-
-from sqlalchemy import func
-
 from ..ai.llm import ModelRouter
-from ..models import AdCampaign, AiLog, Conversation, Listing, Order, Product, Supplier
+from ..models import AiLog
 from .base import BaseAgent
 
 
@@ -21,6 +23,8 @@ class OrchestratorAgent(BaseAgent):
             reply, intent, actions, data = self._route(msg)
         except Exception as e:
             reply, intent, actions, data = f"处理请求时出现问题：{e}", "error", [], None
+        # 写路径（§18.3 第 3 步欠账）：chat 审计落 AiLog 仍是 Agent 直写，
+        # 待 Runtime/Action 层接管后收敛。迁移期间保留，删掉等于对话不留痕。
         self.db.add(AiLog(tenant_id=self.tenant_id, agent="orchestrator", action="chat",
                           mode="rule", model="router", prompt=msg[:2000],
                           response=reply[:4000], latency_ms=0, ok=True))
@@ -82,8 +86,8 @@ class OrchestratorAgent(BaseAgent):
         return reply, "pricing", ["reprice_batch"], r["repriced"]
 
     def _do_listing_guide(self) -> tuple[str, str, list, object]:
-        n = (self.db.query(func.count(Listing.id))
-             .filter(Listing.tenant_id == self.tenant_id, Listing.status == "draft").scalar()) or 0
+        got = self.tool("listing").call("count_listings", status="draft")
+        n = got.data["count"] if got.ok and isinstance(got.data, dict) else 0
         reply = (f"当前有 {n} 条草稿 Listing。建议两种方式：\n"
                  "1)「Listing工作台」选择商品点击「AI生成」→「发布」；\n"
                  "2)「AI工作流」运行「自动铺货全流程」，系统将自动完成 "
@@ -93,19 +97,22 @@ class OrchestratorAgent(BaseAgent):
     def _do_suppliers(self) -> tuple[str, str, list, object]:
         from .supplier import SupplierAgent
 
-        sups = (self.db.query(Supplier).filter(Supplier.tenant_id == self.tenant_id).all())
+        # 取候选供应商也走 Tool（Supply Tool）：排序由 Tool 定为评分倒序，
+        # 不再依赖数据库的隐式行序；上限 10 由调用方显式声明。
+        got = self.tool("supply").call("search_suppliers", limit=10)
+        sups = got.data if got.ok and isinstance(got.data, list) else []
         results = []
         with SupplierAgent(self.tenant_id) as a:
-            for s in sups[:10]:
-                sc = a.score_supplier(s.id)
-                results.append({"supplier_id": s.id, "name": s.name, "total": sc["total"]})
+            for s in sups:
+                sc = a.score_supplier(s["id"])
+                results.append({"supplier_id": s["id"], "name": s["name"], "total": sc["total"]})
         results.sort(key=lambda x: -x["total"])
         lines = [f"· {x['name']}（综合 {x['total']}）" for x in results[:3]]
         return "供应商综合评分 Top3：\n" + "\n".join(lines), "supplier", ["score_supplier"], results
 
     def _do_support(self) -> tuple[str, str, list, object]:
-        open_n = (self.db.query(func.count(Conversation.id))
-                  .filter(Conversation.tenant_id == self.tenant_id, Conversation.status == "open").scalar()) or 0
+        got = self.tool("conversation").call("count_conversations", status="open")
+        open_n = got.data["count"] if got.ok and isinstance(got.data, dict) else 0
         reply = (f"当前有 {open_n} 个待处理会话。可到「智能客服」页使用「AI 自动回复」批量处理常规咨询"
                  "（订单查询/物流/售后意图识别准确率随知识库完善持续提升）。")
         return reply, "support", [], {"open_conversations": open_n}
@@ -136,17 +143,17 @@ class OrchestratorAgent(BaseAgent):
             "open": len(rows), "high": len(high)}
 
     def _do_bi(self) -> tuple[str, str, list, object]:
-        since = datetime.utcnow() - timedelta(days=30)
-        q = (self.db.query(func.sum(Order.amount), func.count(Order.id), func.sum(Order.profit))
-             .filter(Order.tenant_id == self.tenant_id, Order.created_at >= since,
-                     Order.status != "refunded").first())
-        gmv, orders, profit = float(q[0] or 0), int(q[1] or 0), float(q[2] or 0)
-        ads = (self.db.query(func.sum(AdCampaign.spend), func.sum(AdCampaign.revenue))
-               .filter(AdCampaign.tenant_id == self.tenant_id).first())
-        spend, revenue = float(ads[0] or 0), float(ads[1] or 0)
+        sales_got = self.tool("order").call("get_sales_summary", days=30)
+        sales = sales_got.data if sales_got.ok and isinstance(sales_got.data, dict) else {}
+        gmv, orders, profit = (float(sales.get("gmv", 0)), int(sales.get("orders", 0)),
+                               float(sales.get("profit", 0)))
+        ads_got = self.tool("finance").call("get_campaign_totals")
+        ads = ads_got.data if ads_got.ok and isinstance(ads_got.data, dict) else {}
+        spend, revenue = float(ads.get("spend", 0)), float(ads.get("revenue", 0))
         roi = round((revenue - spend) / spend, 2) if spend else 0
-        products = (self.db.query(func.count(Product.id))
-                    .filter(Product.tenant_id == self.tenant_id, Product.status == "active").scalar()) or 0
+        count_got = self.tool("product").call("count_products", status="active")
+        products = (count_got.data.get("count", 0)
+                    if count_got.ok and isinstance(count_got.data, dict) else 0)
         reply = (f"近30天经营概况：GMV ${gmv:.2f}｜订单 {orders} 单｜真实利润 ${profit:.2f}｜"
                  f"广告花费 ${spend:.2f}，广告 ROI {roi}｜在售商品 {products} 个。"
                  "详细图表与 AI 经营报告见「BI经营分析」页。")
