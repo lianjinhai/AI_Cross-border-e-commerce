@@ -745,6 +745,9 @@ CREATED → PENDING_APPROVAL → APPROVED → EXECUTING → SUCCESS
 
 ### 9.6 Executor 要求
 
+D53 前置安全修复：复核与发布共用内容指纹 V2，纳入规则实际使用的商品标题
+和目标平台；历史 V1 依据不自动放行，须重新复核。风险领域写入接管仍未完成。
+
 - 必须**幂等**：同一 `idempotency_key` 重复调用只产生一次副作用；
 - 必须**经业务 API/Service**，禁止绕过业务校验；
 - 必须**以请求者权限执行**（不是系统超管权限）；

@@ -2,12 +2,22 @@
 
 import hashlib
 import json
+from collections.abc import Mapping
+
+FINGERPRINT_VERSION = 2
+
+
+def _field(value, name):
+    return value.get(name) if isinstance(value, Mapping) else getattr(value, name, None)
 
 
 def listing_fingerprint(listing, product):
     return hashlib.sha256(json.dumps({
-        "title": listing.title, "description": listing.description,
-        "bullets": listing.bullets or [], "keywords": listing.keywords or [],
-        "category": product.category, "brand": product.brand,
-        "images": product.images or [],
+        "version": FINGERPRINT_VERSION,
+        "platform": _field(listing, "platform"),
+        "title": _field(listing, "title"), "description": _field(listing, "description"),
+        "bullets": _field(listing, "bullets") or [], "keywords": _field(listing, "keywords") or [],
+        "product_title": _field(product, "title"),
+        "category": _field(product, "category"), "brand": _field(product, "brand"),
+        "images": _field(product, "images") or [],
     }, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:24]

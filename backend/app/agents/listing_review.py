@@ -3,12 +3,11 @@
 §18.3 第 2 步：读取全部经 Tool 层；写路径（复核结论落库）集中标注，
 属第 3 步（Action 层）欠账。
 """
-import hashlib
-import json
 import os
 from datetime import datetime
 
 from ..models import ListingReviewDecision
+from ..services.action_records import listing_fingerprint
 from ..services.platform_rules import check_updates, validate_listing_fields
 from .base import BaseAgent
 from .contracts import CONTRACTS
@@ -57,12 +56,7 @@ class ListingReviewAgent(BaseAgent):
     def review(self, listing_id: int) -> dict:
         listing = self._listing(listing_id)
         product = self._product(listing["product_id"])
-        fingerprint = hashlib.sha256(json.dumps({
-            "title": listing["title"], "description": listing["description"],
-            "bullets": listing["bullets"] or [], "keywords": listing["keywords"] or [],
-            "category": product["category"], "brand": product["brand"],
-            "images": product["images"] or [],
-        }, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:24]
+        fingerprint = listing_fingerprint(listing, product)
         update_result = None
         if os.getenv("ERP_RULES_URL"):
             # 实时规则同步（仅在 ERP_RULES_URL 配置时启用）；它是 services 层的

@@ -45,6 +45,7 @@ Setting 表约定 key：`llm`（见 ai/llm.py DEFAULT_LLM）、`platform_fees`�
 - `pick_candidates(limit: int = 3, min_total: float = 60, explore=True, explicit_ids=None)`：未指定商品时只读每商品最新评分，保留探索配额；显式清单经 Orchestrator 评分与持久化，保留 picked_product_ids/context_patch 语义。显式空清单不回退全池；显式选品上限 50、批量评分上限 200，超限/非法 ID 拒绝，不静默截掉或漏项。Workflow discovery.pick_candidates 使用服务端身份及 run/step 范围，缺身份阻断；聊天选品也走同一调度入口。
 
 ### 2.2 ProductAgent（name="product"，文件 agents/discovery.py 同文件）
+
 商品标准化（第八章）。`_CJK_CATEGORY_MAP`：关键词→标准类目（家居/3C配件/宠物用品/户外运动/美妆工具/母婴用品/服饰配件/厨房用品）。
 - `standardize(product_id: int) -> dict`：Agent 经 Tool 读取，返回内部 `_action_proposal`，不改商品。HTTP 经 `invoke_product` 提交既有 UPDATE_PRODUCT_CONTENT（LOW / product:write / AUTO_SAFE），Executor 复核身份与原始内容，只允许规则类目、weight_kg/material/color 和服务端指纹；保留售价、采购、库存等其他属性。返回执行结果（product_id/category/attrs/dedupe_hash/is_duplicate/duplicate_of）及 action_id/action_status；查重在锁内验证（D51）。
 - `standardize_batch(params: dict, context: dict)`：Agent 返回 proposals/errors；Workflow 调度返回 standardized/duplicates/results/errors/business_status/context_patch。范围优先 params.product_ids，其次 context.product_ids；均未指定时取最多 200 个 active 商品，显式空范围不扩散。同范围重放原 Action；服务端清单保存在 Action evidence 与步骤 output，零 Action 失败也能恢复原范围；客户端 `_action_` 键不得冒充。失败批次 blocked 且 context_patch={}，不缩掉失败商品。
@@ -69,6 +70,9 @@ Setting 表约定 key：`llm`（见 ai/llm.py DEFAULT_LLM）、`platform_fees`�
 - `roi_report() -> {"summary":{"total_spend","total_revenue","roi","avg_ctr"},"campaigns":[campaign dict + {"roi","ctr","cvr"}]}`。
 
 ### 2.6 ListingAgent（name="listing"，文件 agents/listing.py）
+
+发布/复核安全补充（D53）：共享内容指纹 V2 包含目标平台与商品标题；历史 V1
+复核须重新运行，不改历史记录、不自动批准。复核持久化迁移仍在后续批次。
 - `generate(product_id: int, platform: str = "shopee", language: str = "en") -> dict`：只返回 `CREATE_LISTING_DRAFT` 提案，Agent 不建 Listing 行。保留知识增强、文案自检及模板降级；HTTP/工作流由 Orchestrator 提交并自动执行草稿 Action，返回真实 Listing id、status="draft"、action_id、action_status="SUCCESS"（D48）。
 - `optimize(listing_id: int) -> dict`：只返回 `UPDATE_LISTING_CONTENT` 提案；执行器仅允许修改内容未变化的草稿。HTTP 返回执行后 Listing dict 与 Action 引用；已发布内容或陈旧提案返回 409。
 - `publish(listing_id: int, shop_id: int | None = None) -> dict`：只返回 `PUBLISH_LISTING` 提案。HTTP 先复核当前内容，提交后返回 `status="PENDING_APPROVAL"`、`action_id`、`approval_required=true`，**不立即上架**。调用 Action approve 后，还必须独立调用 execute；成功结果在 outcome.result。真实/演示/本地发布都需审批；执行时再次核对权限、内容指纹、规则、复核结论及店铺归属。
