@@ -127,7 +127,7 @@ class TestSelectionFlywheel:
         """
         from app.agents.discovery import DiscoveryAgent
         from app.db import SessionLocal
-        from app.models import Product, ProductScore, Tenant, utcnow
+        from app.models import AiLog, Product, ProductScore, Tenant, utcnow
 
         db = SessionLocal()
         try:
@@ -163,6 +163,8 @@ class TestSelectionFlywheel:
         finally:
             db = SessionLocal()
             try:
+                db.query(AiLog).filter(
+                    AiLog.tenant_id == tenant_id).delete(synchronize_session=False)
                 db.query(ProductScore).filter(
                     ProductScore.tenant_id == tenant_id).delete(synchronize_session=False)
                 db.query(Product).filter(

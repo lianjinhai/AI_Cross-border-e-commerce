@@ -394,6 +394,7 @@ def probe_tenant(client):
 
     from app.db import SessionLocal
     from app.models import (
+        AiDecision,
         AiLog,
         ComplianceReport,
         ExchangeRate,
@@ -439,7 +440,7 @@ def probe_tenant(client):
         db.add(MarketTrend(tenant_id=tenant.id, keyword="probe trend", platform="google",
                            search_volume=1000, growth_30d=50, competition=40))
         db.add(ProductPerformance(tenant_id=tenant.id, product_id=product.id,
-                                  window_days=30, units_sold=3, revenue=59.97,
+                                  window_days=30, units_sold=1, revenue=19.99,
                                   profit=12.0, margin=0.2, refund_rate=0.0,
                                   sell_through=0.1, performance_score=62))
         db.commit()
@@ -453,6 +454,7 @@ def probe_tenant(client):
         # 审计行必须一起删：Tool 调用会写入 ai_logs(tenant_id=探针租户)，
         # 它是 tenants 的外键子表，不清掉就删不掉租户（FK constraint failed）。
         db.query(AiLog).filter(AiLog.tenant_id == ids["tenant_id"]).delete()
+        db.query(AiDecision).filter(AiDecision.tenant_id == ids["tenant_id"]).delete()
         db.query(ProductScore).filter(ProductScore.tenant_id == ids["tenant_id"]).delete()
         db.query(ComplianceReport).filter(
             ComplianceReport.tenant_id == ids["tenant_id"]).delete()
@@ -1266,6 +1268,39 @@ def test_orchestrator_reads_go_through_tool_layer(probe_tenant):
     # 反向断言：chat 的 AiLog 写路径（第 3 步欠账）必须仍然生效——删掉等于对话
     # 不再留痕。
     assert chat_logs == 4, chat_logs
+
+
+def test_discovery_reads_go_through_tool_layer(probe_tenant):
+    """选品与标准化的读取必须产生 Tool 审计；写路径仍能正常落库。"""
+    from app.agents.discovery import DiscoveryAgent, ProductAgent
+    from app.db import SessionLocal
+    from app.models import AiLog
+
+    tenant_id = probe_tenant["tenant_id"]
+    product_id = probe_tenant["product_id"]
+    with DiscoveryAgent(tenant_id) as agent:
+        sold = agent.tool("product").call("get_sold_product_ids")
+        assert sold.ok and product_id in sold.data, "卖出 1 件的商品必须算已有销量"
+        agent.scan_trends()
+        score = agent.score_product(product_id)
+        picked = agent.pick_candidates(limit=1, min_total=0, explore=False)
+    with ProductAgent(tenant_id) as agent:
+        standardized = agent.standardize(product_id)
+
+    assert score["product_id"] == product_id
+    assert picked["picked_product_ids"] == [product_id]
+    assert standardized["dedupe_hash"]
+    db = SessionLocal()
+    try:
+        actions = {row.action for row in db.query(AiLog).filter(
+            AiLog.tenant_id == tenant_id, AiLog.mode == "tool").all()}
+    finally:
+        db.close()
+    expected = {"tool:product.get_categories", "tool:product.get_products",
+                "tool:product.count_products", "tool:product.get_latest_performance",
+                "tool:product.get_product_ids", "tool:product.find_duplicate",
+                "tool:market.get_trends", "tool:market.get_latest_scores"}
+    assert expected <= actions, "discovery 读取未全部经 Tool：%s" % sorted(expected - actions)
 
 
 def test_read_methods_reject_bad_params_without_touching_db(recorded, legacy_ctx):

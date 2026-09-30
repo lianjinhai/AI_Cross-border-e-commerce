@@ -2855,3 +2855,27 @@ D43（返回体边界同款）、`docs/子代理实施索引-20260923.md` 第三
 
 **关联**：架构 §10.4.1 / §18.3.1、规范 §11 DEBT-36、D42（`id desc` 口径）、
 D44（返回体边界同款）、`docs/子代理实施索引-20260923.md` 第三十五轮。
+
+---
+
+## D46：discovery.py 读取迁移完成 —— Agent 侧第 2 步收官（2026-09-30）
+
+**背景**：D45 已给选品、趋势、商品类目、经营表现与查重提供 Tool 方法，但
+`discovery.py` 仍有 15 处直接 ORM 读取。D46 将这些读取迁到 Product / Market
+Tool，完成 Agent 侧 9/9 文件的读取迁移。
+
+### 决策与边界
+
+1. 选品排名从 `market.get_latest_scores` 取每商品最新评分，再用
+   `product.get_product_ids(status="active")` 校验商品归属与在售状态；否则伪造的
+   同租户评分行可能带出其他租户商品。清单上限为 500，超过上限须后续设计分页。
+2. 趋势匹配走 `market.get_trends`；无类目匹配时走 `market.pick_trend`，保留原
+   随机兜底。评分计算继续调用唯一实现 `services.product_performance.get_performance`；
+   其缓存写入尚未迁到 Action / Runtime，列为后续写路径欠账。
+3. `product.get_sold_product_ids` 使用 `units_sold > 0` 表示已有真实销量；卖出
+   恰好 1 件的商品不能占“新品探索”名额。
+4. 趋势 upsert、评分落库、标准化回写保留现有 ORM 写路径。棘轮由 21 降至
+   **8**，剩余 8 处 `query/get` 全属 §18.3 第 3 步；DEBT-36 关闭。
+
+**验证**：选品门槛、标准化、跨租户保护与 Tool 审计用例覆盖迁移主路径；完整
+回归与文档校验结果见本轮交接索引。

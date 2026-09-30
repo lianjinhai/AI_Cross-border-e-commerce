@@ -215,7 +215,9 @@ _ORM_CALL_BASELINE = {
     # 剩下的 1 次 get 是**写路径**（`_sync_listing_risk` 回写 Listing.risk_level），
     # 属 §18.3 第 3 步（Action 层）范围，不随读取迁移下降。
     "compliance.py": (0, 1),
-    "discovery.py": (11, 4),
+    # discovery.py 的读取点已迁完（Product / Market Tool）；剩余 1 次 query
+    # （趋势 upsert）和 1 次 get（标准化回写）均为第 3 步写路径，见 D46。
+    "discovery.py": (1, 1),
     # factory_opportunity.py 的读取点已迁完（Supply / Product Tool）；剩下的
     # 2 处 query 是**写路径**（匹配快照 / 报价 upsert 前的行查找），属第 3 步
     # （Action 层）范围，不随读取迁移下降，见 D43。

@@ -138,7 +138,7 @@ class ProductTool(BaseTool):
         return reading(self._perf_dict(row), table="product_performance",
                        product_id=pid, performance_id=row.id)
 
-    def _get_sold_product_ids(self, min_units=1, limit=500) -> Reading:
+    def _get_sold_product_ids(self, min_units=0, limit=500) -> Reading:
         """有真实销量的商品 id 清单（选品探索配额判定：哪些商品不算「新品」）。"""
         floor = as_int(min_units, "min_units")
         if floor < 0:
