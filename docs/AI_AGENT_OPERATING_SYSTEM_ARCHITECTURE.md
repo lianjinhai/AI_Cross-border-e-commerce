@@ -699,6 +699,7 @@ Business API（既有 Router / Service）
 | action_type | 风险 / 权限 | 审批 | 幂等 | 回滚 |
 |---|---|---|---|---|
 | `UPDATE_LISTING_CONTENT` | LOW / `listing:write` | AUTO_SAFE，仅草稿 | Workspace、发起人、类型、目标、服务端执行范围和载荷的 SHA256；执行时复核原始内容 | 按 outcome.before 人工恢复草稿；已发布内容禁止自动覆盖 |
+| `CREATE_AD_CAMPAIGN_DRAFT`（D49） | LOW / `finance:write` | AUTO_SAFE，仅本地草稿，日预算 5～500 USD，不启动投放 | Workspace、发起人、Agent、类型、目标、服务端 run/step/输入位置和载荷的 SHA256；数据库唯一约束 | 人工删除新建草稿，保留 Action 审计；禁止自动调用投放平台 |
 
 既有 `CREATE_LISTING_DRAFT` 的自动权限仅限新建草稿，不包括发布。
 既有 `PUBLISH_LISTING` 固定 MEDIUM / `listing:write` / APPROVAL_REQUIRED：
@@ -1435,7 +1436,7 @@ Platform Identity（`superadmin`，ADR-F03 相关）**没有业务 Workspace**�
 |---|---|---|
 | 1 | ✅ **完成**（D35） | 8 条冻结契约落在 `backend/app/agents/contracts.py`；`SupportAgent` 显式未登记（DEBT-34） |
 | 2 | ✅ **Agent 侧读取迁移完成**（D37 ~ D46） | Tool 基础设施与三批方法清单已交付（合计 11 个 Tool / 43 个方法，§10.4.1）。**9/9 个 Agent 文件的读取点全部改走 Tool**，`discovery.py` 的类目、趋势、商品、评分、经营表现与查重读取由 Product / Market Tool 承接，并以 `mode=tool` 审计测试验证。进度锚点：`tests/test_agent_layer_boundaries.py::_ORM_CALL_BASELINE` 之和 **21 → 8**；其中 8 处 `query/get` 均为 upsert 或回写所需的写路径，归 §18.3 第 3 步。`DiscoveryAgent._rule_scores` 仍调用服务层 `get_performance` 计算并缓存表现分，属后续运行时/Action 收敛范围（D46）。 |
-| 3 | 🔶 **进行中**（D47、D48） | 广告预算及 Listing 草稿、优化、发布已接独立 Action Guardrail / Executor，Listing Agent 模块不再直接写业务 ORM（Base 审计仍是存量入口）。发布固定人工审批；工作流等待批准并执行后再恢复，拒绝不会被恢复绕过。同步 Orchestrator 接管已迁移动作的提交/执行；其余 Agent 与基础审计仍保留存量入口。当前 ORM query/get 棘轮总数为 6（不代表全部写入数）；`pricing.reprice_batch`、趋势/评分/标准化、供应评分快照/预测/私域报价、合规/复核、客服/知识学习、告警和基础审计仍待逐项迁移。**第 3 步未完成；第 4～6 步未开始**。 |
+| 3 | 🔶 **进行中**（D47～D49） | 广告预算、广告草稿及 Listing 草稿、优化、发布已接独立 Action Guardrail / Executor，AdsAgent 和 Listing Agent 不再直接写业务 ORM（Base 审计仍是存量入口）。发布固定人工审批；工作流等待批准并执行后再恢复，拒绝不会被恢复绕过。同步 Orchestrator 接管已迁移动作的提交/执行；广告草稿固定本地 draft、不启动投放，显式空商品范围不回退全量。其余 Agent 与基础审计仍保留存量入口。当前 ORM query/get 棘轮总数为 6（不代表全部写入数）；`pricing.reprice_batch`、趋势/评分/标准化、供应评分快照/预测/私域报价、合规/复核、客服/知识学习、告警和基础审计仍待逐项迁移。**第 3 步未完成；第 4～6 步未开始**。 |
 | 4 | ⏳ 未开始 | Orchestrator 仍同步直调 |
 | 5 | ⏳ 未开始 | `BaseAgent.SessionLocal()` 仍自持会话；完成后才能关闭 DEBT-35 |
 | 6 | ⏳ 未开始 | `trace_id` / `task_id` / `parent_trace_id` / `steps[]` 未补 |

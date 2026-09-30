@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from sqlalchemy import or_
 
 from .. import config
-from ..agents.orchestrator import invoke_listing
+from ..agents.orchestrator import invoke_ad_drafts, invoke_listing
 from ..db import SessionLocal
 from ..models import User, WorkflowRun, WorkflowStep, WorkflowTemplate, utcnow
 from ..services.workspace_context import resolve_workspace_context
@@ -101,9 +101,11 @@ def run_step(agent_name: str, action: str, tenant_id: int, params: dict, context
     """执行单个注册动作。"""
     if (agent_name, action) not in _KNOWN:
         raise ValueError(f"未注册的动作: {agent_name}.{action}")
-    if agent_name == "listing" and action in {"generate_batch", "publish_batch"}:
+    if (agent_name, action) in {("listing", "generate_batch"),
+                                ("listing", "publish_batch"), ("ads", "draft_batch")}:
         with SessionLocal() as action_db:
-            requester = action_db.get(User, context.get("_action_requested_by"))
+            requester_id = context.get("_action_requested_by")
+            requester = action_db.get(User, requester_id) if requester_id is not None else None
             impersonating = bool(context.get("_action_impersonating"))
             if requester is not None and impersonating and requester.role == "superadmin":
                 requester = SimpleNamespace(id=requester.id, username=requester.username,
@@ -112,6 +114,9 @@ def run_step(agent_name: str, action: str, tenant_id: int, params: dict, context
                 return {"business_status": "blocked", "context_patch": {},
                         "reason": "缺少可信 Action 发起者，请由人工恢复流程"}
             ctx = resolve_workspace_context(action_db, requester, is_impersonating=impersonating)
+            if agent_name == "ads":
+                return invoke_ad_drafts(action_db, ctx, params, context,
+                                       scope_key=context.get("_action_scope"))
             return invoke_listing(action_db, ctx, action, params, context,
                                   scope_key=context.get("_action_scope"))
     cls = _load_agent_class(agent_name)

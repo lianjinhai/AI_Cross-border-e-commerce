@@ -54,6 +54,34 @@ def update_listing_content(db, action, payload):
 
 
 
+def create_ad_campaign_draft(db, action, payload):
+    """只创建本地草稿；不接收状态、支出或投放凭据，不调用平台。"""
+    owned(db, Product, action.tenant_id, action.target_id)
+    if set(payload) != {"name", "platform", "keywords", "budget"}:
+        raise ActionError(400, "广告草稿载荷字段无效")
+    name, platform, keywords = payload["name"], payload["platform"], payload["keywords"]
+    if not isinstance(name, str) or not name.strip() or len(name) > 128:
+        raise ActionError(400, "广告名称无效")
+    if not isinstance(platform, str) or not platform.strip() or len(platform) > 32:
+        raise ActionError(400, "广告平台无效")
+    if (not isinstance(keywords, list) or not 1 <= len(keywords) <= 20
+            or any(not isinstance(word, str) or not word.strip() or len(word) > 256
+                   for word in keywords)):
+        raise ActionError(400, "广告关键词无效")
+    try:
+        budget = float(payload["budget"])
+    except (TypeError, ValueError) as exc:
+        raise ActionError(400, "广告预算无效") from exc
+    if isinstance(payload["budget"], bool) or not math.isfinite(budget) or not 5 <= budget <= 500:
+        raise ActionError(400, "广告草稿日预算必须为 5～500 USD")
+    row = AdCampaign(tenant_id=action.tenant_id, product_id=action.target_id,
+                     name=name.strip(), platform=platform.strip(), keywords=keywords,
+                     budget=budget, status="draft", spend=0, revenue=0)
+    db.add(row)
+    db.flush()
+    return {"result": to_dict(row)}
+
+
 def budget_facts(db, tenant_id, campaign_id, payload):
     row = owned(db, AdCampaign, tenant_id, campaign_id)
     roi = (row.revenue - row.spend) / row.spend if row.spend else 0.0

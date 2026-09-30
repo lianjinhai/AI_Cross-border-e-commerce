@@ -27,6 +27,7 @@ def test_role_permission_matrix(client):
         ("GET", "/api/orders", None, "read"),
             ("GET", "/api/actions", None, "write"),
             ("GET", "/api/actions?action_type=PUBLISH_LISTING", None, "write"),
+        ("GET", "/api/actions?action_type=CREATE_AD_CAMPAIGN_DRAFT", None, "write"),
         ("POST", "/api/actions/999999/approve", {"note": "权限探针"}, "write"),
         ("POST", "/api/actions/999999/execute", None, "write"),
         ("POST", "/api/orders/sync", {"platform": "demo:shopee", "count": 1}, "write"),

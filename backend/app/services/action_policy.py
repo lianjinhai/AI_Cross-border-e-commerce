@@ -14,6 +14,9 @@ class ActionPolicy:
 
 
 POLICIES = {
+    "CREATE_AD_CAMPAIGN_DRAFT": ActionPolicy(
+        frozenset({"ads"}), "finance:write", "product",
+        rollback="人工删除本次广告草稿；保留 Action 审计，禁止自动启动投放"),
     "ADJUST_AD_BUDGET": ActionPolicy(
         frozenset({"ads"}), "finance:write", "ad_campaign", "HIGH", True,
         "按 outcome.old_budget 发起新的预算审批 Action"),

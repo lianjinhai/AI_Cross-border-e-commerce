@@ -12,11 +12,12 @@ from ..ai.llm import ModelRouter
 from ..models import AiLog
 from ..services.action_identity import require_action_permission
 from ..services.action_publish import publish_targets
-from ..services.agent_outputs import finalize_listing_output
+from ..services.agent_outputs import finalize_ad_drafts, finalize_listing_output
 from ..services.ai_actions import ActionError
 from .base import BaseAgent
 from .listing import ListingAgent
 from .listing_review import ListingReviewAgent
+from .pricing import AdsAgent
 
 
 def invoke_listing(db, ctx, method, *args, scope_key=None):
@@ -34,6 +35,14 @@ def invoke_listing(db, ctx, method, *args, scope_key=None):
     with ListingAgent(ctx.legacy_tenant_id, context=ctx) as agent:
         output = getattr(agent, method)(*args)
     return finalize_listing_output(db, ctx, output, scope_key or ctx.trace_id)
+
+
+def invoke_ad_drafts(db, ctx, params, context, *, scope_key=None):
+    """广告 Agent 只产出草稿提案；此入口绑定当前身份并调度执行器。"""
+    ctx = require_action_permission(db, ctx, "finance:write")
+    with AdsAgent(ctx.legacy_tenant_id, context=ctx) as agent:
+        output = agent.draft_batch(params, context)
+    return finalize_ad_drafts(db, ctx, output, scope_key or ctx.trace_id)
 
 
 class OrchestratorAgent(BaseAgent):

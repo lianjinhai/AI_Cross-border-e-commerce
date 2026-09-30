@@ -1206,7 +1206,8 @@ def test_pricing_and_ads_agents_reads_go_through_tool_layer(client):
             % sorted(expected - actions))
         # 预算优化现在只提出 HIGH 风险建议，不能由 Agent 直接落库。
         assert pricing_rows == 2, "suggest_price 与 reprice_batch 各应落 1 条定价记录"
-        assert draft_rows == 1 and budget["new_budget"] == 65.0
+        assert draft_rows == 0 and budget["new_budget"] == 65.0
+        assert drafts["campaign_drafts"][0]["_action_proposal"]["action_type"] == "CREATE_AD_CAMPAIGN_DRAFT"
         assert budget_after == 50.0, "Agent 不能直接修改广告预算"
     finally:
         db = SessionLocal()

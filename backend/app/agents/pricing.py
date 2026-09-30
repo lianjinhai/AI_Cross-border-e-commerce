@@ -1,10 +1,10 @@
 """定价 Agent（真实利润/动态定价，第十一章）与广告增长 Agent（第十二章）。
 
 §18.3 第 2 步：读取全部经 Tool 层（Product / Market / Listing / Finance Tool，见
-D44）。D47 起预算调整只生成建议，经独立 Action 审批执行；定价记录和广告草稿
-仍由 Agent 直写，属第 3 步欠账。
+D44）。D47 起预算调整只生成建议，经独立 Action 审批执行；D49 广告草稿
+由 Orchestrator / Action 接管，定价记录仍属第 3 步欠账。
 """
-from ..models import AdCampaign, PricingRecord, Product
+from ..models import PricingRecord, Product
 from ..services import costing
 from .base import BaseAgent
 from .contracts import CONTRACTS
@@ -212,25 +212,27 @@ class AdsAgent(BaseAgent):
 
     def draft_batch(self, params: dict | None = None, context: dict | None = None) -> dict:
         params, context = params or {}, context or {}
-        if params.get("product_ids"):
+        if "product_ids" in params:
             ids = params["product_ids"]
         elif "published_product_ids" in context:
             ids = context["published_product_ids"]
         else:
             ids = context.get("product_ids")
-        if not ids:
-            ids = _tool_published_product_ids(self, limit=200)
+        if ids is None:
+            explicit_scope = ("product_ids" in params or "published_product_ids" in context
+                              or "product_ids" in context)
+            ids = [] if explicit_scope else _tool_published_product_ids(self, limit=200)
+        if not isinstance(ids, list):
+            raise ValueError("广告商品范围必须为 ID 列表")
         platform = params.get("platform", "facebook")
         drafts = []
-        for pid in ids[:20]:
+        for slot, pid in enumerate(ids[:20]):
             d = self.suggest_for_product(int(pid), platform)
-            row = AdCampaign(tenant_id=self.tenant_id, name=d["name"], platform=platform,
-                             product_id=pid, keywords=d["keywords"], budget=d["budget"], status="draft")
-            self.db.add(row)
-            self.db.commit()
-            drafts.append({"id": row.id, "name": row.name, "platform": platform,
-                           "product_id": pid, "keywords": row.keywords,
-                           "budget": row.budget, "status": "draft", "reason": d["reason"]})
+            payload = {key: d[key] for key in ("name", "platform", "keywords", "budget")}
+            proposal = self.propose("CREATE_AD_CAMPAIGN_DRAFT", "product", int(pid),
+                                    payload, {**d, "id": None, "status": "PROPOSED"},
+                                    d["reason"] or "生成本地广告草稿，不启动投放")
+            drafts.append({**proposal, "_proposal_slot": slot})
         return {"campaign_drafts": drafts, "context_patch": {}}
 
     def optimize_budget(self, campaign_id: int) -> dict:

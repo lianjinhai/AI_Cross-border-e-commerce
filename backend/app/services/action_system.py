@@ -17,6 +17,7 @@ from .ai_actions import ActionError, _tenant_id, owned_action
 from .pii_redact import redact
 
 HANDLERS = {
+    "CREATE_AD_CAMPAIGN_DRAFT": action_content.create_ad_campaign_draft,
     "CREATE_LISTING_DRAFT": action_content.create_listing_draft,
     "UPDATE_LISTING_CONTENT": action_content.update_listing_content,
     "ADJUST_AD_BUDGET": action_content.adjust_ad_budget,

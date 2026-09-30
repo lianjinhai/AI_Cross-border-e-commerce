@@ -64,7 +64,7 @@ Setting 表约定 key：`llm`（见 ai/llm.py DEFAULT_LLM）、`platform_fees`�
 
 ### 2.5 AdsAgent（name="ads"，文件 agents/pricing.py 同文件）
 - `suggest_for_product(product_id: int, platform: str = "facebook") -> dict`：草稿 `{"name","platform","product_id","keywords":[8-12个]（expand_keywords+商品标题词）、"budget","status":"draft","reason":str}`，不落库。
-- `draft_batch(params, context) -> {"campaign_drafts":[草稿 dict（已创建 AdCampaign 行，status="draft"）], "context_patch":{}}`：product_ids 缺省=最新 listing published 的商品。
+- `draft_batch(params, context)`：Agent 只返回 CREATE_AD_CAMPAIGN_DRAFT 提案（id=null、status=PROPOSED），不创建 AdCampaign。Orchestrator 绑定可信身份，提交 LOW / finance:write / AUTO_SAFE Action；Executor 仅创建本地 draft，日预算限 5～500 USD，不启动投放。返回 campaign_drafts（真实 id、action_id、action_status）与 context_patch.campaign_ids。显式空商品范围不回退全量；完全未提供范围才读取已发布商品。同一服务端工作流范围幂等，失败终态不自动重试（D49）。
 - `optimize_budget(campaign_id: int) -> dict`：按 ROI 产出建议：roi>2→预算+30%（上限500），roi<0.8→-40%，0.8-2→维持；返回 `{"campaign_id","old_budget","new_budget","action","reason","roi"}`，**不改预算**。路由将变更建议提交为 HIGH 风险 `ADJUST_AD_BUDGET` Action，审批后由 Executor 写入（D47）。
 - `roi_report() -> {"summary":{"total_spend","total_revenue","roi","avg_ctr"},"campaigns":[campaign dict + {"roi","ctr","cvr"}]}`。
 
@@ -159,7 +159,7 @@ def gen_order(db, tenant_id: int, platform: str | None = None) -> Order         
 ### B2 名下
 - **pricing.py** `/pricing`：`GET ""?product_id&page&page_size`（记录列表，附 title）；`POST /calc {"product_id","price"?}`；`POST /suggest {"product_id"}`。
 - **ads.py** `/ads`：`GET /campaigns`（roi_report 结果）；`POST /campaigns`（草稿/表单创建，可含 id 列表批量）；`POST /campaigns/{id}/optimize` 返回预算建议、`action_id` 与 `PENDING_APPROVAL`，预算不立即改变；`POST /suggest {"product_id","platform"}`。
-- **actions.py** `/actions`（D47、D48）：`GET ""?status=&action_type=` 查当前 Workspace 的指定类型 Action，缺省仍为 ADJUST_AD_BUDGET；另支持 PUBLISH_LISTING、CREATE_LISTING_DRAFT、UPDATE_LISTING_CONTENT，权限按服务端目录。`POST /{id}/approve|reject {"note"}` 仅人工审批动作可用；`POST /{id}/execute` 对已批准 Action 幂等执行，复核当前执行人及原请求者的真实权限、租户状态和服务授权。FAILED/REJECTED 不允许重试同一 Action；结果/失败现场保存在 outcome。Listings 页面提供独立发布审批队列。
+- **actions.py** `/actions`（D47～D49）：`GET ""?status=&action_type=` 查当前 Workspace 的指定类型 Action，缺省仍为 ADJUST_AD_BUDGET；另支持 PUBLISH_LISTING、CREATE_LISTING_DRAFT、UPDATE_LISTING_CONTENT、CREATE_AD_CAMPAIGN_DRAFT，权限按服务端目录。`POST /{id}/approve|reject {"note"}` 仅人工审批动作可用；`POST /{id}/execute` 对已批准 Action 幂等执行，复核当前执行人及原请求者的真实权限、租户状态和服务授权。FAILED/REJECTED 不允许重试同一 Action；结果/失败现场保存在 outcome。Listings 页面提供独立发布审批队列。
 - **orders.py** `/orders`：`GET ""?platform&status&keyword&page&page_size`；`POST /sync {"platform","count":5}`（gen_order×n，require_write）；`PUT /{id}/status {"status"}`（校验合法值）。
 - **support.py** `/support`：`GET /conversations?status&page&page_size`（附 last message + buyer_name）；`POST /conversations {"platform","buyer_name","content",?order_id,?product_id}`（创建会话+首条 buyer 消息）；`GET /conversations/{id}`（含 messages）；`POST /conversations/{id}/reply {"content"}`（operator 回复）；`POST /conversations/{id}/auto_reply`（SupportAgent）；`POST /conversations/{id}/close`。
 - **bi.py** `/bi`：
