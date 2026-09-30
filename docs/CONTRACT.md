@@ -34,15 +34,15 @@ Setting 表约定 key：`llm`（见 ai/llm.py DEFAULT_LLM）、`platform_fees`�
 
 ## 2. 智能体层契约（agents/*）
 
-所有 Agent：构造 `XxxAgent(tenant_id: int)`，支持 `with`；类属性 `name` 指定如下。下列为早期方法清单，数据库访问约束以 Agent OS §18.3 和 `docs/DECISIONS.md` D37~D51 的迁移现状为准。返回**纯 dict/list**（不要返回 ORM 对象）。LLM prompt 用中文+结构化要求，fallback 必须完整可用。
+所有 Agent：构造 `XxxAgent(tenant_id: int)`，支持 `with`；类属性 `name` 指定如下。下列为早期方法清单，数据库访问约束以 Agent OS §18.3 和 `docs/DECISIONS.md` D37~D52 的迁移现状为准。返回**纯 dict/list**（不要返回 ORM 对象）。LLM prompt 用中文+结构化要求，fallback 必须完整可用。
 
 ### 2.1 DiscoveryAgent（name="discovery"，文件 agents/discovery.py）
-市场发现+选品（对应规划第七章）。评分公式：`total = 0.35*demand + 0.20*(100-competition) + 0.30*profit + 0.15*(100-risk)`。
+市场发现+选品（对应规划第七章）。当前规则评分含真实经营表现：`total = 0.30*demand + 0.15*(100-competition) + 0.25*profit + 0.10*(100-risk) + 0.20*performance_score`，无真实销售的新品表现取 50。历史 LLM 提示仍使用四维权重，不能把历史四维说明等同规则实际公式。
 - `scan_trends() -> list[dict]`：基于现有商品类目+固定关键词池 upsert 12 条 MarketTrend（同 keyword+platform 更新数值），返回 to_dict 列表。
 - `expand_keywords(keyword: str) -> {"keywords": [str]}`：8-12 个扩展词（类目词+属性词+平台词+长尾组合；LLM 可增强）。
-- `score_product(product_id: int) -> dict`：写一条 ProductScore，返回 `{"product_id","demand","competition","profit","risk","total","reasons":[str],"model","score_id"}`。规则依据：MarketTrend 匹配类目→demand；类目商品数→competition；利润率(见 PricingAgent 成本)→profit；标题命中品牌/敏感词→risk。reasons 为中文依据说明（2-4条）。
-- `score_batch(product_ids: list[int]) -> {"results":[score dict]}`
-- `pick_candidates(limit: int = 3, min_total: float = 60) -> {"items":[score dict + {"title","category"}], "context_patch": {"product_ids":[int]}}`：取每个商品**最新**评分排序。
+- `score_product(product_id: int) -> dict`：Agent 只经 Tool 返回分析及内部 `_score_analysis/_score_evidence`，不保存评分/决策、不触发表现缓存写入。HTTP 经 `invoke_discovery`、产物服务复核 product:write/可信身份/Workspace/商品归属，在单一事务保存既有 ProductScore + AiDecision，返回真实 score_id 及既有分数字段，内部标记不暴露（D52）。规则依据为趋势、类目密度、属性成本、品牌风险和真实经营表现；LLM 未使用的真实订单输入明确标为 not_used。
+- `score_batch(product_ids: list[int])`：产物服务整批原子保存；每项错误显式返回 errors/business_status=blocked，失败批次不新增部分评分，context_patch={}。同 scope 复用原评分与决策，新 scope 可新增；服务端 AiDecision.evidence._persistence 保存来源、身份、scope、score_id 与不可变指纹，不修改历史记录。
+- `pick_candidates(limit: int = 3, min_total: float = 60, explore=True, explicit_ids=None)`：未指定商品时只读每商品最新评分，保留探索配额；显式清单经 Orchestrator 评分与持久化，保留 picked_product_ids/context_patch 语义。显式空清单不回退全池；显式选品上限 50、批量评分上限 200，超限/非法 ID 拒绝，不静默截掉或漏项。Workflow discovery.pick_candidates 使用服务端身份及 run/step 范围，缺身份阻断；聊天选品也走同一调度入口。
 
 ### 2.2 ProductAgent（name="product"，文件 agents/discovery.py 同文件）
 商品标准化（第八章）。`_CJK_CATEGORY_MAP`：关键词→标准类目（家居/3C配件/宠物用品/户外运动/美妆工具/母婴用品/服饰配件/厨房用品）。

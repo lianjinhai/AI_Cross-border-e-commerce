@@ -15,6 +15,7 @@ from sqlalchemy import func, or_
 
 from ..models import Product, ProductPerformance, ProductScore
 from ..services.costing import best_purchase
+from ..services.product_performance import read_performance
 from .base import BaseTool, Reading, as_int, clamp_limit, reading, ts
 from .contract import ERR_BAD_PARAM, ERR_NOT_FOUND, ToolError, ToolSpec
 
@@ -44,6 +45,8 @@ class ProductTool(BaseTool):
                  writes=False, summary="列出本租户商品类目（去重、剔空、按名称升序）"),
         ToolSpec(tool="product", method="get_latest_performance", permission="product:read",
                  writes=False, summary="商品最近一次经营表现（只读缓存行，不触发重算）"),
+        ToolSpec(tool="product", method="calculate_performance", permission="product:read",
+                 writes=False, summary="真实订单即时经营表现（零缓存写入）"),
         ToolSpec(tool="product", method="get_sold_product_ids", permission="product:read",
                  writes=False, summary="有真实销量的商品 id 清单（探索配额判定用）"),
         ToolSpec(tool="product", method="find_duplicate", permission="product:read",
@@ -139,6 +142,13 @@ class ProductTool(BaseTool):
             raise ToolError(ERR_NOT_FOUND, "商品 %s 尚无经营表现记录" % pid)
         return reading(self._perf_dict(row), table="product_performance",
                        product_id=pid, performance_id=row.id)
+
+    def _calculate_performance(self, product_id, window_days=30) -> Reading:
+        product = self._owned(product_id)
+        days = clamp_limit(window_days, default=30, maximum=365, name="window_days")
+        result = read_performance(self.db, self.context.tenant_id, product.id, days)
+        return reading(result, table="orders", product_id=product.id,
+                       window_days=result["window_days"], real_only=True)
 
     def _get_sold_product_ids(self, min_units=0, limit=500) -> Reading:
         """有真实销量的商品 id 清单（选品探索配额判定：哪些商品不算「新品」）。"""

@@ -1,13 +1,15 @@
 """商品发现 Agent（市场趋势/关键词扩展/选品评分）与商品标准化 Agent。
 
 §18.3 第 2 步（D46）：读取全部经 Tool 层（Product / Market Tool）；写路径
-（趋势 upsert、评分落库）保留 ORM 访问并集中标注，属第 3 步欠账。
+（趋势 upsert）保留 ORM 访问并集中标注，属第 3 步欠账。
+评分只输出分析产物，由 Orchestrator 保存评分和依据链。
 商品标准化仅输出 UPDATE_PRODUCT_CONTENT 提案，由 Orchestrator 调度执行。
 """
+import math
 import random
 from datetime import datetime
 
-from ..models import MarketTrend, ProductScore
+from ..models import MarketTrend
 from ..services.product_standardization import safe_fields, snapshot
 from .base import BaseAgent
 from .contracts import CONTRACTS
@@ -55,7 +57,10 @@ _TREND_POOL = [
 
 
 def _clamp(v: float, lo=0, hi=100) -> float:
-    return max(lo, min(hi, round(float(v), 1)))
+    number = float(v)
+    if isinstance(v, bool) or not math.isfinite(number):
+        raise ValueError("评分数值必须有限")
+    return max(lo, min(hi, round(number, 1)))
 
 
 class DiscoveryAgent(BaseAgent):
@@ -125,8 +130,6 @@ class DiscoveryAgent(BaseAgent):
         经营表现来自真实订单聚合（product_performance，real_only 口径）；
         无真实销售的新品取中性分 50，不惩罚新品。
         """
-        from ..services.product_performance import get_performance
-
         attrs = p.get("attrs") or {}
         title_l = (p["title"] + " " + str(attrs).lower())
         trend = _tool_trend(self, p["category"]) if p["category"] else None
@@ -145,12 +148,12 @@ class DiscoveryAgent(BaseAgent):
         risk = _clamp(8 + len(hits) * 25)
 
         # M1：真实经营表现反哺（无数据 -> 50 中性分）
-        try:
-            perf = get_performance(self.db, self.tenant_id, p["id"])
-            perf_score = float(perf.get("performance_score", 50))
-            has_perf = bool(perf.get("has_data"))
-        except Exception:
-            perf, perf_score, has_perf = {}, 50.0, False
+        got = self.tool("product").call("calculate_performance", product_id=p["id"])
+        if not got.ok:
+            raise ValueError("真实经营表现读取失败")
+        perf = got.data
+        perf_score = _clamp(perf["performance_score"])
+        has_perf = bool(perf["has_data"])
 
         total = _clamp(0.30 * demand + 0.15 * (100 - competition) + 0.25 * profit
                        + 0.10 * (100 - risk) + 0.20 * perf_score)
@@ -166,10 +169,14 @@ class DiscoveryAgent(BaseAgent):
         ]
         return {"demand": demand, "competition": competition, "profit": profit,
                 "risk": risk, "total": total, "reasons": reasons,
-                "performance_score": perf_score, "has_performance_data": has_perf}
+                "performance_score": perf_score, "has_performance_data": has_perf,
+                "_evidence": {"trend_id": trend["id"] if trend else None,
+                              "category": p["category"], "performance_source": "real_orders",
+                              "performance_score": perf_score, "has_performance_data": has_perf,
+                              "window_days": perf["window_days"]}}
 
     def score_product(self, product_id: int) -> dict:
-        """选品评分并落库 ProductScore。"""
+        """仅输出选品分析，由同步调度层保存产物。"""
         p = _tool_product(self, product_id)
         if not p:
             raise ValueError(f"商品 {product_id} 不存在")
@@ -183,40 +190,33 @@ class DiscoveryAgent(BaseAgent):
                   f"total=0.35*demand+0.2*(100-competition)+0.3*profit+0.15*(100-risk)，reasons为2-4条中文依据）。"
                   f"返回 JSON: {{\"demand\":0,\"competition\":0,\"profit\":0,\"risk\":0,\"total\":0,\"reasons\":[\"\"]}}。\n{data_hint}")
         result, mode = self.ask_json("score_product", system, prompt, fallback=rule)
-        if not all(k in result for k in ("demand", "competition", "profit", "risk", "total")):
+        keys = ("demand", "competition", "profit", "risk", "total")
+        try:
+            valid = (isinstance(result, dict) and all(
+                not isinstance(result[k], bool) and isinstance(result[k], (int, float))
+                and math.isfinite(result[k]) and 0 <= result[k] <= 100 for k in keys)
+                and isinstance(result.get("reasons"), list)
+                and all(isinstance(reason, str) for reason in result["reasons"]))
+        except (KeyError, TypeError, ValueError):
+            valid = False
+        if not valid:
             result, mode = rule(), "rule"
-        # 写路径（§18.3 第 3 步欠账）：评分落库仍需 ORM 写入，保留并标注。
-        row = ProductScore(
-            tenant_id=self.tenant_id, product_id=product_id,
-            demand=_clamp(result["demand"]), competition=_clamp(result["competition"]),
-            profit=_clamp(result["profit"]), risk=_clamp(result["risk"]),
-            total=_clamp(result["total"]),
-            reasons=result.get("reasons") or [], model="llm" if mode == "llm" else "rule",
-        )
-        self.db.add(row)
-        self.db.commit()
-        # M6：记录决策依据链（可追溯用了哪些数据）——引用 id 走 Tool 读取。
-        trend_ref = _tool_trend(self, p["category"] or "")
-        perf_got = self.tool("product").call("get_latest_performance", product_id=product_id)
-        perf_id = (perf_got.data.get("id")
-                   if perf_got.ok and isinstance(perf_got.data, dict) else None)
-        self.record_decision(
-            action="score_product", subject_type="product", subject_id=product_id,
-            decision={"total": row.total, "demand": row.demand, "competition": row.competition,
-                      "profit": row.profit, "risk": row.risk},
-            evidence={"trend_id": trend_ref["id"] if trend_ref else None,
-                      "performance_id": perf_id,
-                      "performance_score": result.get("performance_score"),
-                      "has_performance_data": result.get("has_performance_data"),
-                      "category": p["category"],
-                      "reasons": row.reasons},
-            model=row.model)
-        return {"product_id": product_id, "demand": row.demand, "competition": row.competition,
-                "profit": row.profit, "risk": row.risk, "total": row.total,
-                "reasons": row.reasons, "model": row.model, "score_id": row.id}
+        record = {"product_id": product_id, **{k: _clamp(result[k]) for k in keys},
+                  "reasons": result.get("reasons") or [],
+                  "model": "llm" if mode == "llm" else "rule"}
+        return {**record, "_score_analysis": record,
+                "_score_evidence": result.get("_evidence", {}) if mode != "llm" else {
+                    "trend_id": None, "category": p["category"], "performance_source": "not_used"}}
 
     def score_batch(self, product_ids: list[int]) -> dict:
-        return {"results": [self.score_product(pid) for pid in product_ids]}
+        results, errors = [], []
+        for pid in product_ids:
+            try:
+                results.append(self.score_product(pid))
+            except (ValueError, TypeError) as exc:
+                errors.append({"product_id": pid, "error": str(exc)})
+        return {"results": results, "errors": errors,
+                "business_status": "blocked" if errors else "success"}
 
     def _candidate_item(self, score: dict, is_explore: bool = False) -> dict | None:
         """只在候选入选时读取商品详情并组装返回行。"""
@@ -241,23 +241,19 @@ class DiscoveryAgent(BaseAgent):
         新品名额，避免数据飞轮形成"只推卖过的品"的马太效应。配额只给
         「分数 >= 当前中位值 × 0.7」的新品，防止推垃圾新品。
         """
-        if explicit_ids:
+        if explicit_ids is not None:
             # 调用方显式指定商品：直接对这些商品评分并返回，不做全池挑选
+            batch = self.score_batch(explicit_ids)
             items = []
-            for pid in explicit_ids[:50]:
-                try:
-                    s = self.score_product(int(pid))
-                except Exception:
-                    continue
-                p = _tool_product(self, int(pid))
-                if not p:
-                    continue
-                items.append({"product_id": int(pid), "title": p["title"], "category": p["category"],
-                              "demand": s["demand"], "competition": s["competition"],
-                              "profit": s["profit"], "risk": s["risk"], "total": s["total"],
-                              "reasons": s["reasons"], "model": s["model"]})
+            for score in batch["results"]:
+                item = self._candidate_item(score)
+                if item is None:
+                    batch["errors"].append({"product_id": score["product_id"], "error": "商品已失效"})
+                else:
+                    items.append(item)
             return {"items": items, "context_patch": {},
-                    "picked_product_ids": [i["product_id"] for i in items]}
+                    "picked_product_ids": [i["product_id"] for i in items],
+                    "_score_batch": batch}
 
         scores = _tool_list(self, "market", "get_latest_scores", limit=500)
         # 必须校验商品归属与在售状态：评分行按 tenant 过滤，但商品可能属于其他

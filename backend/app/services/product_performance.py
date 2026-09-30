@@ -51,6 +51,8 @@ def _window_metrics(db: Session, tenant_id: int, product_id: int,
     refunded = (db.query(func.count(RefundOrder.id))
                 .join(Order, Order.id == RefundOrder.order_id)
                 .filter(RefundOrder.tenant_id == tenant_id,
+                        Order.tenant_id == tenant_id,
+                        Order.source.in_(_REAL_SOURCES),
                         Order.product_id == product_id,
                         RefundOrder.created_at >= since,
                         RefundOrder.status == "refunded").scalar() or 0)
@@ -134,6 +136,20 @@ def get_performance(db: Session, tenant_id: int, product_id: int,
                     window_days: int = 30) -> dict:
     """读取表现分（优先缓存，过期则重算）。"""
     return compute_performance(db, tenant_id, product_id, window_days)
+
+
+def read_performance(db: Session, tenant_id: int, product_id: int,
+                     window_days: int = 30) -> dict:
+    """真实订单即时聚合，仅返回分析输入，不读写缓存。"""
+    window_days = max(_WINDOW_MIN, min(_WINDOW_MAX, int(window_days or 30)))
+    _assert_owned(db, tenant_id, product_id)
+    metrics = _window_metrics(db, tenant_id, product_id, window_days)
+    result = _derive(metrics)
+    has_data = metrics["order_count"] > 0
+    if not has_data:
+        result["performance_score"] = 50.0
+    return {"product_id": product_id, "window_days": window_days,
+            **result, "has_data": has_data}
 
 
 def performance_map(db: Session, tenant_id: int, product_ids: list[int],

@@ -4,11 +4,14 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..agents.discovery import DiscoveryAgent
-from ..auth import get_current_user, require_write
+from ..agents.orchestrator import invoke_discovery
+from ..auth import get_current_user, is_impersonating_user, require_write
 from ..db import get_db
 from ..models import MarketTrend, Product, ProductScore, User
 from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
+from ..services.ai_actions import ActionError
+from ..services.workspace_context import resolve_workspace_context
 
 router = APIRouter(prefix="/discovery", tags=["discovery"])
 
@@ -45,16 +48,22 @@ def score(product_id: int, user: User = Depends(require_write), db: Session = De
     p = db.get(Product, product_id)
     if not p or p.tenant_id != user.tenant_id:
         raise HTTPException(status_code=404, detail="商品不存在")
-    with DiscoveryAgent(user.tenant_id) as a:
-        return a.score_product(product_id)
+    return _invoke(db, user, "score_product", product_id)
 
 
 @router.post("/pick")
 def pick(body: PickIn, user: User = Depends(require_write), db: Session = Depends(get_db)):
     if not 1 <= body.limit <= 20:
         raise HTTPException(status_code=400, detail="limit 需在 1-20 之间")
-    with DiscoveryAgent(user.tenant_id) as a:
-        return a.pick_candidates(body.limit)
+    return _invoke(db, user, "pick_candidates", body.limit)
+
+
+def _invoke(db, user, method, *args):
+    ctx = resolve_workspace_context(db, user, is_impersonating=is_impersonating_user(user))
+    try:
+        return invoke_discovery(db, ctx, method, *args)
+    except (ActionError, ValueError) as exc:
+        raise HTTPException(status_code=getattr(exc, "status_code", 400), detail=str(exc)) from exc
 
 
 @router.get("/performance/{product_id}")

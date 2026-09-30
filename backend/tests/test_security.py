@@ -25,6 +25,8 @@ def test_role_permission_matrix(client):
         ("GET", "/api/products", None, "read"),
         ("POST", "/api/products", {"title": "probe-matrix"}, "write"),
         ("POST", "/api/products/999999/standardize", None, "write"),
+        ("POST", "/api/discovery/score/999999", None, "write"),
+        ("POST", "/api/discovery/pick", {"limit": 1}, "write"),
         ("GET", "/api/orders", None, "read"),
         ("GET", "/api/pricing", None, "read"),
         ("POST", "/api/pricing/suggest", {"product_id": 999999}, "write"),

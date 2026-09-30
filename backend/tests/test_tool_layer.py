@@ -85,7 +85,7 @@ def _doc_manifest() -> dict:
 def test_manifest_matches_architecture_doc():
     """注册表必须与 §10.4 + §10.4.1 冻结清单**逐条一致**（数量、权限、读写属性）。"""
     doc = _doc_manifest()
-    assert len(doc) == 43, "§10.4 + §10.4.1 应含 43 个方法，解析到 %d 个：%s" % (len(doc), sorted(doc))
+    assert len(doc) == 44, "§10.4 + §10.4.1 应含 44 个方法，解析到 %d 个：%s" % (len(doc), sorted(doc))
     assert "listing.get_listings" in doc, "§10.4.1 第二批表格未被解析到（区段边界写错？）"
     assert "conversation.get_conversations" in doc, "§10.4.1 的 Conversation Tool 未被解析到"
     assert "compliance.get_review_decisions" in doc, "§10.4.1 的 Compliance Tool 补批未被解析到"
@@ -413,7 +413,7 @@ def probe_tenant(client):
         db.add(tenant)
         db.commit()
         product = Product(tenant_id=tenant.id, sku="TOOL-PROBE-1",
-                          title="Tool Layer 真库探针商品",
+                          title="Tool Layer 真库探针商品", category="probe",
                           attrs={"sale_price": 19.99, "weight_kg": 0.3})
         db.add(product)
         db.commit()
@@ -519,6 +519,7 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
         ("product", "count_products", {"status": "active"}),
         ("product", "get_categories", {"status": "active"}),
         ("product", "get_latest_performance", {"product_id": product_id}),
+        ("product", "calculate_performance", {"product_id": product_id}),
         ("product", "get_sold_product_ids", {}),
         ("product", "find_duplicate", {"dedupe_hash": "probe-dedupe-none"}),
         ("order", "get_sales_summary", {"days": 30}),
@@ -528,7 +529,7 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
         ("listing", "count_listings", {"status": "draft"}),
         ("conversation", "count_conversations", {"status": "open"}),
     ]
-    assert len(calls) == 38, "真库覆盖清单应为 38 条，实际 %d" % len(calls)
+    assert len(calls) == 39, "真库覆盖清单应为 39 条，实际 %d" % len(calls)
     # 完整性（T-53）：除 memory.recall（Phase 6 未到，实现显式 NOT_IMPLEMENTED）外，
     # 冻结清单里的每个只读方法都必须在这里真跑一遍——否则第二批新增的方法会静默漏测。
     expected = {spec.key for spec in registry.tool_specs().values()
@@ -556,9 +557,9 @@ def test_every_read_method_runs_against_real_db(probe_tenant):
     assert not failures, "只读方法在真实库上执行失败：\n  " + "\n  ".join(failures)
     # 反向断言：若哪天实现整体退化成「一律 NOT_FOUND」，上一条断言仍会全绿。
     # 探针数据（商品/Listing/评分/合规报告/汇率/预测快照/趋势/经营表现）齐备时，
-    # 38 个方法应全部走成功分支。
-    assert ok_count == 38, (
-        "只读方法成功 %d/38——是否有实现静默退化成 NOT_FOUND？" % ok_count)
+    # 39 个方法应全部走成功分支。
+    assert ok_count == 39, (
+        "只读方法成功 %d/39——是否有实现静默退化成 NOT_FOUND？" % ok_count)
 
 
 def test_compliance_agent_reads_go_through_tool_layer(probe_tenant):
@@ -1273,14 +1274,15 @@ def test_orchestrator_reads_go_through_tool_layer(probe_tenant):
     assert chat_logs == 4, chat_logs
 
 
-def test_discovery_reads_go_through_tool_layer(probe_tenant):
-    """选品与标准化的读取必须产生 Tool 审计；写路径仍能正常落库。"""
+def test_discovery_reads_go_through_tool_layer(probe_tenant, monkeypatch):
+    """规则选品与标准化读取必须产生 Tool 审计，评分本身不写缓存。"""
     from app.agents.discovery import DiscoveryAgent, ProductAgent
     from app.db import SessionLocal
     from app.models import AiLog
 
     tenant_id = probe_tenant["tenant_id"]
     product_id = probe_tenant["product_id"]
+    monkeypatch.setattr(DiscoveryAgent, "ask_json", lambda self, *args, **kwargs: (kwargs["fallback"](), "rule"))
     with DiscoveryAgent(tenant_id) as agent:
         sold = agent.tool("product").call("get_sold_product_ids")
         assert sold.ok and product_id in sold.data, "卖出 1 件的商品必须算已有销量"
@@ -1300,7 +1302,7 @@ def test_discovery_reads_go_through_tool_layer(probe_tenant):
     finally:
         db.close()
     expected = {"tool:product.get_categories", "tool:product.get_products",
-                "tool:product.count_products", "tool:product.get_latest_performance",
+                "tool:product.count_products", "tool:product.calculate_performance",
                 "tool:product.get_product_ids", "tool:product.find_duplicate",
                 "tool:market.get_trends", "tool:market.get_latest_scores"}
     assert expected <= actions, "discovery 读取未全部经 Tool：%s" % sorted(expected - actions)

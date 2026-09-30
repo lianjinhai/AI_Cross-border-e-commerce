@@ -615,6 +615,9 @@ Agent Runtime 是**任务执行引擎**，负责把 Task 从创建推进到终�
 分析产物不是业务执行动作：D50 的 PricingAgent 仅返回分析，由 Orchestrator
 调用产物服务保存既有 PricingRecord，并复核身份、权限和商品归属。
 它不创建 AI Action、不修改商品售价、不执行财务操作；此类持久化不得由 Agent 自行落库。
+D52 的选品评分遵循同一 Insight 产物边界：Orchestrator/产物服务原子保存既有
+ProductScore 与 AiDecision，绑定可信身份和不可变来源，不创建经营 Action；
+规则表现读取通过只读 Product Tool 即时聚合，不触发缓存写入。
 
 唯一合法路径：
 
@@ -847,6 +850,7 @@ ToolResult {
 | **Market Tool** | `pick_trend()` | `product:read` | 读 |
 | **Listing Tool** | `count_listings()` | `listing:read` | 读 |
 | **Conversation Tool** | `count_conversations()` | `support:read` | 读 |
+| **Product Tool** | `calculate_performance()` | `product:read` | 读 |
 
 ### 10.5 写操作的特殊约束
 
@@ -1444,8 +1448,8 @@ Platform Identity（`superadmin`，ADR-F03 相关）**没有业务 Workspace**�
 | 步 | 状态 | 证据 / 剩余工作 |
 |---|---|---|
 | 1 | ✅ **完成**（D35） | 8 条冻结契约落在 `backend/app/agents/contracts.py`；`SupportAgent` 显式未登记（DEBT-34） |
-| 2 | ✅ **Agent 侧读取迁移完成**（D37 ~ D46） | Tool 基础设施与三批方法清单已交付（合计 11 个 Tool / 43 个方法，§10.4.1）。**9/9 个 Agent 文件的读取点全部改走 Tool**，`discovery.py` 的类目、趋势、商品、评分、经营表现与查重读取由 Product / Market Tool 承接，并以 `mode=tool` 审计测试验证。进度锚点：`tests/test_agent_layer_boundaries.py::_ORM_CALL_BASELINE` 之和 **21 → 8**；其中 8 处 `query/get` 均为 upsert 或回写所需的写路径，归 §18.3 第 3 步。`DiscoveryAgent._rule_scores` 仍调用服务层 `get_performance` 计算并缓存表现分，属后续运行时/Action 收敛范围（D46）。 |
-| 3 | 🔶 **进行中**（D47～D51） | 广告预算、广告草稿、Listing 草稿/优化/发布及商品安全标准化已接独立 Action Guardrail / Executor；定价分析记录由 Orchestrator / 产物服务保存，不生成财务 Action、不修改售价。ProductAgent、PricingAgent、AdsAgent 和 Listing Agent 不再直接写业务 ORM（Base 审计仍是存量入口）。发布固定人工审批，批准并执行后人工恢复；拒绝不会被恢复绕过。广告固定本地 draft；定价重放原分析快照；商品标准化锁内核对原状态/指纹/查重，失败批次保留原范围，包括零 Action 失败。当前 ORM query/get 棘轮总数为 5（不代表全部写入数）；趋势/评分、供应评分快照/预测/私域报价、合规/复核、客服/知识学习、告警和基础审计仍待逐项迁移。**第 3 步未完成；第 4～6 步未开始**。 |
+| 2 | ✅ **Agent 侧读取迁移完成**（D37 ~ D46；D52 补只读聚合） | Tool 共 11 个、44 个方法（§10.4.1）。9/9 个 Agent 文件的读取点经 Tool；历史 ORM query/get 棘轮 21→8 的剩余均属第 3 步写路径。D52 将 DiscoveryAgent._rule_scores 的 get_performance 隐性缓存写改为 product.calculate_performance，只读真实订单即时聚合，保留真实来源过滤和新品中性分；Tool 审计及真库全方法覆盖保持。 |
+| 3 | 🔶 **进行中**（D47～D52） | 广告预算/草稿、Listing 草稿/优化/发布及商品安全标准化已接 Action Guardrail/Executor；定价与选品评分分析由 Orchestrator/产物服务保存，不生成经营 Action。评分与依据链原子保存，锁内去重、同 scope 重放原结果并验证不可变指纹，错误批次不新存部分评分；HTTP/显式选品/聊天/Workflow 入口绑定真实身份。发布须人工批准、执行后再恢复；广告仅本地 draft；标准化失败保留原范围。ORM query/get 棘轮仍为 5（不代表全部写入数）；趋势、供应评分快照/预测/私域报价、合规/复核、客服/知识学习、告警和基础审计仍待迁移。**第 3 步未完成；第 4～6 步未开始**。 |
 | 4 | ⏳ 未开始 | Orchestrator 仍同步直调 |
 | 5 | ⏳ 未开始 | `BaseAgent.SessionLocal()` 仍自持会话；完成后才能关闭 DEBT-35 |
 | 6 | ⏳ 未开始 | `trace_id` / `task_id` / `parent_trace_id` / `steps[]` 未补 |

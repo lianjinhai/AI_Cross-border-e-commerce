@@ -12,7 +12,13 @@ from types import SimpleNamespace
 from sqlalchemy import or_
 
 from .. import config
-from ..agents.orchestrator import invoke_ad_drafts, invoke_listing, invoke_pricing, invoke_product
+from ..agents.orchestrator import (
+    invoke_ad_drafts,
+    invoke_discovery,
+    invoke_listing,
+    invoke_pricing,
+    invoke_product,
+)
 from ..db import SessionLocal
 from ..models import User, WorkflowRun, WorkflowStep, WorkflowTemplate, utcnow
 from ..services.workspace_context import resolve_workspace_context
@@ -103,7 +109,8 @@ def run_step(agent_name: str, action: str, tenant_id: int, params: dict, context
         raise ValueError(f"未注册的动作: {agent_name}.{action}")
     if (agent_name, action) in {("listing", "generate_batch"),
                                 ("listing", "publish_batch"), ("ads", "draft_batch"),
-                                ("pricing", "reprice_batch"), ("product", "standardize_batch")}:
+                                ("pricing", "reprice_batch"), ("product", "standardize_batch"),
+                                ("discovery", "pick_candidates")}:
         with SessionLocal() as action_db:
             requester_id = context.get("_action_requested_by")
             requester = action_db.get(User, requester_id) if requester_id is not None else None
@@ -115,6 +122,11 @@ def run_step(agent_name: str, action: str, tenant_id: int, params: dict, context
                 return {"business_status": "blocked", "context_patch": {},
                         "reason": "缺少可信 Action 发起者，请由人工恢复流程"}
             ctx = resolve_workspace_context(action_db, requester, is_impersonating=impersonating)
+            if agent_name == "discovery":
+                explicit = params.get("product_ids", context.get("product_ids"))
+                return invoke_discovery(action_db, ctx, action, int(params.get("limit", 3)),
+                    float(params.get("min_total", 60)), True, explicit,
+                    scope_key=context.get("_action_scope"))
             if agent_name == "product":
                 return invoke_product(action_db, ctx, action, params, context,
                                       scope_key=context.get("_action_scope"))
@@ -131,12 +143,6 @@ def run_step(agent_name: str, action: str, tenant_id: int, params: dict, context
         method = getattr(agent, action)
         if action in _BATCH_ACTIONS:
             return method(params, context)
-        if action == "pick_candidates":
-            # 把 context/params 中已指定的商品透传为 explicit_ids：
-            # 用户显式选定的商品不应被"重新选品"覆盖（否则后续步骤跑偏）
-            explicit = params.get("product_ids") or context.get("product_ids") or None
-            return method(int(params.get("limit", 3)), float(params.get("min_total", 60)),
-                          True, explicit)
         if action == "scan_trends":
             return method()
     raise ValueError(f"动作调用失败: {agent_name}.{action}")

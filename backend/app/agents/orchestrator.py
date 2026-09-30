@@ -14,6 +14,7 @@ from ..services.action_identity import require_action_permission
 from ..services.action_publish import publish_targets
 from ..services.agent_outputs import finalize_ad_drafts, finalize_listing_output
 from ..services.ai_actions import ActionError
+from ..services.discovery_outputs import finalize_discovery_scores, recover_discovery_score
 from ..services.pricing_outputs import finalize_pricing_output
 from ..services.product_outputs import (
     batch_result,
@@ -22,7 +23,7 @@ from ..services.product_outputs import (
     recover_range,
 )
 from .base import BaseAgent
-from .discovery import ProductAgent
+from .discovery import DiscoveryAgent, ProductAgent
 from .listing import ListingAgent
 from .listing_review import ListingReviewAgent
 from .pricing import AdsAgent, PricingAgent
@@ -104,6 +105,54 @@ def invoke_pricing(db, ctx, method, *args, scope_key=None):
     return finalize_pricing_output(db, ctx, output, scope_key or ctx.trace_id)
 
 
+def invoke_discovery(db, ctx, method, *args, scope_key=None):
+    """同步调度评分分析并保存既有产物；原服务端范围重放原评分。"""
+    if method not in {"score_product", "score_batch", "pick_candidates"}:
+        raise ValueError("未迁移的选品分析")
+    ctx = require_action_permission(db, ctx, "product:write")
+    scope = scope_key or ctx.trace_id
+    explicit = args[3] if method == "pick_candidates" and len(args) > 3 else None
+    if method == "pick_candidates" and explicit is None:
+        with DiscoveryAgent(ctx.legacy_tenant_id, context=ctx) as agent:
+            return agent.pick_candidates(*args)
+    ids = [args[0]] if method == "score_product" else (explicit if method == "pick_candidates" else args[0])
+    if not isinstance(ids, list) or len(ids) > 200:
+        raise ActionError(400, "评分商品范围无效")
+    if any(type(pid) is not int or pid <= 0 for pid in ids):
+        raise ActionError(400, "评分商品 ID 必须为正整数")
+    if method == "pick_candidates" and len(ids) > 50:
+        raise ActionError(400, "显式选品最多 50 个商品")
+    ids = list(dict.fromkeys(ids))
+    results, pending, errors = [], [], []
+    with DiscoveryAgent(ctx.legacy_tenant_id, context=ctx) as agent:
+        for pid in ids:
+            try:
+                saved = recover_discovery_score(db, ctx, pid, scope)
+                if saved is None:
+                    pending.append(agent.score_product(pid))
+                else:
+                    results.append(saved)
+            except (ActionError, ValueError, TypeError) as exc:
+                db.rollback()
+                if method == "score_product":
+                    raise
+                errors.append({"product_id": pid, "error": str(exc)})
+        if not errors:
+            results.extend(finalize_discovery_scores(db, ctx, pending, scope))
+        order = {pid: index for index, pid in enumerate(ids) if isinstance(pid, int)}
+        results.sort(key=lambda row: order[row["product_id"]])
+        if method == "score_product":
+            return results[0]
+        status = "blocked" if errors else "success"
+        if method == "score_batch":
+            return {"results": results, "errors": errors, "business_status": status, "context_patch": {}}
+        items = [agent._candidate_item(row) for row in results]
+        if any(item is None for item in items):
+            raise ActionError(409, "选品商品归属已变化")
+        return {"items": items, "picked_product_ids": [row["product_id"] for row in results],
+                "context_patch": {}, "errors": errors, "business_status": status}
+
+
 class OrchestratorAgent(BaseAgent):
     name = "orchestrator"
 
@@ -143,10 +192,9 @@ class OrchestratorAgent(BaseAgent):
 
     # ---------- 各意图执行 ----------
     def _do_pick(self) -> tuple[str, str, list, object]:
-        from .discovery import DiscoveryAgent
-
-        with DiscoveryAgent(self.tenant_id) as a:
-            r = a.pick_candidates(3, min_total=0)
+        if self.context is None:
+            raise ActionError(403, "选品分析需要可信 Workspace 身份")
+        r = invoke_discovery(self.db, self.context, "pick_candidates", 3, 0)
         items = r["items"]
         lines = [f"· {i['title'][:40]}（机会分 {i['total']}：需求{i['demand']:.0f}/竞争{i['competition']:.0f}/利润{i['profit']:.0f}）"
                  for i in items]
