@@ -100,7 +100,9 @@ def test_migration_table_list_matches_model_metadata(client):
             expected.add(name)
     # users / tenant_settings / workspace_profiles 的外键先于本迁移存在，
     # 不在本迁移清单内（其中 workspace_profiles 不注册在模型元数据上）。
-    expected -= {"users", "tenant_settings", "workspace_profiles"}
+    # ai_actions 由后续 Revision 18 新建并在该迁移中声明外键；禁止回改已执行的
+    # Revision 16 清单。它的外键由 test_ai_action_migration 独立核对。
+    expected -= {"users", "tenant_settings", "workspace_profiles", "ai_actions"}
 
     assert listed == expected, (
         "迁移清单与模型层不一致——漏补：%s；多补：%s"

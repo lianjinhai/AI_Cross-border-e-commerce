@@ -134,6 +134,53 @@ def test_alembic_ledger_mismatch_fails_with_exit_code_two(tmp_path):
     assert check["evidence"]["code_heads"] == ["test_02"]
 
 
+def test_explicit_direct_successor_upgrade_passes(tmp_path):
+    versions = _write_versions(tmp_path, "test_01")
+    (versions / "test_02_next.py").write_text(
+        "revision = 'test_02'\ndown_revision = 'test_01'\n", encoding="utf-8")
+    db = _build_db(tmp_path)
+
+    result = _run(db, versions, "--planned-upgrade", "test_02", "--json")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = _report(result)
+    assert report["summary"]["p0_fail"] == 0
+    assert _check(report, "alembic_ledger")["status"] == "PASS"
+
+
+def test_planned_upgrade_rejects_wrong_target_and_skipped_revision(tmp_path):
+    versions = _write_versions(tmp_path, "test_01")
+    (versions / "test_02_next.py").write_text(
+        "revision = 'test_02'\ndown_revision = 'test_01'\n", encoding="utf-8")
+    (versions / "test_03_next.py").write_text(
+        "revision = 'test_03'\ndown_revision = 'test_02'\n", encoding="utf-8")
+    db = _build_db(tmp_path)
+
+    for target in ("test_02", "test_03", "unknown"):
+        result = _run(db, versions, "--planned-upgrade", target, "--json")
+        assert result.returncode == 2
+        assert _check(_report(result), "alembic_ledger")["status"] == "FAIL"
+
+
+def test_planned_upgrade_does_not_hide_other_p0_failures(tmp_path):
+    versions = _write_versions(tmp_path, "test_01")
+    (versions / "test_02_next.py").write_text(
+        "revision = 'test_02'\ndown_revision = 'test_01'\n", encoding="utf-8")
+    db = _build_db(tmp_path)
+    con = sqlite3.connect(db)
+    con.execute("INSERT INTO orders (id, tenant_id, shop_id, source) "
+                "VALUES (2, 0, NULL, 'seed')")
+    con.commit()
+    con.close()
+
+    result = _run(db, versions, "--planned-upgrade", "test_02", "--json")
+
+    assert result.returncode == 2
+    report = _report(result)
+    assert _check(report, "alembic_ledger")["status"] == "PASS"
+    assert _check(report, "tenant_zero")["status"] == "FAIL"
+
+
 def test_tenant_zero_business_row_fails_with_exit_code_two(tmp_path):
     versions = _write_versions(tmp_path, "test_01")
     db = _build_db(tmp_path)

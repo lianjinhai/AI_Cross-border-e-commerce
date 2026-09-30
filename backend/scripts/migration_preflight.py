@@ -248,7 +248,8 @@ def discover_alembic_heads(versions_dir: Path) -> tuple:
     return heads, revisions, files
 
 
-def check_alembic_ledger(con: sqlite3.Connection, versions_dir: Path = VERSIONS_DIR) -> dict:
+def check_alembic_ledger(con: sqlite3.Connection, versions_dir: Path = VERSIONS_DIR,
+                         planned_upgrade: str | None = None) -> dict:
     heads, revisions, files = discover_alembic_heads(versions_dir)
     current = []
     if _has_table(con, "alembic_version"):
@@ -260,6 +261,7 @@ def check_alembic_ledger(con: sqlite3.Connection, versions_dir: Path = VERSIONS_
         "revision_count": len(revisions),
         "script_files": files,
         "matches": sorted(current) == heads and len(heads) == 1,
+        "planned_upgrade": planned_upgrade,
     }
     if not current:
         return _result("alembic_ledger", "Alembic 账本一致性", P0, FAIL,
@@ -268,6 +270,14 @@ def check_alembic_ledger(con: sqlite3.Connection, versions_dir: Path = VERSIONS_
         return _result("alembic_ledger", "Alembic 账本一致性", P0, FAIL,
                        "代码 revision 链存在 %d 个 head（%s），账本歧义，禁止 upgrade/stamp。"
                        % (len(heads), ", ".join(heads) or "无"), evidence)
+    if planned_upgrade:
+        if (len(current) == 1 and heads[0] == planned_upgrade
+                and revisions.get(planned_upgrade) == current):
+            return _result("alembic_ledger", "Alembic 账本一致性", P0, PASS,
+                           "计划迁移已验证：%s 是当前版本 %s 的直接后继。"
+                           % (planned_upgrade, current[0]), evidence)
+        return _result("alembic_ledger", "Alembic 账本一致性", P0, FAIL,
+                       "计划迁移目标必须是唯一代码 head，且是数据库 current 的直接后继。", evidence)
     if sorted(current) != heads:
         return _result("alembic_ledger", "Alembic 账本一致性", P0, FAIL,
                        "迁移账本漂移：数据库 current=%s，代码 head=%s；禁止直接 upgrade 或盲目 stamp。"
@@ -652,7 +662,8 @@ CHECKS = (
 )
 
 
-def run_preflight(db_path: Path, versions_dir: Path = VERSIONS_DIR) -> dict:
+def run_preflight(db_path: Path, versions_dir: Path = VERSIONS_DIR,
+                  planned_upgrade: str | None = None) -> dict:
     """执行全部只读检查，返回报告字典。"""
     path = Path(db_path)
     if not path.exists():
@@ -665,7 +676,7 @@ def run_preflight(db_path: Path, versions_dir: Path = VERSIONS_DIR) -> dict:
             checks = []
             for check in CHECKS:
                 if check is check_alembic_ledger:
-                    checks.append(check(con, versions_dir))
+                    checks.append(check(con, versions_dir, planned_upgrade))
                 else:
                     checks.append(check(con))
         finally:
@@ -721,6 +732,8 @@ def _parse_args(argv):
     parser.add_argument("--out", default=None, help="同时把 JSON 报告写入指定文件")
     parser.add_argument("--versions-dir", default=None,
                         help="Alembic versions 目录；默认 backend/migrations/versions")
+    parser.add_argument("--planned-upgrade", default=None,
+                        help="显式指定待执行的唯一 head；仅当前版本的直接后继可通过账本检查")
     return parser.parse_args(argv)
 
 
@@ -732,7 +745,7 @@ def main(argv=None) -> int:
         if args.db and str(args.db).startswith("sqlite"):
             db_path = sqlite_path_from_url(args.db)
         versions_dir = Path(args.versions_dir) if args.versions_dir else VERSIONS_DIR
-        report = run_preflight(db_path, versions_dir)
+        report = run_preflight(db_path, versions_dir, args.planned_upgrade)
     except PreflightError as exc:
         print("preflight error: %s" % exc, file=sys.stderr)
         return 3

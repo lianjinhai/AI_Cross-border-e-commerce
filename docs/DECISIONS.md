@@ -2879,3 +2879,37 @@ Tool，完成 Agent 侧 9/9 文件的读取迁移。
 
 **验证**：选品门槛、标准化、跨租户保护与 Tool 审计用例覆盖迁移主路径；完整
 回归与文档校验结果见本轮交接索引。
+
+---
+
+## D47：AI Action 基础设施与广告预算审批首例（2026-09-30）
+
+**背景**：§18.3 第 2 步已完成，Agent 写路径仍可直接改业务表。首先迁移
+`AdsAgent.optimize_budget`：广告预算持续消耗资金，架构 §9.4 将
+`ADJUST_AD_BUDGET` 冻结为 HIGH 风险、必须人工审批。
+
+### 交付与约束
+
+1. 新增 `ai_actions` 表（Revision `20260930_18`，可 downgrade；`tenant_id` 有
+   外键），保存冻结 §9.3 的 Action 字段。`workspace_id` 由服务端 Context 给出，
+   Membership 路径经 `workspace_profiles` 映射到 tenant，禁止把两种 id 混用。
+2. Agent 只按 ROI 产出建议，不再写预算。服务端独立复算 ROI 与目标预算，
+   固定 `risk_level=HIGH`、`execution_mode=APPROVAL_REQUIRED`；无变化时不创建空动作。
+3. Action 状态依次为 `PENDING_APPROVAL → APPROVED → EXECUTING → SUCCESS`；
+   人工可 `REJECTED`，陈旧建议执行时落 `FAILED`，终态不能原地重试。同一
+   Action 的重复执行返回既有结果，不产生第二次预算写入。
+4. 审批与执行均重新校验 Workspace、租户和 `finance:write`；执行时还复核
+   发起者权限与预算/ROI 是否变化。业务写入由 `services/ad_campaigns.py` 完成，
+   Action 与预算在同一事务提交。页面提供待审批队列与批准、拒绝、执行入口。
+5. 本轮只覆盖广告预算；`listing.publish`、草稿生成、定价快照等写路径仍在
+   Agent 内，故 §18.3 第 3 步仅标记“进行中”，不能宣称整体完成。
+
+**迁移纪律**：新增迁移使默认预检按设计报告账本 P0；为避免绕过硬门槛，
+预检新增显式 `--planned-upgrade`，只允许唯一 head 为当前版本直接后继，
+默认严格行为不变，其他 P0 仍拦截。指定 `20260930_18` 后预检 12 项 PASS、
+P0=0；冷备至 `backend/backups/erp-20260930-091505.db`，恢复演练 12/12；
+隔离临时库验证升级、降级、再升级后，主库单步迁移至 `20260930_18`，
+迁移后默认预检 12 项 PASS、P0=0。
+
+**关联**：架构 §9 / §13 / §18.3.1、`docs/CONTRACT.md` 广告与 Action 接口、
+`docs/子代理实施索引-20260923.md` 第三十七轮。

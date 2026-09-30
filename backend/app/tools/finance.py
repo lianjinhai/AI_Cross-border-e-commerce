@@ -91,7 +91,8 @@ class FinanceTool(BaseTool):
             raise ToolError(ERR_NOT_FOUND, "商品 %s 不存在" % product_id)
         return product
 
-    def _get_campaigns(self, status: str = "", product_id=None, limit=50) -> Reading:
+    def _get_campaigns(self, status: str = "", product_id=None, campaign_id=None,
+                       limit=50) -> Reading:
         """广告活动读取。
 
         返回**原始字段**（预算/花费/收入/曝光/点击/订单），ROI/CTR/CVR 等比率留给
@@ -99,11 +100,14 @@ class FinanceTool(BaseTool):
         """
         n = clamp_limit(limit)
         pid = None if product_id in (None, "") else as_int(product_id, "product_id")
+        cid = None if campaign_id in (None, "") else as_int(campaign_id, "campaign_id")
         state = (status or "").strip()
         query = self.db.query(AdCampaign).filter(
             AdCampaign.tenant_id == self.context.tenant_id)
         if pid is not None:
             query = query.filter(AdCampaign.product_id == pid)
+        if cid is not None:
+            query = query.filter(AdCampaign.id == cid)
         if state:
             query = query.filter(AdCampaign.status == state)
         rows = query.order_by(AdCampaign.id.desc()).limit(n).all()

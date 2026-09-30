@@ -303,9 +303,8 @@ OPERATION_OPTIMIZATION = AgentContract(
     spec_section="§7.7",
     known_gaps=(
         "当前由 AdsAgent 与 services/alerting.py 分担，尚未归并为单一 Agent",
-        "AdsAgent.optimize_budget() 直接改 AdCampaign.budget 并提交（违反 §9.1），"
-        "应改为生成 ADJUST_AD_BUDGET Action（§9.4：HIGH，需审批）——§18.3 第 3 步",
-        "输出必须是 Action 提案而非已执行动作（§7.7 约束）尚未强制",
+        "AdsAgent.optimize_budget() 已改为只产出预算建议，ADJUST_AD_BUDGET 经"
+        "Action 审批执行（D47）；其余优化能力仍待收敛为 Action 提案",
     ),
 )
 

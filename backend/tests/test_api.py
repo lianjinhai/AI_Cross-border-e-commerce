@@ -241,7 +241,25 @@ def test_ads(client, auth_headers):
     body = r.json()
     assert body["action"] == "加预算" and body["old_budget"] == 80.0, body
     assert body["new_budget"] == round(80.0 * 1.3, 2), body
+    assert body["status"] == "PENDING_APPROVAL" and body["approval_required"]
+    with SessionLocal() as db:
+        assert db.get(AdCampaign, campaign_id).budget == 80.0, "提案不得直接改预算"
+    action_id = body["action_id"]
+    replay = client.post(f"/api/ads/campaigns/{campaign_id}/optimize",
+                         headers=auth_headers).json()
+    assert replay["action_id"] == action_id, "重复提案应复用待审批 Action"
+    blocked = client.post(f"/api/actions/{action_id}/execute", headers=auth_headers)
+    assert blocked.status_code == 409, "未审批不得执行"
+    approved = client.post(f"/api/actions/{action_id}/approve", headers=auth_headers,
+                           json={"note": "确认 ROI 与预算调整"})
+    assert approved.status_code == 200 and approved.json()["status"] == "APPROVED"
+    executed = client.post(f"/api/actions/{action_id}/execute", headers=auth_headers)
+    assert executed.status_code == 200 and executed.json()["status"] == "SUCCESS"
     raised = body["new_budget"]
+    with SessionLocal() as db:
+        assert db.get(AdCampaign, campaign_id).budget == raised
+    replay = client.post(f"/api/actions/{action_id}/execute", headers=auth_headers)
+    assert replay.status_code == 200 and replay.json()["status"] == "SUCCESS"
 
     with SessionLocal() as db:
         c = db.get(AdCampaign, campaign_id)
@@ -251,6 +269,29 @@ def test_ads(client, auth_headers):
     body = r.json()
     assert body["action"] == "降预算" and body["old_budget"] == raised, body
     assert body["new_budget"] == max(5.0, round(raised * 0.6, 2)), body
+    with SessionLocal() as db:
+        assert db.get(AdCampaign, campaign_id).budget == raised
+    rejected = client.post(f"/api/actions/{body['action_id']}/reject", headers=auth_headers,
+                           json={"note": "预算暂不调整"})
+    assert rejected.status_code == 200 and rejected.json()["status"] == "REJECTED"
+    assert client.post(f"/api/actions/{body['action_id']}/execute",
+                       headers=auth_headers).status_code == 409
+    pending = client.post(f"/api/ads/campaigns/{campaign_id}/optimize",
+                          headers=auth_headers).json()
+    assert pending["action_id"] != body["action_id"], "拒绝后必须新建 Action"
+    queued = client.get("/api/actions", headers=auth_headers).json()["items"]
+    assert any(item["id"] == pending["action_id"] for item in queued)
+    client.post(f"/api/actions/{pending['action_id']}/approve", headers=auth_headers,
+                json={"note": "同意降预算"})
+    with SessionLocal() as db:
+        c = db.get(AdCampaign, campaign_id)
+        c.revenue = 400.0  # 审批后 ROI 改变，旧建议必须失效
+        db.commit()
+    stale = client.post(f"/api/actions/{pending['action_id']}/execute",
+                        headers=auth_headers).json()
+    assert stale["status"] == "FAILED" and "变化" in stale["outcome"]["error"]
+    with SessionLocal() as db:
+        assert db.get(AdCampaign, campaign_id).budget == raised
 
 
 def test_orders(client, auth_headers):

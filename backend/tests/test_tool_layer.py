@@ -1203,10 +1203,10 @@ def test_pricing_and_ads_agents_reads_go_through_tool_layer(client):
         assert expected <= actions, (
             "pricing/ads 的读取没有全部走 Tool 层——§18.3 第 2 步的迁移被回退了？缺失：%s"
             % sorted(expected - actions))
-        # 反向断言：三处写路径（定价记录 / 广告草稿 / 预算调整）必须仍然生效——它们
-        # 是第 3 步欠账，迁移期间不得被顺手删掉（删掉等于「点了没反应」）。
+        # 预算优化现在只提出 HIGH 风险建议，不能由 Agent 直接落库。
         assert pricing_rows == 2, "suggest_price 与 reprice_batch 各应落 1 条定价记录"
-        assert draft_rows == 1 and budget_after == 65.0
+        assert draft_rows == 1 and budget["new_budget"] == 65.0
+        assert budget_after == 50.0, "Agent 不能直接修改广告预算"
     finally:
         db = SessionLocal()
         try:

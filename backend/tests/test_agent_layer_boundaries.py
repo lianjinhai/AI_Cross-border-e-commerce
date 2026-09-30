@@ -235,9 +235,8 @@ _ORM_CALL_BASELINE = {
     # 口径（query/get）内，属 §18.3 第 3 步（Action/Runtime 层）欠账，见 D45。
     "orchestrator.py": (0, 0),
     # pricing.py 的读取点已迁完（Product / Market / Listing / Finance Tool，两个
-    # Agent 共 7 处读取）；剩下的 1 次 get 是**写路径**（`optimize_budget` 调整预算
-    # 需要 ORM 行对象），属第 3 步（Action 层）范围，见 D44。
-    "pricing.py": (0, 1),
+    # Agent 共 7 处读取）；预算优化已改为只产出 Action 建议（D47）。
+    "pricing.py": (0, 0),
     # supplier.py 的读取点已迁完（Supply / Product / Order Tool）；剩下的 2 处
     # `self.db.add`（评分快照 / 预测快照）是**写路径**，不在棘轮口径（query/get）内，
     # 同属第 3 步（Action 层）欠账。

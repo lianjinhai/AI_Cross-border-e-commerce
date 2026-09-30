@@ -25,6 +25,9 @@ def test_role_permission_matrix(client):
         ("GET", "/api/products", None, "read"),
         ("POST", "/api/products", {"title": "probe-matrix"}, "write"),
         ("GET", "/api/orders", None, "read"),
+        ("GET", "/api/actions", None, "write"),
+        ("POST", "/api/actions/999999/approve", {"note": "权限探针"}, "write"),
+        ("POST", "/api/actions/999999/execute", None, "write"),
         ("POST", "/api/orders/sync", {"platform": "demo:shopee", "count": 1}, "write"),
         ("GET", "/api/ai/settings", None, "platform_read"),
         ("PUT", "/api/ai/settings", {"rules": {}}, "platform_admin"),
@@ -97,11 +100,21 @@ def test_cross_tenant_isolation(client, fetch_all):
     pid_b = client.post("/api/products", headers=hb,
                         json={"title": "B专属隔离探针商品"}).json()["id"]
     client.post("/api/orders/sync", headers=hb, json={"platform": "demo:shopee", "count": 2})
+    campaign_b = client.post("/api/ads/campaigns", headers=hb,
+                             json={"name": "B专属广告", "budget": 80}).json()["id"]
+    action_b = client.post(f"/api/ads/campaigns/{campaign_b}/optimize",
+                           headers=hb).json()["action_id"]
     user_b = client.post("/api/auth/users", headers=hb,
                          json={"username": "iso_b_operator", "password": "iso-pass-123",
                                "role": "operator"}).json()
 
     issues = []
+    if any(item["id"] == action_b for item in client.get(
+            "/api/actions", headers=ha).json()["items"]):
+        issues.append("跨租户 Action 审批队列泄漏")
+    if client.post(f"/api/actions/{action_b}/approve", headers=ha,
+                   json={"note": "越权探针"}).status_code == 200:
+        issues.append("跨租户审批 Action")
     # A 商品列表无 B 商品
     a_items = fetch_all("/api/products", ha)
     if any(p["id"] == pid_b for p in a_items):

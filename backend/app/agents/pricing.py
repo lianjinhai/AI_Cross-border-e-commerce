@@ -1,11 +1,9 @@
 """定价 Agent（真实利润/动态定价，第十一章）与广告增长 Agent（第十二章）。
 
 §18.3 第 2 步：读取全部经 Tool 层（Product / Market / Listing / Finance Tool，见
-D44）；写路径（定价记录落库、广告草稿新建、预算调整）保留 ORM 访问并集中标注，
-属第 3 步（Action 层）欠账。
+D44）。D47 起预算调整只生成建议，经独立 Action 审批执行；定价记录和广告草稿
+仍由 Agent 直写，属第 3 步欠账。
 """
-from datetime import datetime
-
 from ..models import AdCampaign, PricingRecord, Product
 from ..services import costing
 from .base import BaseAgent
@@ -62,8 +60,11 @@ def _tool_published_product_ids(agent, limit: int = 200) -> list[int]:
     return got.data if got.ok and isinstance(got.data, list) else []
 
 
-def _tool_campaigns(agent, limit: int = 200) -> list[dict]:
-    got = agent.tool("finance").call("get_campaigns", limit=limit)
+def _tool_campaigns(agent, limit: int = 200, campaign_id: int | None = None) -> list[dict]:
+    params = {"limit": limit}
+    if campaign_id is not None:
+        params["campaign_id"] = campaign_id
+    got = agent.tool("finance").call("get_campaigns", **params)
     return got.data if got.ok and isinstance(got.data, list) else []
 
 
@@ -233,24 +234,25 @@ class AdsAgent(BaseAgent):
         return {"campaign_drafts": drafts, "context_patch": {}}
 
     def optimize_budget(self, campaign_id: int) -> dict:
-        # 写路径（预算调整需要 ORM 行对象）：§18.3 第 3 步（Action 层）欠账，见 D44。
-        c = self.db.get(AdCampaign, campaign_id)
-        if not c or c.tenant_id != self.tenant_id:
+        """只提出预算建议；HIGH 风险 Action 的审批与执行由独立服务负责。"""
+        rows = _tool_campaigns(self, campaign_id=campaign_id)
+        if not rows:
             raise ValueError(f"广告活动 {campaign_id} 不存在")
-        roi = (c.revenue - c.spend) / c.spend if c.spend else 0
-        old = c.budget
+        campaign = rows[0]
+        roi = ((campaign["revenue"] - campaign["spend"]) / campaign["spend"]
+               if campaign["spend"] else 0)
+        old = campaign["budget"]
         if roi > 2:
-            c.budget = min(500.0, round(old * 1.3, 2))
+            new = min(500.0, round(old * 1.3, 2))
             action, reason = "加预算", f"ROI {roi:.2f} > 2，预算上调30%"
         elif roi < 0.8:
-            c.budget = max(5.0, round(old * 0.6, 2))
+            new = max(5.0, round(old * 0.6, 2))
             action, reason = "降预算", f"ROI {roi:.2f} < 0.8，预算下调40%"
         else:
+            new = old
             action, reason = "维持", f"ROI {roi:.2f} 处于健康区间"
-        c.updated_at = datetime.utcnow()
-        self.db.commit()
-        return {"campaign_id": campaign_id, "old_budget": old, "new_budget": c.budget,
-                "action": action, "reason": reason}
+        return {"campaign_id": campaign_id, "old_budget": old, "new_budget": new,
+                "action": action, "reason": reason, "roi": round(roi, 4)}
 
     def roi_report(self) -> dict:
         camps = _tool_campaigns(self, limit=200)

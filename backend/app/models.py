@@ -916,6 +916,37 @@ class AiDecision(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 
+class AiAction(Base):
+    """Agent 提议的业务动作；Guardrail 审批后才可由 Executor 执行。"""
+
+    __tablename__ = "ai_actions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_ai_actions_tenant_id_tenants"), index=True)
+    workspace_id: Mapped[int] = mapped_column(Integer, index=True)
+    task_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    agent_type: Mapped[str] = mapped_column(String(64))
+    action_type: Mapped[str] = mapped_column(String(64), index=True)
+    target_type: Mapped[str] = mapped_column(String(32))
+    target_id: Mapped[int] = mapped_column(Integer, index=True)
+    reason: Mapped[str] = mapped_column(Text)
+    evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    expected_impact: Mapped[dict] = mapped_column(JSON, default=dict)
+    risk_level: Mapped[str] = mapped_column(String(16))
+    required_permission: Mapped[str] = mapped_column(String(64))
+    execution_mode: Mapped[str] = mapped_column(String(24))
+    approval_required: Mapped[bool] = mapped_column(Boolean)
+    status: Mapped[str] = mapped_column(String(24), default="CREATED", index=True)
+    requested_by: Mapped[int] = mapped_column(Integer)
+    approved_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    executed_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    outcome: Mapped[dict] = mapped_column(JSON, default=dict)
+    idempotency_key: Mapped[str] = mapped_column(String(128), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class AlertRule(Base):
     """主动巡检规则（M3）：阈值可配置、可单独启停。"""
     __tablename__ = "alert_rules"

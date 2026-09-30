@@ -1422,7 +1422,7 @@ Platform Identity（`superadmin`，ADR-F03 相关）**没有业务 Workspace**�
 |---|---|---|
 | 1 | ✅ **完成**（D35） | 8 条冻结契约落在 `backend/app/agents/contracts.py`；`SupportAgent` 显式未登记（DEBT-34） |
 | 2 | ✅ **Agent 侧读取迁移完成**（D37 ~ D46） | Tool 基础设施与三批方法清单已交付（合计 11 个 Tool / 43 个方法，§10.4.1）。**9/9 个 Agent 文件的读取点全部改走 Tool**，`discovery.py` 的类目、趋势、商品、评分、经营表现与查重读取由 Product / Market Tool 承接，并以 `mode=tool` 审计测试验证。进度锚点：`tests/test_agent_layer_boundaries.py::_ORM_CALL_BASELINE` 之和 **21 → 8**；其中 8 处 `query/get` 均为 upsert 或回写所需的写路径，归 §18.3 第 3 步。`DiscoveryAgent._rule_scores` 仍调用服务层 `get_performance` 计算并缓存表现分，属后续运行时/Action 收敛范围（D46）。 |
-| 3 | ⏳ 未开始 | 高风险：`listing.publish` / `listing.optimize` 的写已集中到 `_write_listing`（D40），但仍是 Agent 直改 + `commit`（违 §9.1）；`pricing.reprice_batch`、`ads.optimize_budget` 待办 |
+| 3 | 🔶 **进行中**（D47） | 已建立 `ai_actions` 表、审批状态机与独立服务端 Guardrail / Executor；`AdsAgent.optimize_budget` 只产出建议，`ADJUST_AD_BUDGET` 固定 HIGH + 人工审批，执行时复核请求者权限、租户归属、预算/ROI 新鲜度，同一 Action 重试幂等。剩余 `listing.publish` / `listing.optimize` / 草稿生成、`pricing.reprice_batch` 等 Agent 写路径尚未迁移；本步不能标完成。 |
 | 4 | ⏳ 未开始 | Orchestrator 仍同步直调 |
 | 5 | ⏳ 未开始 | `BaseAgent.SessionLocal()` 仍自持会话；完成后才能关闭 DEBT-35 |
 | 6 | ⏳ 未开始 | `trace_id` / `task_id` / `parent_trace_id` / `steps[]` 未补 |

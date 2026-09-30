@@ -45,6 +45,10 @@ PROBES = [
      {"operator", "admin", "compliance"}, "发起合规检测（compliance:check）"),
     ("POST", "/api/products", {"title": "权限矩阵探针"},
      {"operator", "admin"}, "商品写（product:write）"),
+    ("GET", "/api/actions", None,
+     {"operator", "admin"}, "Action 审批队列（finance:write）"),
+    ("POST", "/api/actions/999999/approve", {"note": "权限探针"},
+     {"operator", "admin"}, "Action 审批（finance:write）"),
     ("POST", "/api/listings/generate", {"product_id": 1},
      {"operator", "admin"}, "Listing 生成（listing:write）"),
     ("POST", "/api/auth/users", {"username": "probe_role_x", "password": "x12345678", "role": "viewer"},
@@ -103,6 +107,7 @@ def test_viewer_has_zero_write_permission(client, role_headers):
     assert h, "viewer 登录失败"
     write_endpoints = [
         ("POST", "/api/products", {"title": "viewer 不应能建"}),
+        ("POST", "/api/actions/999999/approve", {"note": "越权"}),
         ("POST", "/api/discovery/trends/scan", None),
         ("POST", "/api/suppliers", {"name": "viewer 不应能建"}),
         ("POST", "/api/listings/generate", {"product_id": 1}),

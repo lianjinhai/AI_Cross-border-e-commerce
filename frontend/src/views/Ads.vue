@@ -31,7 +31,30 @@
         <el-table-column prop="status" label="状态" width="90" />
         <el-table-column label="操作" width="110" fixed="right">
           <template #default="{ row }">
-            <el-button v-if="can('ai:write')" size="small" type="primary" @click="optimize(row)">预算优化</el-button>
+            <el-button v-if="can('finance:write')" size="small" type="primary" @click="optimize(row)">预算优化</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-card class="mt16">
+      <template #header>预算调整审批</template>
+      <el-table :data="budgetActions" size="small" empty-text="暂无待处理的预算调整">
+        <el-table-column prop="id" label="Action ID" width="100" />
+        <el-table-column prop="target_id" label="活动 ID" width="90" />
+        <el-table-column prop="reason" label="调整依据" min-width="220" show-overflow-tooltip />
+        <el-table-column label="预算变化" width="145">
+          <template #default="{ row }">{{ row.evidence.old_budget }} → {{ row.expected_impact.new_budget }}</template>
+        </el-table-column>
+        <el-table-column prop="status" label="状态" width="165" />
+        <el-table-column label="操作" width="210">
+          <template #default="{ row }">
+            <el-button v-if="row.status === 'PENDING_APPROVAL' && can('finance:write')"
+                       size="small" type="success" @click="decideAction(row, true)">批准</el-button>
+            <el-button v-if="row.status === 'PENDING_APPROVAL' && can('finance:write')"
+                       size="small" type="danger" @click="decideAction(row, false)">拒绝</el-button>
+            <el-button v-if="row.status === 'APPROVED' && can('finance:write')"
+                       size="small" type="primary" @click="executeAction(row)">执行</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -62,12 +85,13 @@
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from '../ui'
+import { ElMessage, ElMessageBox } from '../ui'
 import api from '../api'
 import { can } from '../permissions'
 
 const campaigns = ref([])
 const summary = ref({})
+const budgetActions = ref([])
 const loading = ref(false)
 const sugDialog = ref(false)
 const sugLoading = ref(false)
@@ -80,6 +104,13 @@ async function load() {
     const { data } = await api.get('/ads/campaigns')
     campaigns.value = data.campaigns
     summary.value = data.summary
+    if (can('finance:write')) {
+      const [pending, approved] = await Promise.all([
+        api.get('/actions', { params: { status: 'PENDING_APPROVAL' } }),
+        api.get('/actions', { params: { status: 'APPROVED' } }),
+      ])
+      budgetActions.value = [...pending.data.items, ...approved.data.items]
+    }
   } finally { loading.value = false }
 }
 
@@ -105,7 +136,29 @@ async function createFromSug() {
 
 async function optimize(row) {
   const { data } = await api.post(`/ads/campaigns/${row.id}/optimize`)
-  ElMessage.success(`${data.action}：${data.reason}（${data.old_budget} → ${data.new_budget}）`)
+  if (data.status === 'PENDING_APPROVAL') {
+    ElMessage.success(`已提交预算审批 #${data.action_id}：${data.old_budget} → ${data.new_budget}`)
+  } else {
+    ElMessage.info(data.reason)
+  }
+  load()
+}
+
+async function decideAction(row, approve) {
+  const verb = approve ? '批准' : '拒绝'
+  const { value } = await ElMessageBox.prompt(`请输入${verb}依据（将记入 Action 审计）`,
+    `${verb}预算调整 #${row.id}`, { inputPattern: /\S+/, inputErrorMessage: '依据不能为空' })
+  await api.post(`/actions/${row.id}/${approve ? 'approve' : 'reject'}`, { note: value })
+  ElMessage.success(`已${verb}预算调整 #${row.id}`)
+  load()
+}
+
+async function executeAction(row) {
+  await ElMessageBox.confirm(`确定执行活动 #${row.target_id} 的预算调整？`, '执行已批准的 Action',
+    { type: 'warning' })
+  const { data } = await api.post(`/actions/${row.id}/execute`)
+  if (data.status === 'SUCCESS') ElMessage.success('预算已调整')
+  else ElMessage.warning(data.outcome?.error || '执行失败，请重新提交建议')
   load()
 }
 

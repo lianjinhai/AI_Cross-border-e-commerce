@@ -34,7 +34,7 @@ Setting 表约定 key：`llm`（见 ai/llm.py DEFAULT_LLM）、`platform_fees`�
 
 ## 2. 智能体层契约（agents/*）
 
-所有 Agent：构造 `XxxAgent(tenant_id: int)`，支持 `with`；类属性 `name` 指定如下。所有方法**直接读写数据库**（用 self.db），返回**纯 dict/list**（不要返回 ORM 对象）。LLM prompt 用中文+结构化要求，fallback 必须完整可用。
+所有 Agent：构造 `XxxAgent(tenant_id: int)`，支持 `with`；类属性 `name` 指定如下。下列为早期方法清单，数据库访问约束以 Agent OS §18.3 和 `docs/DECISIONS.md` D37~D47 的迁移现状为准。返回**纯 dict/list**（不要返回 ORM 对象）。LLM prompt 用中文+结构化要求，fallback 必须完整可用。
 
 ### 2.1 DiscoveryAgent（name="discovery"，文件 agents/discovery.py）
 市场发现+选品（对应规划第七章）。评分公式：`total = 0.35*demand + 0.20*(100-competition) + 0.30*profit + 0.15*(100-risk)`。
@@ -65,7 +65,7 @@ Setting 表约定 key：`llm`（见 ai/llm.py DEFAULT_LLM）、`platform_fees`�
 ### 2.5 AdsAgent（name="ads"，文件 agents/pricing.py 同文件）
 - `suggest_for_product(product_id: int, platform: str = "facebook") -> dict`：草稿 `{"name","platform","product_id","keywords":[8-12个]（expand_keywords+商品标题词）、"budget","status":"draft","reason":str}`，不落库。
 - `draft_batch(params, context) -> {"campaign_drafts":[草稿 dict（已创建 AdCampaign 行，status="draft"）], "context_patch":{}}`：product_ids 缺省=最新 listing published 的商品。
-- `optimize_budget(campaign_id: int) -> dict`：按 ROI 调整：roi>2→预算+30%（上限500），roi<0.8→-40%，0.8-2→维持；返回 `{"campaign_id","old_budget","new_budget","action","reason"}` 并落库 budget。
+- `optimize_budget(campaign_id: int) -> dict`：按 ROI 产出建议：roi>2→预算+30%（上限500），roi<0.8→-40%，0.8-2→维持；返回 `{"campaign_id","old_budget","new_budget","action","reason","roi"}`，**不改预算**。路由将变更建议提交为 HIGH 风险 `ADJUST_AD_BUDGET` Action，审批后由 Executor 写入（D47）。
 - `roi_report() -> {"summary":{"total_spend","total_revenue","roi","avg_ctr"},"campaigns":[campaign dict + {"roi","ctr","cvr"}]}`。
 
 ### 2.6 ListingAgent（name="listing"，文件 agents/listing.py）
@@ -158,7 +158,8 @@ def gen_order(db, tenant_id: int, platform: str | None = None) -> Order         
 
 ### B2 名下
 - **pricing.py** `/pricing`：`GET ""?product_id&page&page_size`（记录列表，附 title）；`POST /calc {"product_id","price"?}`；`POST /suggest {"product_id"}`。
-- **ads.py** `/ads`：`GET /campaigns`（roi_report 结果）；`POST /campaigns`（草稿/表单创建，可含 id 列表批量）；`POST /campaigns/{id}/optimize`；`POST /suggest {"product_id","platform"}`。
+- **ads.py** `/ads`：`GET /campaigns`（roi_report 结果）；`POST /campaigns`（草稿/表单创建，可含 id 列表批量）；`POST /campaigns/{id}/optimize` 返回预算建议、`action_id` 与 `PENDING_APPROVAL`，预算不立即改变；`POST /suggest {"product_id","platform"}`。
+- **actions.py** `/actions`（D47 首批仅广告预算）：`GET ""?status=` 查本人 Workspace 内待处理 Action；`POST /{id}/approve|reject {"note"}` 人工决策；`POST /{id}/execute` 对已批准 Action 幂等执行。均由服务端 Workspace Context 校验 `finance:write` 与租户归属。
 - **orders.py** `/orders`：`GET ""?platform&status&keyword&page&page_size`；`POST /sync {"platform","count":5}`（gen_order×n，require_write）；`PUT /{id}/status {"status"}`（校验合法值）。
 - **support.py** `/support`：`GET /conversations?status&page&page_size`（附 last message + buyer_name）；`POST /conversations {"platform","buyer_name","content",?order_id,?product_id}`（创建会话+首条 buyer 消息）；`GET /conversations/{id}`（含 messages）；`POST /conversations/{id}/reply {"content"}`（operator 回复）；`POST /conversations/{id}/auto_reply`（SupportAgent）；`POST /conversations/{id}/close`。
 - **bi.py** `/bi`：
@@ -208,7 +209,7 @@ def gen_order(db, tenant_id: int, platform: str | None = None) -> Order         
   - **Compliance**：检测对象切换(product/listing)+ID 输入 → POST /check；报告列表抽屉（issues 表格 + 建议）。
   - **Suppliers**：列表（评分列 progress）；「AI 评分」按钮；详情抽屉（offers 表）；预测区（全部补货预警表：风险 tag + 建议补货量）。
   - **Pricing**：定价记录表（商品/成本/建议价/利润率 progress）；「重新计算」按钮（calc）；「AI 建议」按钮（suggest）后刷新。
-  - **Ads**：汇总卡（总花费/总收入/ROI）；campaigns 表（roi/ctr/cvr 列）；「AI 选词建议」对话框（选商品 → suggest 结果展示+一键创建）；「预算优化」按钮。
+  - **Ads**：汇总卡（总花费/总收入/ROI）；campaigns 表（roi/ctr/cvr 列）；「AI 选词建议」对话框；「预算优化」提交待审批 Action，下方队列支持批准、拒绝和执行（D47）。
   - **Orders**：筛选（平台/状态/关键词）；「同步订单」按钮；状态下拉改状态。
   - **Support**：左侧会话列表（平台 tag + 最后消息摘要）+ 右侧消息时间线；底部输入框回复；「AI 自动回复」按钮。
   - **Workflows**：模板卡片区（三个模板：图标+步骤节点串）→「运行」；运行历史表；详情抽屉：el-steps 展示每步状态/耗时/输出摘要（JSON 前 200 字），运行中每 2s 轮询直到 finished。**调度任务**：类型列支持三种 kind（工作流·key / 趋势扫描 / 主动巡检，由 `kindLabel()` 统一渲染）；新建对话框的类型下拉含「主动巡检」（`alert_scan`），种子数据预置「每 6 小时经营风险巡检」（默认停用，可在表内一键启用）。
