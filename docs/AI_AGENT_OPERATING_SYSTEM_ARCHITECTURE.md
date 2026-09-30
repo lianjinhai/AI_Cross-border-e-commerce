@@ -612,6 +612,10 @@ Agent Runtime 是**任务执行引擎**，负责把 Task 从创建推进到终�
 
 **Agent 不能直接修改业务数据。**
 
+分析产物不是业务执行动作：D50 的 PricingAgent 仅返回分析，由 Orchestrator
+调用产物服务保存既有 PricingRecord，并复核身份、权限和商品归属。
+它不创建 AI Action、不修改商品售价、不执行财务操作；此类持久化不得由 Agent 自行落库。
+
 唯一合法路径：
 
 ```
@@ -1436,7 +1440,7 @@ Platform Identity（`superadmin`，ADR-F03 相关）**没有业务 Workspace**�
 |---|---|---|
 | 1 | ✅ **完成**（D35） | 8 条冻结契约落在 `backend/app/agents/contracts.py`；`SupportAgent` 显式未登记（DEBT-34） |
 | 2 | ✅ **Agent 侧读取迁移完成**（D37 ~ D46） | Tool 基础设施与三批方法清单已交付（合计 11 个 Tool / 43 个方法，§10.4.1）。**9/9 个 Agent 文件的读取点全部改走 Tool**，`discovery.py` 的类目、趋势、商品、评分、经营表现与查重读取由 Product / Market Tool 承接，并以 `mode=tool` 审计测试验证。进度锚点：`tests/test_agent_layer_boundaries.py::_ORM_CALL_BASELINE` 之和 **21 → 8**；其中 8 处 `query/get` 均为 upsert 或回写所需的写路径，归 §18.3 第 3 步。`DiscoveryAgent._rule_scores` 仍调用服务层 `get_performance` 计算并缓存表现分，属后续运行时/Action 收敛范围（D46）。 |
-| 3 | 🔶 **进行中**（D47～D49） | 广告预算、广告草稿及 Listing 草稿、优化、发布已接独立 Action Guardrail / Executor，AdsAgent 和 Listing Agent 不再直接写业务 ORM（Base 审计仍是存量入口）。发布固定人工审批；工作流等待批准并执行后再恢复，拒绝不会被恢复绕过。同步 Orchestrator 接管已迁移动作的提交/执行；广告草稿固定本地 draft、不启动投放，显式空商品范围不回退全量。其余 Agent 与基础审计仍保留存量入口。当前 ORM query/get 棘轮总数为 6（不代表全部写入数）；`pricing.reprice_batch`、趋势/评分/标准化、供应评分快照/预测/私域报价、合规/复核、客服/知识学习、告警和基础审计仍待逐项迁移。**第 3 步未完成；第 4～6 步未开始**。 |
+| 3 | 🔶 **进行中**（D47～D50） | 广告预算、广告草稿及 Listing 草稿、优化、发布已接独立 Action Guardrail / Executor；定价分析记录由 Orchestrator / 产物服务保存，不生成财务 Action、不修改售价。PricingAgent、AdsAgent 和 Listing Agent 不再直接写业务 ORM（Base 审计仍是存量入口）。发布固定人工审批；工作流等待批准并执行后再恢复，拒绝不会被恢复绕过。广告草稿固定本地 draft、不启动投放；定价恢复按服务端范围复用原分析快照、批次错误显式阻断。当前 ORM query/get 棘轮总数为 6（不代表全部写入数）；趋势/评分/标准化、供应评分快照/预测/私域报价、合规/复核、客服/知识学习、告警和基础审计仍待逐项迁移。**第 3 步未完成；第 4～6 步未开始**。 |
 | 4 | ⏳ 未开始 | Orchestrator 仍同步直调 |
 | 5 | ⏳ 未开始 | `BaseAgent.SessionLocal()` 仍自持会话；完成后才能关闭 DEBT-35 |
 | 6 | ⏳ 未开始 | `trace_id` / `task_id` / `parent_trace_id` / `steps[]` 未补 |

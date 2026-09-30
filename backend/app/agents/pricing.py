@@ -1,10 +1,11 @@
 """定价 Agent（真实利润/动态定价，第十一章）与广告增长 Agent（第十二章）。
 
 §18.3 第 2 步：读取全部经 Tool 层（Product / Market / Listing / Finance Tool，见
-D44）。D47 起预算调整只生成建议，经独立 Action 审批执行；D49 广告草稿
-由 Orchestrator / Action 接管，定价记录仍属第 3 步欠账。
+D44）。预算和广告草稿经 Action；D50 定价仅输出分析，持久化由调度层接管。
 """
-from ..models import PricingRecord, Product
+import math
+
+from ..models import Product
 from ..services import costing
 from .base import BaseAgent
 from .contracts import CONTRACTS
@@ -134,43 +135,40 @@ class PricingAgent(BaseAgent):
         result, mode = self.ask_json("suggest_price", system, prompt, fallback=rule, small_task=True)
         try:
             sp = float(result.get("suggested_price"))
-            if sp < floor * 0.999 or sp > target * 1.15:
+            if not math.isfinite(sp) or sp < floor * 0.999 or sp > target * 1.15:
                 raise ValueError
             suggested, adjustments = round(sp, 2), result.get("adjustments") or adjustments
         except (TypeError, ValueError):
+            result = rule()
             mode = "rule"
-        row = PricingRecord(
-            tenant_id=self.tenant_id, product_id=product_id,
-            purchase_cost=ce["purchase_cny"], logistics_cost=ce["logistics_cny"],
-            platform_fee_rate=fee, ads_cost=ce["ads_cny"],
-            price=price_now, suggested_price=suggested, profit=profit,
-            margin=round(profit / price_now, 4) if price_now else 0,
-            currency="USD",
-            reason={"strategy": result.get("strategy", "成本加成+市场修正"),
-                    "cost_cny": round(cost_cny, 2), "floor": round(floor, 2),
-                    "target": round(target, 2), "adjustments": adjustments},
-            model="llm" if mode == "llm" else "rule",
-        )
-        self.db.add(row)
-        self.db.commit()
-        out = {"id": row.id, "product_id": product_id, "purchase_cost": row.purchase_cost,
-               "logistics_cost": row.logistics_cost, "platform_fee_rate": row.platform_fee_rate,
-               "ads_cost": row.ads_cost, "price": row.price, "suggested_price": row.suggested_price,
-               "profit": row.profit, "margin": row.margin, "currency": row.currency,
-               "reason": row.reason, "model": row.model, "created_at": row.created_at.strftime("%Y-%m-%d %H:%M:%S")}
-        return out
+        record = {"product_id": product_id, "purchase_cost": ce["purchase_cny"],
+                  "logistics_cost": ce["logistics_cny"], "platform_fee_rate": fee,
+                  "ads_cost": ce["ads_cny"], "price": price_now, "suggested_price": suggested,
+                  "profit": profit, "margin": round(profit / price_now, 4) if price_now else 0,
+                  "currency": "USD", "model": "llm" if mode == "llm" else "rule",
+                  "reason": {"strategy": result.get("strategy", "成本加成+市场修正"),
+                             "cost_cny": round(cost_cny, 2), "floor": round(floor, 2),
+                             "target": round(target, 2), "adjustments": adjustments}}
+        return {**record, "id": None, "created_at": None, "_analysis_record": record}
 
     def reprice_batch(self, params: dict | None = None, context: dict | None = None) -> dict:
-        ids = _tool_active_product_ids(self, limit=200)
-        repriced = []
+        params, context = params or {}, context or {}
+        if "product_ids" in params:
+            ids = params["product_ids"] or []
+        elif "product_ids" in context:
+            ids = context["product_ids"] or []
+        else:
+            ids = _tool_active_product_ids(self, limit=200)
+        if not isinstance(ids, list):
+            raise ValueError("定价商品范围必须为 ID 列表")
+        repriced, errors = [], []
         for pid in ids[:200]:
             try:
                 r = self.suggest_price(int(pid))
-                repriced.append({"product_id": pid, "suggested_price": r["suggested_price"],
-                                 "margin": r["margin"], "profit": r["profit"]})
-            except Exception:
-                continue
-        return {"repriced": repriced, "context_patch": {}}
+                repriced.append(r)
+            except (ValueError, TypeError) as exc:
+                errors.append({"product_id": pid, "error": str(exc)})
+        return {"repriced": repriced, "errors": errors, "context_patch": {}}
 
 
 class AdsAgent(BaseAgent):

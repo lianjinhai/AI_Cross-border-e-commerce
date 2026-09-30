@@ -326,8 +326,8 @@ FINANCE_INTELLIGENCE = AgentContract(
     spec_section="§7.8",
     known_gaps=(
         "当前由 PricingAgent 与 services/commercial_analytics.py 分担，尚未归并",
-        "硬约束「只分析，不执行任何财务操作」需在 Action 层落地时用**拒绝清单**强制"
-        "（禁止生成资金划转/结算执行/退款执行的 Action）——§18.3 第 3 步",
+        "PricingAgent 已被 Action 服务端白名单拒绝，D50 分析产物由调度层保存；"
+        "统一 Financial Insight 必填字段尚未覆盖全部存量分析输出",
     ),
 )
 

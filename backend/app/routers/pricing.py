@@ -3,12 +3,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from ..agents.orchestrator import invoke_pricing
 from ..agents.pricing import PricingAgent
-from ..auth import get_current_user, require_write
+from ..auth import get_current_user, is_impersonating_user, require_write
 from ..db import get_db
 from ..models import PricingRecord, Product, User
 from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
+from ..services.ai_actions import ActionError
+from ..services.workspace_context import resolve_workspace_context
 
 router = APIRouter(prefix="/pricing", tags=["pricing"])
 
@@ -55,5 +58,8 @@ def suggest(body: SuggestIn, user: User = Depends(require_write), db: Session = 
     p = db.get(Product, body.product_id)
     if not p or p.tenant_id != user.tenant_id:
         raise HTTPException(status_code=404, detail="商品不存在")
-    with PricingAgent(user.tenant_id) as a:
-        return a.suggest_price(body.product_id)
+    ctx = resolve_workspace_context(db, user, is_impersonating=is_impersonating_user(user))
+    try:
+        return invoke_pricing(db, ctx, "suggest_price", body.product_id)
+    except ActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc

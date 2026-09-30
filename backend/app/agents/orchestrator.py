@@ -14,10 +14,11 @@ from ..services.action_identity import require_action_permission
 from ..services.action_publish import publish_targets
 from ..services.agent_outputs import finalize_ad_drafts, finalize_listing_output
 from ..services.ai_actions import ActionError
+from ..services.pricing_outputs import finalize_pricing_output
 from .base import BaseAgent
 from .listing import ListingAgent
 from .listing_review import ListingReviewAgent
-from .pricing import AdsAgent
+from .pricing import AdsAgent, PricingAgent
 
 
 def invoke_listing(db, ctx, method, *args, scope_key=None):
@@ -43,6 +44,16 @@ def invoke_ad_drafts(db, ctx, params, context, *, scope_key=None):
     with AdsAgent(ctx.legacy_tenant_id, context=ctx) as agent:
         output = agent.draft_batch(params, context)
     return finalize_ad_drafts(db, ctx, output, scope_key or ctx.trace_id)
+
+
+def invoke_pricing(db, ctx, method, *args, scope_key=None):
+    """定价只生成分析，调度层持久化分析产物；禁止提交财务 Action。"""
+    if method not in {"suggest_price", "reprice_batch"}:
+        raise ValueError("未迁移的定价分析动作")
+    ctx = require_action_permission(db, ctx, "finance:write")
+    with PricingAgent(ctx.legacy_tenant_id, context=ctx) as agent:
+        output = getattr(agent, method)(*args)
+    return finalize_pricing_output(db, ctx, output, scope_key or ctx.trace_id)
 
 
 class OrchestratorAgent(BaseAgent):
@@ -106,10 +117,9 @@ class OrchestratorAgent(BaseAgent):
         return "最新市场趋势 Top5：\n" + "\n".join(lines), "trends", ["scan_trends"], hot
 
     def _do_reprice(self) -> tuple[str, str, list, object]:
-        from .pricing import PricingAgent
-
-        with PricingAgent(self.tenant_id) as a:
-            r = a.reprice_batch()
+        if self.context is None:
+            raise ActionError(403, "定价分析持久化需要可信 Workspace 身份")
+        r = invoke_pricing(self.db, self.context, "reprice_batch")
         rows = r["repriced"][:5]
         lines = [f"· 商品#{x['product_id']} 建议价 ${x['suggested_price']}（利润率 {x['margin'] * 100:.0f}%）"
                  for x in rows]

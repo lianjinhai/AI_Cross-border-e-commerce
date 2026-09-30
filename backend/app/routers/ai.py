@@ -5,11 +5,17 @@ from sqlalchemy.orm import Session
 
 from ..agents.orchestrator import OrchestratorAgent
 from ..ai.llm import get_llm_config, set_llm_config
-from ..auth import get_current_user, require_admin_or_platform_admin, require_write
+from ..auth import (
+    get_current_user,
+    is_impersonating_user,
+    require_admin_or_platform_admin,
+    require_write,
+)
 from ..db import get_db
 from ..models import AiLog, User
 from ..serialize import to_dict
 from ..services import settings_service
+from ..services.workspace_context import resolve_workspace_context
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -75,7 +81,8 @@ def put_settings(body: dict, user: User = Depends(require_admin_or_platform_admi
 
 @router.post("/chat")
 def chat(body: ChatIn, user: User = Depends(require_write), db: Session = Depends(get_db)):
-    with OrchestratorAgent(user.tenant_id) as a:
+    ctx = resolve_workspace_context(db, user, is_impersonating=is_impersonating_user(user))
+    with OrchestratorAgent(user.tenant_id, context=ctx) as a:
         return a.chat(body.message)
 
 

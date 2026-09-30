@@ -25,6 +25,8 @@ def test_role_permission_matrix(client):
         ("GET", "/api/products", None, "read"),
         ("POST", "/api/products", {"title": "probe-matrix"}, "write"),
         ("GET", "/api/orders", None, "read"),
+        ("GET", "/api/pricing", None, "read"),
+        ("POST", "/api/pricing/suggest", {"product_id": 999999}, "write"),
             ("GET", "/api/actions", None, "write"),
             ("GET", "/api/actions?action_type=PUBLISH_LISTING", None, "write"),
         ("GET", "/api/actions?action_type=CREATE_AD_CAMPAIGN_DRAFT", None, "write"),
