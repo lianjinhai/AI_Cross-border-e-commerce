@@ -19,6 +19,7 @@
 | 备份 / 恢复 | `docs/backup_restore_runbook.md` | — |
 | 查某个决策的来龙去脉 | `docs/adr/README.md`（索引） | `docs/DECISIONS.md`（权威源） |
 | 查历史进度 / 谁做过什么 | `docs/WORKSPACE_MIGRATION_PROGRESS.md` | `docs/子代理实施索引-<日期>.md` |
+| 接续 Agent 写入迁移 | `docs/AI_AGENT_OPERATING_SYSTEM_ARCHITECTURE.md` §18.3.1 | `docs/DECISIONS.md` 最新决策与 `docs/子代理实施索引-20260930.md` |
 | 找已归档的一次性报告 | `docs/archive/README.md` | — |
 
 ---
@@ -49,6 +50,7 @@
 | `docs/backup_restore_runbook.md` | 生效 | 备份与恢复运维手册 |
 | `docs/WORKSPACE_MIGRATION_PROGRESS.md` | 活 | Workspace 迁移进度与遗留项（R-*） |
 | `docs/子代理实施索引-20260923.md` | 活（按日追加） | 子代理追溯索引（AGENTS.md §9 要求）；**文件名含日期，新增按日新建并在本表登记** |
+| `docs/子代理实施索引-20260930.md` | 活（按日追加） | 总调度最小任务派发、精简交接、验证及资源归属记录；未完成记录保留 |
 
 ### 2.4 全景 / 参考类
 

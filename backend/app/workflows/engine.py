@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from sqlalchemy import or_
 
 from .. import config
-from ..agents.orchestrator import invoke_ad_drafts, invoke_listing, invoke_pricing
+from ..agents.orchestrator import invoke_ad_drafts, invoke_listing, invoke_pricing, invoke_product
 from ..db import SessionLocal
 from ..models import User, WorkflowRun, WorkflowStep, WorkflowTemplate, utcnow
 from ..services.workspace_context import resolve_workspace_context
@@ -103,7 +103,7 @@ def run_step(agent_name: str, action: str, tenant_id: int, params: dict, context
         raise ValueError(f"未注册的动作: {agent_name}.{action}")
     if (agent_name, action) in {("listing", "generate_batch"),
                                 ("listing", "publish_batch"), ("ads", "draft_batch"),
-                                ("pricing", "reprice_batch")}:
+                                ("pricing", "reprice_batch"), ("product", "standardize_batch")}:
         with SessionLocal() as action_db:
             requester_id = context.get("_action_requested_by")
             requester = action_db.get(User, requester_id) if requester_id is not None else None
@@ -115,6 +115,9 @@ def run_step(agent_name: str, action: str, tenant_id: int, params: dict, context
                 return {"business_status": "blocked", "context_patch": {},
                         "reason": "缺少可信 Action 发起者，请由人工恢复流程"}
             ctx = resolve_workspace_context(action_db, requester, is_impersonating=impersonating)
+            if agent_name == "product":
+                return invoke_product(action_db, ctx, action, params, context,
+                                      scope_key=context.get("_action_scope"))
             if agent_name == "pricing":
                 return invoke_pricing(action_db, ctx, action, params, context,
                                       scope_key=context.get("_action_scope"))
@@ -148,7 +151,8 @@ def start_run(tenant_id: int, template_key: str, context: dict | None = None,
                .filter_by(tenant_id=tenant_id, key=template_key).first())
         if not tpl:
             raise ValueError(f"工作流模板 {template_key} 不存在")
-        run_context = dict(context or {})
+        run_context = {key: value for key, value in (context or {}).items()
+                       if not key.startswith("_action_")}
         # Action 发起人只接受服务端认证身份，不能从客户端 context 冒充。
         run_context.pop("_action_requested_by", None)
         run_context.pop("_action_impersonating", None)
@@ -180,6 +184,17 @@ def start_run(tenant_id: int, template_key: str, context: dict | None = None,
         return to_dict(db2.get(WorkflowRun, run_id))
     finally:
         db2.close()
+
+
+def _step_context(context, run_id, step):
+    scoped = {key: value for key, value in context.items()
+              if key != "_action_product_manifest"}
+    scoped["_action_scope"] = f"workflow:{run_id}:step:{step.id}"
+    if (step.agent, step.action) == ("product", "standardize_batch"):
+        manifest = (step.output or {}).get("_standardization_manifest")
+        if manifest is not None:
+            scoped["_action_product_manifest"] = manifest
+    return scoped
 
 
 def run_workflow(run_id: int) -> None:
@@ -215,7 +230,7 @@ def run_workflow(run_id: int) -> None:
             db.commit()
             try:
                 with _LeaseHeartbeat(run_id, worker_id):
-                    step_context = {**ctx, "_action_scope": f"workflow:{run_id}:step:{step.id}"}
+                    step_context = _step_context(ctx, run_id, step)
                     output = run_step(step.agent, step.action, run.tenant_id,
                                       dict(step.params or {}), step_context)
             except Exception as e:  # 步骤失败 -> 整个运行失败

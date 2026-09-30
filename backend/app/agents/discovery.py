@@ -1,15 +1,14 @@
 """商品发现 Agent（市场趋势/关键词扩展/选品评分）与商品标准化 Agent。
 
 §18.3 第 2 步（D46）：读取全部经 Tool 层（Product / Market Tool）；写路径
-（趋势 upsert、评分落库、标准化回写）保留 ORM 访问并集中标注，属第 3 步
-（Action 层）欠账。
+（趋势 upsert、评分落库）保留 ORM 访问并集中标注，属第 3 步欠账。
+商品标准化仅输出 UPDATE_PRODUCT_CONTENT 提案，由 Orchestrator 调度执行。
 """
-import hashlib
 import random
-import re
 from datetime import datetime
 
-from ..models import MarketTrend, Product, ProductScore
+from ..models import MarketTrend, ProductScore
+from ..services.product_standardization import safe_fields, snapshot
 from .base import BaseAgent
 from .contracts import CONTRACTS
 
@@ -340,63 +339,35 @@ class ProductAgent(BaseAgent):
         return "家居"
 
     def standardize(self, product_id: int) -> dict:
-        # 写路径（§18.3 第 3 步欠账）：标准化要回写 category / attrs / dedupe_hash，
-        # 需要 ORM 行对象，因此保留这 1 处 get 并标注；查重读取走 Tool。
-        p = self.db.get(Product, product_id)
-        if not p or p.tenant_id != self.tenant_id:
+        p = _tool_product(self, product_id)
+        if not p:
             raise ValueError(f"商品 {product_id} 不存在")
-
-        def rule() -> dict:
-            title = p.title
-            attrs = dict(p.attrs or {})
-            category = self.map_category(title) or attrs.get("category", "")
-            weight = attrs.get("weight_kg")
-            if not weight:
-                m = re.search(r"(\d+(?:\.\d+)?)\s*(kg|千克)", title.lower())
-                weight = float(m.group(1)) if m else 0.3
-            attrs.update({"weight_kg": float(weight),
-                          "material": attrs.get("material", "PP"),
-                          "color": attrs.get("color", "多色")})
-            norm = re.sub(r"\s+", "", title.lower())[:20]
-            digest = hashlib.sha256(f"{category}|{norm}|{attrs['material']}|{attrs['color']}"
-                                    .encode()).hexdigest()[:16]
-            got = self.tool("product").call("find_duplicate", dedupe_hash=digest,
-                                            exclude_id=product_id)
-            dup_id = (got.data.get("duplicate_id")
-                      if got.ok and isinstance(got.data, dict) else None)
-            return {"category": category, "attrs": attrs, "dedupe_hash": digest,
-                    "is_duplicate": bool(dup_id), "duplicate_of": dup_id or 0}
-
+        category = self.map_category(p["title"])
         system = "你是电商商品数据标准化引擎。只返回 JSON。"
-        prompt = (f"标准化商品「{p.title}」，attrs 原文: {p.attrs}。"
-                  "返回 JSON: {\"category\":\"八大类目之一\",\"attrs\":{...原字段并补全 weight_kg/material/color},"
-                  "\"dedupe_hash\":\"16位指纹\"}。")
-        result, _mode = self.ask_json("standardize", system, prompt, fallback=rule, small_task=True)
-        if not result.get("category") or not result.get("dedupe_hash"):
-            result = rule()
-        # 写路径（§18.3 第 3 步欠账）：标准化结果回写落库。
-        p.category = result["category"]
-        p.attrs = result.get("attrs") or p.attrs
-        p.dedupe_hash = result["dedupe_hash"]
-        p.updated_at = datetime.utcnow()
-        self.db.commit()
-        return {"product_id": product_id, "category": p.category, "attrs": p.attrs,
-                "dedupe_hash": p.dedupe_hash, "is_duplicate": result.get("is_duplicate", False),
-                "duplicate_of": result.get("duplicate_of", 0)}
+        prompt = (f"标准化商品「{p['title']}」，返回 JSON attrs 仅补全 weight_kg/material/color。")
+        result, _mode = self.ask_json("standardize", system, prompt,
+                                     fallback=lambda: {"attrs": {}}, small_task=True)
+        fields = safe_fields(p, category, result.get("attrs") if isinstance(result, dict) else None)
+        got = self.tool("product").call("find_duplicate", dedupe_hash=fields["dedupe_hash"],
+                                        exclude_id=product_id)
+        if not got.ok:
+            raise ValueError("商品查重读取失败")
+        return {"product_id": product_id, "dedupe_hash": fields["dedupe_hash"],
+                "_action_proposal": {
+            "action_type": "UPDATE_PRODUCT_CONTENT", "target_type": "product",
+            "target_id": product_id, "reason": "安全标准化商品类目、重量、材质和颜色",
+            "payload": {"before": snapshot(p), **fields}}}
 
     def standardize_batch(self, params: dict | None = None, context: dict | None = None) -> dict:
         params, context = params or {}, context or {}
-        ids = params.get("product_ids") or context.get("product_ids") or []
-        if not ids:
+        ids = params.get("product_ids", context.get("product_ids"))
+        if ids is None:
             ids = _tool_list(self, "product", "get_product_ids",
                              status="active", limit=200)
-        standardized, duplicates = [], []
+        proposals, errors = [], []
         for pid in ids[:200]:
             try:
-                r = self.standardize(int(pid))
-                (duplicates if r.get("is_duplicate") else standardized).append(pid)
-            except Exception:
-                continue
-        return {"standardized": standardized, "duplicates": duplicates,
-                "context_patch": {"product_ids": standardized,
-                                  "duplicate_product_ids": duplicates}}
+                proposals.append(self.standardize(int(pid)))
+            except (ValueError, TypeError) as exc:
+                errors.append({"product_id": pid, "error": str(exc)})
+        return {"proposals": proposals, "errors": errors}

@@ -8,15 +8,17 @@ from datetime import datetime
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
-from ..models import AdCampaign, AiAction, Listing, Product
+from ..models import AdCampaign, AiAction, Listing, Product, Tenant
 from . import action_content
 from .action_identity import requester_context, require_action_permission
 from .action_policy import POLICIES
 from .action_publish import publish_facts, publish_listing
 from .ai_actions import ActionError, _tenant_id, owned_action
 from .pii_redact import redact
+from .product_standardization import update_product_content
 
 HANDLERS = {
+    "UPDATE_PRODUCT_CONTENT": update_product_content,
     "CREATE_AD_CAMPAIGN_DRAFT": action_content.create_ad_campaign_draft,
     "CREATE_LISTING_DRAFT": action_content.create_listing_draft,
     "UPDATE_LISTING_CONTENT": action_content.update_listing_content,
@@ -98,11 +100,14 @@ def _intent_key(db, ctx, agent_type, action_type, target_id, scope_key, encoded,
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def submit_action(db, ctx, agent_type, proposal, scope_key):
+def submit_action(db, ctx, agent_type, proposal, scope_key, *, scope_manifest=None):
     action_type = proposal["action_type"]
     policy = _policy(action_type)
     if agent_type not in policy.agents or agent_type == "pricing":
         raise ActionError(403, "该 Agent 无权提出此类 Action")
+    if action_type == "UPDATE_PRODUCT_CONTENT":
+        table = Tenant.__table__
+        db.execute(table.update().where(table.c.id == ctx.legacy_tenant_id).values(id=table.c.id))
     current = require_action_permission(db, ctx, policy.permission)
     tenant_id = _tenant_id(db, current)
     if proposal["target_type"] != policy.target_type:
@@ -120,6 +125,10 @@ def submit_action(db, ctx, agent_type, proposal, scope_key):
         return scoped
     evidence = {"payload": payload, "_impersonating": current.is_impersonating,
                 "scope_key": str(scope_key)}
+    if scope_manifest is not None:
+        if action_type != "UPDATE_PRODUCT_CONTENT":
+            raise ActionError(400, "范围清单仅用于商品标准化")
+        evidence["scope_manifest"] = scope_manifest
     if action_type == "PUBLISH_LISTING":
         evidence.update(publish_facts(db, tenant_id, target_id, payload.get("shop_id")))
     elif action_type == "ADJUST_AD_BUDGET":

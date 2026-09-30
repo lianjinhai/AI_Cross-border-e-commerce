@@ -15,10 +15,58 @@ from ..services.action_publish import publish_targets
 from ..services.agent_outputs import finalize_ad_drafts, finalize_listing_output
 from ..services.ai_actions import ActionError
 from ..services.pricing_outputs import finalize_pricing_output
+from ..services.product_outputs import (
+    batch_result,
+    finalize_product,
+    recover_product,
+    recover_range,
+)
 from .base import BaseAgent
+from .discovery import ProductAgent
 from .listing import ListingAgent
 from .listing_review import ListingReviewAgent
 from .pricing import AdsAgent, PricingAgent
+
+
+def invoke_product(db, ctx, method, *args, scope_key=None):
+    """绑定可信身份，先恢复原 Action，再生成安全标准化提案。"""
+    if method not in {"standardize", "standardize_batch"}:
+        raise ValueError("未迁移的商品动作")
+    ctx = require_action_permission(db, ctx, "product:write")
+    scope = scope_key or ctx.trace_id
+    results, errors = [], []
+    with ProductAgent(ctx.legacy_tenant_id, context=ctx) as agent:
+        if method == "standardize":
+            return (recover_product(db, ctx, args[0], scope)
+                    or finalize_product(db, ctx, agent.standardize(args[0]), scope))
+        params, context = args
+        saved = context.get("_action_product_manifest")
+        supplied = params.get("product_ids", context.get("product_ids"))
+        if saved is not None:
+            if saved.get("scope") != scope:
+                raise ActionError(409, "商品标准化恢复范围无效")
+            ids = saved["product_ids"]
+            if supplied is not None and list(dict.fromkeys(supplied[:200])) != ids:
+                raise ActionError(409, "同一工作流范围的商品清单已变化")
+        else:
+            ids = recover_range(db, ctx, scope, supplied)
+        if ids is None:
+            got = agent.tool("product").call("get_product_ids", status="active", limit=200)
+            if not got.ok:
+                raise ActionError(403, "标准化商品范围读取失败")
+            ids = got.data
+        ids = list(dict.fromkeys(ids[:200]))
+        manifest = {"scope": scope, "product_ids": ids}
+        for pid in ids:
+            slot_scope = f"{scope}:product:{pid}"
+            try:
+                result = (recover_product(db, ctx, int(pid), slot_scope)
+                          or finalize_product(db, ctx, agent.standardize(int(pid)), slot_scope, manifest))
+                results.append(result)
+            except (ActionError, ValueError, TypeError) as exc:
+                db.rollback()
+                errors.append({"product_id": pid, "error": str(exc)})
+    return batch_result(results, errors, manifest)
 
 
 def invoke_listing(db, ctx, method, *args, scope_key=None):

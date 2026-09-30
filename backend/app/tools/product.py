@@ -26,7 +26,9 @@ def product_dict(p: Product) -> dict:
     return {"id": p.id, "sku": p.sku, "title": p.title, "category": p.category,
             "brand": p.brand, "status": p.status,
             "source_platform": p.source_platform, "attrs": p.attrs or {},
-            "images": p.images or [], "created_at": ts(p.created_at)}
+            "images": p.images or [], "created_at": ts(p.created_at),
+            "dedupe_hash": p.dedupe_hash,
+            "updated_at": p.updated_at.isoformat() if p.updated_at else None}
 
 
 class ProductTool(BaseTool):

@@ -14,6 +14,9 @@ class ActionPolicy:
 
 
 POLICIES = {
+    "UPDATE_PRODUCT_CONTENT": ActionPolicy(
+        frozenset({"product"}), "product:write", "product",
+        rollback="按 outcome.before 人工恢复商品安全标准化内容；保留 Action 审计"),
     "CREATE_AD_CAMPAIGN_DRAFT": ActionPolicy(
         frozenset({"ads"}), "finance:write", "product",
         rollback="人工删除本次广告草稿；保留 Action 审计，禁止自动启动投放"),

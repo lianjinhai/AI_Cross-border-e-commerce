@@ -34,7 +34,7 @@ Setting 表约定 key：`llm`（见 ai/llm.py DEFAULT_LLM）、`platform_fees`�
 
 ## 2. 智能体层契约（agents/*）
 
-所有 Agent：构造 `XxxAgent(tenant_id: int)`，支持 `with`；类属性 `name` 指定如下。下列为早期方法清单，数据库访问约束以 Agent OS §18.3 和 `docs/DECISIONS.md` D37~D47 的迁移现状为准。返回**纯 dict/list**（不要返回 ORM 对象）。LLM prompt 用中文+结构化要求，fallback 必须完整可用。
+所有 Agent：构造 `XxxAgent(tenant_id: int)`，支持 `with`；类属性 `name` 指定如下。下列为早期方法清单，数据库访问约束以 Agent OS §18.3 和 `docs/DECISIONS.md` D37~D51 的迁移现状为准。返回**纯 dict/list**（不要返回 ORM 对象）。LLM prompt 用中文+结构化要求，fallback 必须完整可用。
 
 ### 2.1 DiscoveryAgent（name="discovery"，文件 agents/discovery.py）
 市场发现+选品（对应规划第七章）。评分公式：`total = 0.35*demand + 0.20*(100-competition) + 0.30*profit + 0.15*(100-risk)`。
@@ -46,8 +46,8 @@ Setting 表约定 key：`llm`（见 ai/llm.py DEFAULT_LLM）、`platform_fees`�
 
 ### 2.2 ProductAgent（name="product"，文件 agents/discovery.py 同文件）
 商品标准化（第八章）。`_CJK_CATEGORY_MAP`：关键词→标准类目（家居/3C配件/宠物用品/户外运动/美妆工具/母婴用品/服饰配件/厨房用品）。
-- `standardize(product_id: int) -> {"product_id","category","attrs":{...},"dedupe_hash","is_duplicate":bool,"duplicate_of":int}`：dedupe_hash=sha256(类目+规范化标题前20字+主要属性)；同 tenant 内重复则 is_duplicate=True, duplicate_of=已存在商品id。
-- `standardize_batch(params: dict, context: dict) -> {"standardized":[int],"duplicates":[int],"context_patch":{}}`：product_ids 优先 params["product_ids"]，否则 context["product_ids"]。
+- `standardize(product_id: int) -> dict`：Agent 经 Tool 读取，返回内部 `_action_proposal`，不改商品。HTTP 经 `invoke_product` 提交既有 UPDATE_PRODUCT_CONTENT（LOW / product:write / AUTO_SAFE），Executor 复核身份与原始内容，只允许规则类目、weight_kg/material/color 和服务端指纹；保留售价、采购、库存等其他属性。返回执行结果（product_id/category/attrs/dedupe_hash/is_duplicate/duplicate_of）及 action_id/action_status；查重在锁内验证（D51）。
+- `standardize_batch(params: dict, context: dict)`：Agent 返回 proposals/errors；Workflow 调度返回 standardized/duplicates/results/errors/business_status/context_patch。范围优先 params.product_ids，其次 context.product_ids；均未指定时取最多 200 个 active 商品，显式空范围不扩散。同范围重放原 Action；服务端清单保存在 Action evidence 与步骤 output，零 Action 失败也能恢复原范围；客户端 `_action_` 键不得冒充。失败批次 blocked 且 context_patch={}，不缩掉失败商品。
 
 ### 2.3 SupplierAgent（name="supplier"，文件 agents/supplier.py）
 - `match_best(product_id: int) -> dict`：该商品所有 SupplierOffer 按 价格40%+发货时效30%+供应商rating/stability30% 打分选最优，返回 `{"product_id","supplier":{...},"offer":{...},"reason":str}`；无 offer 返回 `{}`。
@@ -159,7 +159,7 @@ def gen_order(db, tenant_id: int, platform: str | None = None) -> Order         
 ### B2 名下
 - **pricing.py** `/pricing`：`GET ""?product_id&page&page_size`（记录列表，附 title）；`POST /calc {"product_id","price"?}`；`POST /suggest {"product_id"}`。
 - **ads.py** `/ads`：`GET /campaigns`（roi_report 结果）；`POST /campaigns`（草稿/表单创建，可含 id 列表批量）；`POST /campaigns/{id}/optimize` 返回预算建议、`action_id` 与 `PENDING_APPROVAL`，预算不立即改变；`POST /suggest {"product_id","platform"}`。
-- **actions.py** `/actions`（D47～D49）：`GET ""?status=&action_type=` 查当前 Workspace 的指定类型 Action，缺省仍为 ADJUST_AD_BUDGET；另支持 PUBLISH_LISTING、CREATE_LISTING_DRAFT、UPDATE_LISTING_CONTENT、CREATE_AD_CAMPAIGN_DRAFT，权限按服务端目录。`POST /{id}/approve|reject {"note"}` 仅人工审批动作可用；`POST /{id}/execute` 对已批准 Action 幂等执行，复核当前执行人及原请求者的真实权限、租户状态和服务授权。FAILED/REJECTED 不允许重试同一 Action；结果/失败现场保存在 outcome。Listings 页面提供独立发布审批队列。
+- **actions.py** `/actions`（D47～D51）：`GET ""?status=&action_type=` 查当前 Workspace 的指定类型 Action，缺省仍为 ADJUST_AD_BUDGET；另支持 PUBLISH_LISTING、CREATE_LISTING_DRAFT、UPDATE_LISTING_CONTENT、CREATE_AD_CAMPAIGN_DRAFT、UPDATE_PRODUCT_CONTENT，权限按服务端目录。`POST /{id}/approve|reject {"note"}` 仅人工审批动作可用；`POST /{id}/execute` 对已批准 Action 幂等执行，复核当前执行人及原请求者的真实权限、租户状态和服务授权。FAILED/REJECTED 不允许重试同一 Action；结果/失败现场保存在 outcome。Listings 页面提供独立发布审批队列。
 - **orders.py** `/orders`：`GET ""?platform&status&keyword&page&page_size`；`POST /sync {"platform","count":5}`（gen_order×n，require_write）；`PUT /{id}/status {"status"}`（校验合法值）。
 - **support.py** `/support`：`GET /conversations?status&page&page_size`（附 last message + buyer_name）；`POST /conversations {"platform","buyer_name","content",?order_id,?product_id}`（创建会话+首条 buyer 消息）；`GET /conversations/{id}`（含 messages）；`POST /conversations/{id}/reply {"content"}`（operator 回复）；`POST /conversations/{id}/auto_reply`（SupportAgent）；`POST /conversations/{id}/close`。
 - **bi.py** `/bi`：

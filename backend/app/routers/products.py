@@ -8,8 +8,8 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..agents.discovery import ProductAgent
-from ..auth import get_current_user, require_write
+from ..agents.orchestrator import invoke_product
+from ..auth import get_current_user, is_impersonating_user, require_write
 from ..db import get_db
 from ..models import (
     ComplianceReport,
@@ -24,6 +24,8 @@ from ..models import (
 from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
 from ..services import mock_market, scraper
+from ..services.ai_actions import ActionError
+from ..services.workspace_context import resolve_workspace_context
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -242,5 +244,8 @@ def collect_products(body: CollectIn, user: User = Depends(require_write),
 def standardize(product_id: int, user: User = Depends(require_write),
                 db: Session = Depends(get_db)):
     _get_owned(db, user.tenant_id, product_id)
-    with ProductAgent(user.tenant_id) as a:
-        return a.standardize(product_id)
+    ctx = resolve_workspace_context(db, user, is_impersonating=is_impersonating_user(user))
+    try:
+        return invoke_product(db, ctx, "standardize", product_id)
+    except (ActionError, ValueError) as exc:
+        raise HTTPException(status_code=getattr(exc, "status_code", 400), detail=str(exc)) from exc
