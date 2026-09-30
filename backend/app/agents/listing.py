@@ -3,11 +3,8 @@
 M2 知识增强：生成前注入知识库检索结果与平台规则包约束；生成后规则引擎自检，
 违禁词/超长时带修正提示重试一次（上限 1 次）；仍违规则降级模板并标记待复核。
 
-§18.3 第 2 步：读取全部经 Tool 层；写路径集中标注，属第 3 步（Action 层）欠账。
+读取全部经 Tool 层；草稿、优化、发布只产生提案，Orchestrator 调度独立 Action 执行。
 """
-from datetime import datetime
-
-from ..models import Listing
 from ..services.platform_rules import validate_listing_fields
 from .base import BaseAgent
 from .contracts import CONTRACTS
@@ -131,19 +128,6 @@ class ListingAgent(BaseAgent):
         report = got.data.get("report") if (got.ok and isinstance(got.data, dict)) else None
         return report if isinstance(report, dict) else None
 
-    def _write_listing(self, listing_id: int, **fields) -> None:
-        """回写 Listing 字段（写路径，集中一处）。
-
-        §18.3 第 3 步（Action 层）的欠账：仍是一次 Agent 直改业务数据（§9.1），
-        不在读取迁移范围内；集中一处，第 3 步改由 Action 执行时只有一处要动。
-        """
-        obj = self.db.get(Listing, listing_id)
-        if obj and obj.tenant_id == self.tenant_id:
-            for name, value in fields.items():
-                setattr(obj, name, value)
-            obj.updated_at = datetime.utcnow()
-            self.db.commit()
-
     def _knowledge_context(self, p: dict, platform: str) -> tuple[str, dict, list[dict], list[str]]:
         """收集生成所需的平台规则与知识库上下文。返回 (prompt片段, 规则包, 知识文档, 违禁词)。"""
         docs = self._knowledge(f"{p['category']} 文案规范 违禁词 平台规则", top_k=3)
@@ -207,34 +191,25 @@ class ListingAgent(BaseAgent):
             if not self._self_check(safe, title_max, banned):
                 result, violations, needs_review = safe, [], False
 
-        row = Listing(tenant_id=self.tenant_id, product_id=product_id, platform=platform,
-                      language=language, title=result["title"], description=result["description"],
-                      bullets=result.get("bullets") or [], keywords=result.get("keywords") or [],
-                      status="draft", risk_level="unknown",
-                      model="llm" if mode == "llm" else "rule")
-        # 写路径（新建 Listing）：§18.3 第 3 步（Action 层）欠账，见 D40。
-        self.db.add(row)
-        self.db.commit()
-
         knowledge_refs = [{"doc_id": d["id"], "title": d["title"]} for d in docs]
-        # M6：记录决策依据链（知识来源 + 规则版本 + 自检结果）
-        self.record_decision(
-            action="generate_listing", subject_type="listing", subject_id=row.id,
-            decision={"title_len": len(row.title), "keyword_count": len(row.keywords or []),
-                      "needs_review": needs_review, "retried": retried},
-            evidence={"knowledge_refs": knowledge_refs, "rule_version": pack.get("version"),
-                      "platform": platform, "title_max": title_max,
-                      "violations": violations},
-            model=row.model)
-        return {
-            "id": row.id, "product_id": product_id, "platform": platform, "language": language,
-            "title": row.title, "description": row.description, "bullets": row.bullets,
-            "keywords": row.keywords, "status": row.status, "risk_level": row.risk_level,
-            "external_id": row.external_id, "published_at": None, "model": row.model,
+        payload = {"platform": platform, "language": language, "title": result["title"],
+                   "description": result["description"], "bullets": result.get("bullets") or [],
+                   "keywords": result.get("keywords") or [],
+                   "model": "llm" if mode == "llm" else "rule"}
+        output = {
+            **payload, "id": None, "product_id": product_id,
+            "status": "PROPOSED", "risk_level": "unknown",
+            "external_id": "", "published_at": None,
             "knowledge_refs": knowledge_refs, "rule_version": pack.get("version"),
             "needs_review": needs_review, "retried": retried,
-            "created_at": row.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "_decision_record": {"decision": {
+                "title_len": len(payload["title"]), "keyword_count": len(payload["keywords"]),
+                "needs_review": needs_review, "retried": retried},
+                "evidence": {"knowledge_refs": knowledge_refs, "rule_version": pack.get("version"),
+                             "platform": platform, "title_max": title_max, "violations": violations}},
         }
+        return self.propose("CREATE_LISTING_DRAFT", "product", product_id, payload,
+                            output, "生成经过文案自检的 Listing 草稿，不执行上架")
 
     def optimize(self, listing_id: int) -> dict:
         row = self._listing(listing_id)
@@ -243,11 +218,14 @@ class ListingAgent(BaseAgent):
         fresh = self._fallback_copy(p, row["platform"], row["language"], _banned)
         title = f"{fresh['title']} [Optimized]"
         keywords = list(dict.fromkeys((row["keywords"] or []) + fresh["keywords"]))[:15]
-        self._write_listing(listing_id, title=title, keywords=keywords)
-        return {"id": row["id"], "title": title, "keywords": keywords, "status": row["status"]}
+        return self.propose("UPDATE_LISTING_CONTENT", "listing", listing_id,
+                            {"title": title, "keywords": keywords,
+                             "before": {"title": row["title"], "keywords": row["keywords"] or []}},
+                            {"id": row["id"], "title": title, "keywords": keywords,
+                             "status": "PROPOSED"}, "优化草稿标题与关键词，不修改已发布内容")
 
     # ---------- 一键发布 ----------
-    def publish(self, listing_id: int) -> dict:
+    def publish(self, listing_id: int, shop_id: int | None = None) -> dict:
         """发布：先过平台规则包校验（人工编辑也可能写入违禁词），再看合规报告。
 
         规则校验是发布前的硬门禁，与生成期自检相互独立——生成期清洗不替代发布期把关。
@@ -265,11 +243,11 @@ class ListingAgent(BaseAgent):
         report = self._listing_report(listing_id)
         if report and report.get("risk_level") == "high":
             raise ValueError("合规风险高，禁止发布")
-        external_id = f"{row['platform']}-{row['id']:06d}"
-        self._write_listing(listing_id, status="published", external_id=external_id,
-                            published_at=datetime.utcnow())
-        return {"id": row["id"], "status": "published", "external_id": external_id,
-                "platform": row["platform"], "product_id": row["product_id"]}
+        return self.propose("PUBLISH_LISTING", "listing", listing_id,
+                            {"shop_id": shop_id},
+                            {"id": row["id"], "status": "PROPOSED",
+                             "platform": row["platform"], "product_id": row["product_id"]},
+                            "发布已通过规则检查的 Listing，必须人工审批后执行")
 
     # ---------- 批量动作（供工作流调用） ----------
     def generate_batch(self, params: dict | None = None, context: dict | None = None) -> dict:
@@ -277,24 +255,25 @@ class ListingAgent(BaseAgent):
         ids = params.get("product_ids") or context.get("product_ids") or []
         platform = params.get("platform", "shopee")
         language = params.get("language", "en")
-        listings, listing_ids = [], []
-        for pid in ids[:50]:
+        listings, listing_ids, errors = [], [], []
+        for index, pid in enumerate(ids[:50]):
             try:
                 r = self.generate(int(pid), platform, language)
+                r["_proposal_slot"] = index
                 listings.append(r)
                 listing_ids.append(r["id"])
-            except Exception:
-                continue
-        return {"listings": listings, "context_patch": {"listing_ids": listing_ids}}
+            except ValueError as exc:
+                errors.append({"product_id": pid, "reason": str(exc)})
+        return {"listings": listings, "errors": errors, "context_patch": {"listing_ids": listing_ids}}
 
     def publish_batch(self, params: dict | None = None, context: dict | None = None) -> dict:
         params, context = params or {}, context or {}
-        ids = params.get("listing_ids") or context.get("listing_ids") or []
+        ids = params.get("listing_ids") or context.get("approved_listing_ids") or context.get("listing_ids") or []
         published, blocked = [], []
         for lid in ids[:50]:
             try:
-                r = self.publish(int(lid))
-                published.append({"listing_id": r["id"], "external_id": r["external_id"]})
+                r = self.publish(int(lid), params.get("shop_id"))
+                published.append({"listing_id": r["id"], **r})
             except ValueError as e:
                 blocked.append({"listing_id": lid, "reason": str(e)})
         return {"published": published, "blocked": blocked, "context_patch": {}}

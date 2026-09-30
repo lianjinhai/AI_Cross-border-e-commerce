@@ -175,7 +175,10 @@ def test_compliance_and_listing(client, auth_headers):
     lid = r.json()["id"]
     assert r.json()["status"] == "draft"
     r = client.post(f"/api/listings/{lid}/publish", headers=auth_headers)
-    assert r.status_code == 200 and r.json()["status"] == "published"
+    assert r.status_code == 200, r.text
+    from .action_helpers import approve_and_execute
+    published = approve_and_execute(client, auth_headers, r.json())
+    assert published["status"] == "published"
     # 品牌侵权商品：检测 high → Listing 检测 high → 发布被拒
     r = client.post("/api/products", headers=auth_headers,
                     json={"title": "iPhone 15 case premium leather 保护壳", "category": "3C配件"})
@@ -346,9 +349,14 @@ def test_workflow_auto_listing(client, auth_headers):
     gate_pid = r.json()["id"]
     r = client.post("/api/workflows/run", headers=auth_headers,
                     json={"template_key": "auto_listing",
-                          "context": {"product_ids": [gate_pid]}})
+                          "context": {"product_ids": [gate_pid],
+                                      "_action_requested_by": -999,
+                                      "_action_impersonating": True}})
     assert r.status_code == 200, r.text
     run = _wait_run(client, auth_headers, r.json()["id"])
+    assert run["context"]["_action_requested_by"] > 0
+    assert run["context"]["_action_requested_by"] != -999
+    assert run["context"]["_action_impersonating"] is False
     assert run["status"] == "blocked", run.get("error")
     steps = run["steps"]
     assert len(steps) == 9
@@ -427,6 +435,8 @@ def test_listing_review_manual_approval_audit(client, auth_headers):
 
     published = client.post(f"/api/listings/{listing_id}/publish", headers=auth_headers)
     assert published.status_code == 200, published.text
+    from .action_helpers import approve_and_execute
+    assert approve_and_execute(client, auth_headers, published.json())["status"] == "published"
     history = client.get(f"/api/listings/{listing_id}/reviews", headers=auth_headers)
     assert history.status_code == 200
     assert any(item["human_override"] and item["reviewer"].startswith("human:")
@@ -735,8 +745,10 @@ def test_order_ship_flow(client, auth_headers):
 
 def test_listing_manual_edit(client, auth_headers):
     """Listing 人工编辑：修改标题/卖点/关键词并持久化。"""
-    r = client.get("/api/products", headers=auth_headers, params={"page_size": 1})
-    pid = r.json()["items"][0]["id"]
+    r = client.post("/api/products", headers=auth_headers,
+                    json={"title": "Manual Edit Probe", "category": "家居"})
+    assert r.status_code == 200, r.text
+    pid = r.json()["id"]
     r = client.post("/api/listings/generate", headers=auth_headers,
                     json={"product_id": pid, "platform": "shopee", "language": "en"})
     lid = r.json()["id"]
@@ -851,7 +863,9 @@ def test_shop_oauth_flow(client, auth_headers, monkeypatch):
     r = client.post(f"/api/listings/{safe_lid}/publish", headers=auth_headers,
                     json={"shop_id": safe_demo_shop})
     assert r.status_code == 200, r.text
-    assert r.json()["source"] == "demo" and r.json()["external_id"].startswith("demo-")
+    from .action_helpers import approve_and_execute
+    published = approve_and_execute(client, auth_headers, r.json())
+    assert published["source"] == "demo" and published["external_id"].startswith("demo-")
     client.delete(f"/api/shops/{shopee_id}", headers=auth_headers)
     client.delete(f"/api/shops/{demo_shop}", headers=auth_headers)
     client.delete(f"/api/shops/{safe_demo_shop}", headers=auth_headers)
@@ -1030,19 +1044,21 @@ def test_platform_rules_and_admin(client, auth_headers):
 def test_refund_and_settlement_flow(client, auth_headers):
     """售后逆向闭环 + 供应商账期结算闭环。"""
     # ---- 售后：发货订单 -> 退货退款 -> 退货入库 -> 完成退款 -> 订单 refunded ----
-    r = client.post("/api/orders/sync", headers=auth_headers, json={"platform": "demo:shopee", "count": 3})
-    oid = r.json()["items"][0]["id"]
-    current = r.json()["items"][0]["status"]
-    if current == "pending":
-        client.put(f"/api/orders/{oid}/status", headers=auth_headers, json={"status": "paid"})
-        current = "paid"
-    if current == "paid":
-        client.put(f"/api/orders/{oid}/status", headers=auth_headers, json={"status": "shipped"})
-        current = "shipped"
-    if current == "shipped":
-        client.put(f"/api/orders/{oid}/status", headers=auth_headers, json={"status": "delivered"})
+    product = client.post("/api/products", headers=auth_headers, json={
+        "title": "Refund Settlement Probe", "category": "家居",
+        "attrs": {"onhand": 10, "supplier_price": 9.9, "sale_price": 25}})
+    assert product.status_code == 200, product.text
+    external_no = f"REFUND-SETTLEMENT-{product.json()['id']}"
+    imported = client.post("/api/orders/import", headers=auth_headers, json={
+        "csv_text": "external_no,platform,amount,qty,status,sku\n"
+                    f"{external_no},shopee,50,2,paid,{product.json()['sku']}"})
+    assert imported.status_code == 200 and imported.json()["imported"] == 1, imported.text
     order = client.get("/api/orders", headers=auth_headers,
-                       params={"keyword": r.json()["items"][0]["external_no"]}).json()["items"][0]
+                       params={"keyword": external_no}).json()["items"][0]
+    oid = order["id"]
+    for status in ("shipped", "delivered"):
+        transition = client.put(f"/api/orders/{oid}/status", headers=auth_headers, json={"status": status})
+        assert transition.status_code == 200, transition.text
     pid = order["product_id"]
     before = client.get(f"/api/products/{pid}", headers=auth_headers).json()["attrs"].get("onhand", 0)
     # 发起整单退货退款（qty=订单件数，验证订单状态联动）
@@ -1077,13 +1093,22 @@ def test_refund_and_settlement_flow(client, auth_headers):
 
     # ---- 结算：已收货采购单 -> 生成对账 -> 确认 -> 付款 -> 不再重复结算 ----
     # 真实流程要求先有货源报价才能生成采购单；demo 拉单的商品未必已录入报价。
-    sid = client.get("/api/suppliers", headers=auth_headers).json()["items"][0]["id"]
+    # 独立已验证供应商：不能把其他用例待结算/待确认的 PO 计入本探针。
+    from app.db import SessionLocal
+    from app.models import Supplier, User
+    with SessionLocal() as db:
+        user = db.query(User).filter_by(username="admin").one()
+        supplier = Supplier(tenant_id=user.tenant_id, name=f"Settlement Probe {pid}",
+                            verification_status="verified")
+        db.add(supplier)
+        db.commit()
+        sid = supplier.id
     r = client.post("/api/suppliers/offers", headers=auth_headers,
                     json={"supplier_id": sid, "product_id": pid, "price": 9.9,
                           "moq": 1, "ship_days": 5})
     assert r.status_code == 200, r.text
     r = client.post("/api/purchases", headers=auth_headers,
-                    json={"product_id": pid, "qty": 10, "note": "结算测试"})
+                    json={"product_id": pid, "supplier_id": sid, "qty": 10, "note": "结算测试"})
     assert r.status_code == 200, r.text
     po_id, supplier_id, po_total = r.json()["id"], r.json()["supplier_id"], r.json()["total"]
     client.put(f"/api/purchases/{po_id}", headers=auth_headers, json={"status": "submitted"})
@@ -1094,7 +1119,7 @@ def test_refund_and_settlement_flow(client, auth_headers):
                     json={"supplier_id": supplier_id})
     assert r.status_code == 200, r.text
     st = r.json()
-    assert st["po_count"] >= 1 and st["total_amount"] >= po_total
+    assert st["po_count"] == 1 and st["total_amount"] == po_total
     st_id = st["id"]
     # 未确认直接付款 -> 409（非法状态流转）
     r = client.put(f"/api/settlements/{st_id}", headers=auth_headers, json={"status": "paid"})

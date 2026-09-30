@@ -69,11 +69,11 @@ Setting 表约定 key：`llm`（见 ai/llm.py DEFAULT_LLM）、`platform_fees`�
 - `roi_report() -> {"summary":{"total_spend","total_revenue","roi","avg_ctr"},"campaigns":[campaign dict + {"roi","ctr","cvr"}]}`。
 
 ### 2.6 ListingAgent（name="listing"，文件 agents/listing.py）
-- `generate(product_id: int, platform: str = "shopee", language: str = "en") -> dict`：创建 Listing（status="draft"）。标题：核心词+属性词+场景词+平台后缀，≤120字符；description 3-5 句；bullets 5 条卖点；keywords 10-15 个。LLM 生成失败/不可用时用模板（标题=`{title_en} {attr_words} for {scene} | {platform} Hot Sale 2026` 等）。返回 to_dict(Listing)。
-- `optimize(listing_id: int) -> dict`：重写标题关键词+keywords，返回 Listing dict。
-- `publish(listing_id: int) -> dict`：若该 listing 最新合规报告 risk_level=="high" → `raise ValueError("合规风险高，禁止发布")`；否则 status="published"、external_id=f"{platform}-{listing_id:06d}"、published_at=utcnow，返回 Listing dict。
+- `generate(product_id: int, platform: str = "shopee", language: str = "en") -> dict`：只返回 `CREATE_LISTING_DRAFT` 提案，Agent 不建 Listing 行。保留知识增强、文案自检及模板降级；HTTP/工作流由 Orchestrator 提交并自动执行草稿 Action，返回真实 Listing id、status="draft"、action_id、action_status="SUCCESS"（D48）。
+- `optimize(listing_id: int) -> dict`：只返回 `UPDATE_LISTING_CONTENT` 提案；执行器仅允许修改内容未变化的草稿。HTTP 返回执行后 Listing dict 与 Action 引用；已发布内容或陈旧提案返回 409。
+- `publish(listing_id: int, shop_id: int | None = None) -> dict`：只返回 `PUBLISH_LISTING` 提案。HTTP 先复核当前内容，提交后返回 `status="PENDING_APPROVAL"`、`action_id`、`approval_required=true`，**不立即上架**。调用 Action approve 后，还必须独立调用 execute；成功结果在 outcome.result。真实/演示/本地发布都需审批；执行时再次核对权限、内容指纹、规则、复核结论及店铺归属。
 - `generate_batch(params, context) -> {"listings":[Listing dict], "context_patch":{"listing_ids":[int]}}`：platform/language 取 params（默认 shopee/en），product_ids 取 params 或 context。
-- `publish_batch(params, context) -> {"published":[{"listing_id","external_id"}],"blocked":[{"listing_id","reason"}], "context_patch":{}}`：listing_ids 取 params 或 context。
+- `publish_batch(params, context)`：Agent 保留每项提案，Orchestrator 汇总为 published/pending/blocked；context_patch 包含 pending_action_ids、published_product_ids。有未执行或拒绝动作时 business_status="blocked"，暂停下游。人工执行后 resume 不重跑成功上游；同一范围的拒绝/失败 Action 不被自动换成新提案。
 
 ### 2.7 ComplianceAgent（name="compliance"，文件 agents/compliance.py）
 - `check(target_type: str, ref_id: int) -> dict`：创建 ComplianceReport。检测项（每命中一条计一次扣分）：
@@ -159,7 +159,7 @@ def gen_order(db, tenant_id: int, platform: str | None = None) -> Order         
 ### B2 名下
 - **pricing.py** `/pricing`：`GET ""?product_id&page&page_size`（记录列表，附 title）；`POST /calc {"product_id","price"?}`；`POST /suggest {"product_id"}`。
 - **ads.py** `/ads`：`GET /campaigns`（roi_report 结果）；`POST /campaigns`（草稿/表单创建，可含 id 列表批量）；`POST /campaigns/{id}/optimize` 返回预算建议、`action_id` 与 `PENDING_APPROVAL`，预算不立即改变；`POST /suggest {"product_id","platform"}`。
-- **actions.py** `/actions`（D47 首批仅广告预算）：`GET ""?status=` 查本人 Workspace 内待处理 Action；`POST /{id}/approve|reject {"note"}` 人工决策；`POST /{id}/execute` 对已批准 Action 幂等执行。均由服务端 Workspace Context 校验 `finance:write` 与租户归属。
+- **actions.py** `/actions`（D47、D48）：`GET ""?status=&action_type=` 查当前 Workspace 的指定类型 Action，缺省仍为 ADJUST_AD_BUDGET；另支持 PUBLISH_LISTING、CREATE_LISTING_DRAFT、UPDATE_LISTING_CONTENT，权限按服务端目录。`POST /{id}/approve|reject {"note"}` 仅人工审批动作可用；`POST /{id}/execute` 对已批准 Action 幂等执行，复核当前执行人及原请求者的真实权限、租户状态和服务授权。FAILED/REJECTED 不允许重试同一 Action；结果/失败现场保存在 outcome。Listings 页面提供独立发布审批队列。
 - **orders.py** `/orders`：`GET ""?platform&status&keyword&page&page_size`；`POST /sync {"platform","count":5}`（gen_order×n，require_write）；`PUT /{id}/status {"status"}`（校验合法值）。
 - **support.py** `/support`：`GET /conversations?status&page&page_size`（附 last message + buyer_name）；`POST /conversations {"platform","buyer_name","content",?order_id,?product_id}`（创建会话+首条 buyer 消息）；`GET /conversations/{id}`（含 messages）；`POST /conversations/{id}/reply {"content"}`（operator 回复）；`POST /conversations/{id}/auto_reply`（SupportAgent）；`POST /conversations/{id}/close`。
 - **bi.py** `/bi`：

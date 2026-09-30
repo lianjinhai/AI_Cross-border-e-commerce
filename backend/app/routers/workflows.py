@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..auth import get_current_user, require_write
+from ..auth import get_current_user, is_impersonating_user, require_write
 from ..db import get_db
 from ..models import User, WorkflowRun, WorkflowStep, WorkflowTemplate
 from ..serialize import to_dict
@@ -15,7 +15,8 @@ router = APIRouter(prefix="/workflows", tags=["workflows"])
 @router.post("/runs/{run_id}/resume")
 def resume(run_id: int, user: User = Depends(require_write)):
     try:
-        return resume_run(run_id, user.tenant_id)
+        return resume_run(run_id, user.tenant_id, requested_by=user.id,
+                          is_impersonating=is_impersonating_user(user))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -35,7 +36,8 @@ def templates(user: User = Depends(get_current_user), db: Session = Depends(get_
 @router.post("/run")
 def run(body: RunIn, user: User = Depends(require_write), db: Session = Depends(get_db)):
     try:
-        run_dict = start_run(user.tenant_id, body.template_key, body.context)
+        run_dict = start_run(user.tenant_id, body.template_key, body.context,
+                             requested_by=user.id, is_impersonating=is_impersonating_user(user))
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     steps = (db.query(WorkflowStep).filter(WorkflowStep.run_id == run_dict["id"])

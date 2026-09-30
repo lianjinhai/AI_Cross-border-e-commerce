@@ -694,6 +694,19 @@ Business API（既有 Router / Service）
 3. Finance Intelligence Agent **不得产出任何 action**（只分析）；
 4. 新增 action_type 必须同时声明：风险等级、所需权限、是否需审批、幂等键生成规则、回滚方式。
 
+### 9.4.1 Action 增量目录（D48，2026-09-30）
+
+| action_type | 风险 / 权限 | 审批 | 幂等 | 回滚 |
+|---|---|---|---|---|
+| `UPDATE_LISTING_CONTENT` | LOW / `listing:write` | AUTO_SAFE，仅草稿 | Workspace、发起人、类型、目标、服务端执行范围和载荷的 SHA256；执行时复核原始内容 | 按 outcome.before 人工恢复草稿；已发布内容禁止自动覆盖 |
+
+既有 `CREATE_LISTING_DRAFT` 的自动权限仅限新建草稿，不包括发布。
+既有 `PUBLISH_LISTING` 固定 MEDIUM / `listing:write` / APPROVAL_REQUIRED：
+发布指纹覆盖 Listing、商品、规则版本、目标店铺；待处理意图复用，唯一键约束
+兜底并发提交；拒绝/失败后新请求必须新建 Action，同一工作流范围则保留终态，
+不能通过恢复绕过拒绝。发布失败保留目标状态及平台 checkpoint；真实平台撤销
+须另走人工业务流程或未来 `UNPUBLISH_LISTING` 审批，不自动反向调用平台。
+
 ### 9.5 Action 状态机（冻结）
 
 ```
@@ -1422,7 +1435,7 @@ Platform Identity（`superadmin`，ADR-F03 相关）**没有业务 Workspace**�
 |---|---|---|
 | 1 | ✅ **完成**（D35） | 8 条冻结契约落在 `backend/app/agents/contracts.py`；`SupportAgent` 显式未登记（DEBT-34） |
 | 2 | ✅ **Agent 侧读取迁移完成**（D37 ~ D46） | Tool 基础设施与三批方法清单已交付（合计 11 个 Tool / 43 个方法，§10.4.1）。**9/9 个 Agent 文件的读取点全部改走 Tool**，`discovery.py` 的类目、趋势、商品、评分、经营表现与查重读取由 Product / Market Tool 承接，并以 `mode=tool` 审计测试验证。进度锚点：`tests/test_agent_layer_boundaries.py::_ORM_CALL_BASELINE` 之和 **21 → 8**；其中 8 处 `query/get` 均为 upsert 或回写所需的写路径，归 §18.3 第 3 步。`DiscoveryAgent._rule_scores` 仍调用服务层 `get_performance` 计算并缓存表现分，属后续运行时/Action 收敛范围（D46）。 |
-| 3 | 🔶 **进行中**（D47） | 已建立 `ai_actions` 表、审批状态机与独立服务端 Guardrail / Executor；`AdsAgent.optimize_budget` 只产出建议，`ADJUST_AD_BUDGET` 固定 HIGH + 人工审批，执行时复核请求者权限、租户归属、预算/ROI 新鲜度，同一 Action 重试幂等。剩余 `listing.publish` / `listing.optimize` / 草稿生成、`pricing.reprice_batch` 等 Agent 写路径尚未迁移；本步不能标完成。 |
+| 3 | 🔶 **进行中**（D47、D48） | 广告预算及 Listing 草稿、优化、发布已接独立 Action Guardrail / Executor，Listing Agent 模块不再直接写业务 ORM（Base 审计仍是存量入口）。发布固定人工审批；工作流等待批准并执行后再恢复，拒绝不会被恢复绕过。同步 Orchestrator 接管已迁移动作的提交/执行；其余 Agent 与基础审计仍保留存量入口。当前 ORM query/get 棘轮总数为 6（不代表全部写入数）；`pricing.reprice_batch`、趋势/评分/标准化、供应评分快照/预测/私域报价、合规/复核、客服/知识学习、告警和基础审计仍待逐项迁移。**第 3 步未完成；第 4～6 步未开始**。 |
 | 4 | ⏳ 未开始 | Orchestrator 仍同步直调 |
 | 5 | ⏳ 未开始 | `BaseAgent.SessionLocal()` 仍自持会话；完成后才能关闭 DEBT-35 |
 | 6 | ⏳ 未开始 | `trace_id` / `task_id` / `parent_trace_id` / `steps[]` 未补 |

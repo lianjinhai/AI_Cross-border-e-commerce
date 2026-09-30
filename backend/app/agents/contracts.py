@@ -259,8 +259,8 @@ LISTING = AgentContract(
     max_budget=0.10,
     spec_section="§7.5",
     known_gaps=(
-        "publish() 直接改 Listing.status 并提交（违反 §9.1「Agent 不得直接修改业务数据」），"
-        "应改为生成 PUBLISH_LISTING Action——§18.3 第 3 步（高风险，涉及业务写入路径）",
+        "generate/optimize/publish 已只产出 Action 提案，由 Orchestrator 同步调度（D48）；"
+        "Task 派发、Runtime 会话注入及完整 Trace 仍待 §18.3 第 4～6 步",
     ),
 )
 

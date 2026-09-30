@@ -10,7 +10,30 @@
 """
 from ..ai.llm import ModelRouter
 from ..models import AiLog
+from ..services.action_identity import require_action_permission
+from ..services.action_publish import publish_targets
+from ..services.agent_outputs import finalize_listing_output
+from ..services.ai_actions import ActionError
 from .base import BaseAgent
+from .listing import ListingAgent
+from .listing_review import ListingReviewAgent
+
+
+def invoke_listing(db, ctx, method, *args, scope_key=None):
+    """同步调度已迁移的 Listing 动作；Task/Trace 仍属后续阶段。"""
+    if method not in {"generate", "generate_batch", "optimize", "publish", "publish_batch"}:
+        raise ValueError("该 Listing 动作尚未迁移到提案调度入口")
+    ctx = require_action_permission(db, ctx, "listing:write")
+    if method == "publish":
+        publish_targets(db, ctx.legacy_tenant_id, args[0], args[1] if len(args) > 1 else None)
+        with ListingReviewAgent(ctx.legacy_tenant_id, context=ctx) as reviewer:
+            review = reviewer.review(args[0])
+        if review["decision"] != "approved":
+            raise ActionError(400 if review["decision"] == "rejected" else 409,
+                              "上架复核未通过：" + "；".join(review["reasons"]))
+    with ListingAgent(ctx.legacy_tenant_id, context=ctx) as agent:
+        output = getattr(agent, method)(*args)
+    return finalize_listing_output(db, ctx, output, scope_key or ctx.trace_id)
 
 
 class OrchestratorAgent(BaseAgent):

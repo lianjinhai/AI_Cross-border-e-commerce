@@ -126,7 +126,8 @@ def main(argv=None) -> int:
         print(f"[FAIL] 端口 {args.port} 已被占用，请换 --port")
         return 3
 
-    work = _ROOT_DIR / "_e2e"
+    # 冷备父目录已同时在 .gitignore/.dockerignore 中排除；先满足 D-5 再生成。
+    work = _BACKEND_DIR / "backups" / "e2e_feasibility"
     if work.exists():
         shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True, exist_ok=True)
@@ -168,6 +169,7 @@ def main(argv=None) -> int:
     env = {
         **os.environ,
         "ERP_DB_URL": "sqlite:///" + copy_db.as_posix(),
+        "ERP_ACCEPTANCE_ISOLATED": "1",
         "ERP_JWT_SECRET": "e2e-secret-at-least-32-bytes-long",
         "ERP_SUPERADMIN_PASSWORD": os.environ.get("ERP_SUPERADMIN_PASSWORD", "root-test-123"),
         "PYTHONIOENCODING": "utf-8",

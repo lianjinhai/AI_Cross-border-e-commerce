@@ -33,12 +33,23 @@ class TestFunctionDomain:
 
     def test_refund_terminal_state_rejected(self, client, auth_headers):
         """已拒绝的退款单不能再审核；已退款的订单不能再发起退款。"""
-        client.post("/api/orders/sync", headers=auth_headers, json={"platform": "demo:shopee", "count": 2})
+        # 演示同步会随机返回 cancelled 等终态；固定导入 paid 订单，不能强行倒退状态。
+        product = client.post("/api/products", headers=auth_headers,
+                              json={"title": "Refund Terminal Probe", "category": "家居"})
+        assert product.status_code == 200, product.text
+        pid, sku = product.json()["id"], product.json()["sku"]
+        external_no = f"REFUND-TERMINAL-{pid}"
+        imported = client.post("/api/orders/import", headers=auth_headers, json={
+            "csv_text": "external_no,platform,amount,qty,status,sku\n"
+                        f"{external_no},shopee,25,1,paid,{sku}"})
+        assert imported.status_code == 200 and imported.json()["imported"] == 1, imported.text
         o = client.get("/api/orders", headers=auth_headers,
-                       params={"page_num": 1, "page_size": 1}).json()["items"][0]
-        client.put(f"/api/orders/{o['id']}/status", headers=auth_headers, json={"status": "paid"})
-        rid = client.post("/api/refunds", headers=auth_headers,
-                          json={"order_id": o["id"], "qty": 1}).json()["id"]
+                       params={"keyword": external_no}).json()["items"][0]
+        assert o["status"] == "paid"
+        refund = client.post("/api/refunds", headers=auth_headers,
+                             json={"order_id": o["id"], "qty": 1})
+        assert refund.status_code == 200, refund.text
+        rid = refund.json()["id"]
         client.put(f"/api/refunds/{rid}/status", headers=auth_headers, json={"status": "rejected"})
         r = client.put(f"/api/refunds/{rid}/status", headers=auth_headers, json={"status": "approved"})
         assert r.status_code == 400 and "不可审核" in r.json()["detail"]
@@ -497,7 +508,11 @@ class TestDataFinanceDomain:
             first = client.post(f"/api/listings/{lid}/publish", headers=auth_headers,
                                 json={"shop_id": shop["id"]})
             assert first.status_code == 200, first.text
-            assert not first.json().get("idempotent_replay"), "首次发布不应标记为重放"
+            assert calls["n"] == 0, "审批前不得调用真实发布适配器"
+            from .action_helpers import approve_and_execute
+            published = approve_and_execute(client, auth_headers, first.json())
+            assert not published.get("idempotent_replay"), "首次执行不应标记为重放"
+            assert calls["n"] == 1
 
             with SessionLocal() as db:
                 attempts_1 = db.query(PlatformPublishAttempt).filter(
@@ -508,6 +523,8 @@ class TestDataFinanceDomain:
             assert second.status_code == 200, second.text
             assert second.json().get("idempotent_replay") is True, (
                 f"重复发布应命中幂等重放，实际: {second.json()}")
+            assert second.json()["action_id"] == first.json()["action_id"]
+            assert calls["n"] == 1, "重放不得再次调用外部发布"
 
             with SessionLocal() as db:
                 attempts_2 = db.query(PlatformPublishAttempt).filter(

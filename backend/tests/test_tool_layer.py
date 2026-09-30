@@ -706,8 +706,10 @@ def test_listing_agent_reads_go_through_tool_layer(client):
         finally:
             agent.close()
         assert opt["id"] == ids["listing_id"]
-        assert pub["status"] == "published"
-        assert pub["external_id"] == "shopee-%06d" % ids["listing_id"]
+        assert opt["status"] == "PROPOSED"
+        assert opt["_action_proposal"]["action_type"] == "UPDATE_LISTING_CONTENT"
+        assert pub["status"] == "PROPOSED"
+        assert pub["_action_proposal"]["action_type"] == "PUBLISH_LISTING"
 
         db = SessionLocal()
         try:
@@ -724,9 +726,8 @@ def test_listing_agent_reads_go_through_tool_layer(client):
         assert expected <= actions, (
             "listing 的读取没有全部走 Tool 层——§18.3 第 2 步的迁移被回退了？缺失：%s"
             % sorted(expected - actions))
-        # 反向断言：写路径（`_write_listing`）必须仍然生效——它是第 3 步欠账，
-        # 但迁移期间不得被顺手删掉（删掉等于「优化/发布点了没反应」）。
-        assert status_after == "published" and title_after.endswith("[Optimized]")
+        # 两个 Agent 方法都只能提案，不能产生任何 Listing 业务副作用。
+        assert status_after == "draft" and title_after == "Tool Layer 上架探针 Listing"
     finally:
         db = SessionLocal()
         try:

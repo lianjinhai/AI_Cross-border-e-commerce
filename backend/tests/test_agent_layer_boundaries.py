@@ -223,9 +223,8 @@ _ORM_CALL_BASELINE = {
     # （Action 层）范围，不随读取迁移下降，见 D43。
     "factory_opportunity.py": (2, 0),
     # listing.py 的读取点已迁完（Product / Listing / Knowledge / Compliance Tool）；
-    # 剩下的 1 次 get 是**写路径**（`_write_listing` 回写标题/状态/外部 id），
-    # 属 §18.3 第 3 步（Action 层）范围，不随读取迁移下降。
-    "listing.py": (0, 1),
+    # 草稿、优化、发布已移到独立 Action Executor，Listing Agent 无 ORM 写路径。
+    "listing.py": (0, 0),
     # listing_review.py 的读取点已迁完（Listing / Product / Compliance Tool）；
     # 剩下的 1 处 `self.db.add` 是**写路径**（复核结论落库），不在棘轮口径内，
     # 同属第 3 步（Action 层）欠账，见 D42。

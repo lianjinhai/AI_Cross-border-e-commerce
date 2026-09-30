@@ -9,15 +9,16 @@ from ..ai.llm import ModelRouter
 from ..db import SessionLocal
 from ..models import AiLog
 from ..services.pii_redact import redact, redact_prompt
-from ..tools import legacy_context, open_tool
+from ..tools import SOURCE_CONTEXT, ToolContext, legacy_context, open_tool
 
 
 class BaseAgent:
     name = "base"
 
-    def __init__(self, tenant_id: int):
+    def __init__(self, tenant_id: int, *, context=None):
         self.tenant_id = tenant_id
         self.db = SessionLocal()
+        self.context = context
 
     # ---- 生命周期 ----
     def close(self):
@@ -37,7 +38,21 @@ class BaseAgent:
         就会出现「有人漏写 permissions=None」——「未校验」被静默当成「已校验」
         （T-53）。迁移期的缺口与代价见 docs/DECISIONS.md D37 / DEBT-35。
         """
-        return legacy_context(self.tenant_id, self.name)
+        if self.context is None:
+            return legacy_context(self.tenant_id, self.name)
+        return ToolContext(
+            tenant_id=self.tenant_id, workspace_id=self.context.workspace_id,
+            agent_type=self.name, user_id=self.context.user_id,
+            permissions=self.context.permissions, source=SOURCE_CONTEXT,
+            trace_id=self.context.trace_id)
+
+    @staticmethod
+    def propose(action_type: str, target_type: str, target_id: int,
+                payload: dict, result: dict, reason: str) -> dict:
+        """只产生结构化提案；提交、Guardrail 和执行由 Orchestrator 收口。"""
+        return {**result, "_action_proposal": {
+            "action_type": action_type, "target_type": target_type,
+            "target_id": target_id, "payload": payload, "reason": reason}}
 
     def tool(self, name: str):
         """取一个绑定本 Agent 身份与会话的 Tool（§18.3 第 2 步的迁移入口）。

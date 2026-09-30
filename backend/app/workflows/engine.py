@@ -7,12 +7,15 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 from sqlalchemy import or_
 
 from .. import config
+from ..agents.orchestrator import invoke_listing
 from ..db import SessionLocal
-from ..models import WorkflowRun, WorkflowStep, WorkflowTemplate, utcnow
+from ..models import User, WorkflowRun, WorkflowStep, WorkflowTemplate, utcnow
+from ..services.workspace_context import resolve_workspace_context
 
 # (agent, action) 注册表： dispatch 时 lazy import，避免循环依赖
 _KNOWN = [
@@ -98,6 +101,19 @@ def run_step(agent_name: str, action: str, tenant_id: int, params: dict, context
     """执行单个注册动作。"""
     if (agent_name, action) not in _KNOWN:
         raise ValueError(f"未注册的动作: {agent_name}.{action}")
+    if agent_name == "listing" and action in {"generate_batch", "publish_batch"}:
+        with SessionLocal() as action_db:
+            requester = action_db.get(User, context.get("_action_requested_by"))
+            impersonating = bool(context.get("_action_impersonating"))
+            if requester is not None and impersonating and requester.role == "superadmin":
+                requester = SimpleNamespace(id=requester.id, username=requester.username,
+                    display_name=requester.display_name, tenant_id=tenant_id, role="operator")
+            if requester is None or requester.tenant_id != tenant_id:
+                return {"business_status": "blocked", "context_patch": {},
+                        "reason": "缺少可信 Action 发起者，请由人工恢复流程"}
+            ctx = resolve_workspace_context(action_db, requester, is_impersonating=impersonating)
+            return invoke_listing(action_db, ctx, action, params, context,
+                                  scope_key=context.get("_action_scope"))
     cls = _load_agent_class(agent_name)
     with cls(tenant_id) as agent:
         method = getattr(agent, action)
@@ -114,7 +130,8 @@ def run_step(agent_name: str, action: str, tenant_id: int, params: dict, context
     raise ValueError(f"动作调用失败: {agent_name}.{action}")
 
 
-def start_run(tenant_id: int, template_key: str, context: dict | None = None) -> dict:
+def start_run(tenant_id: int, template_key: str, context: dict | None = None,
+              requested_by: int | None = None, is_impersonating: bool = False) -> dict:
     """按模板创建运行实例并派发执行，返回 run dict。"""
     db = SessionLocal()
     try:
@@ -122,8 +139,16 @@ def start_run(tenant_id: int, template_key: str, context: dict | None = None) ->
                .filter_by(tenant_id=tenant_id, key=template_key).first())
         if not tpl:
             raise ValueError(f"工作流模板 {template_key} 不存在")
+        run_context = dict(context or {})
+        # Action 发起人只接受服务端认证身份，不能从客户端 context 冒充。
+        run_context.pop("_action_requested_by", None)
+        run_context.pop("_action_impersonating", None)
+        run_context.pop("_action_scope", None)
+        if requested_by is not None:
+            run_context["_action_requested_by"] = requested_by
+            run_context["_action_impersonating"] = is_impersonating
         run = WorkflowRun(tenant_id=tenant_id, template_key=template_key, name=tpl.name,
-                          status="queued", context=context or {})
+                          status="queued", context=run_context)
         db.add(run)
         db.flush()
         for i, s in enumerate(tpl.steps or [], start=1):
@@ -181,8 +206,9 @@ def run_workflow(run_id: int) -> None:
             db.commit()
             try:
                 with _LeaseHeartbeat(run_id, worker_id):
+                    step_context = {**ctx, "_action_scope": f"workflow:{run_id}:step:{step.id}"}
                     output = run_step(step.agent, step.action, run.tenant_id,
-                                      dict(step.params or {}), dict(ctx))
+                                      dict(step.params or {}), step_context)
             except Exception as e:  # 步骤失败 -> 整个运行失败
                 if step.attempts < int(step.max_attempts or 3):
                     step.status = "pending"
@@ -201,6 +227,7 @@ def run_workflow(run_id: int) -> None:
                 return
             step.status = "success"
             patch = output.get("context_patch", {}) if isinstance(output, dict) else {}
+            patch = {key: value for key, value in patch.items() if not key.startswith("_action_")}
             output_dict = output if isinstance(output, dict) else {"data": output}
             output_dict["_coordination"] = {
                 "context_keys_read": sorted(ctx.keys()),
@@ -257,7 +284,8 @@ def recover_incomplete_runs() -> int:
         db.close()
 
 
-def resume_run(run_id: int, tenant_id: int) -> dict:
+def resume_run(run_id: int, tenant_id: int, requested_by: int | None = None,
+               is_impersonating: bool = False) -> dict:
     db = SessionLocal()
     try:
         run = db.get(WorkflowRun, run_id)
@@ -265,6 +293,9 @@ def resume_run(run_id: int, tenant_id: int) -> dict:
             raise ValueError("工作流运行不存在")
         if run.status not in ("failed", "blocked", "partial"):
             raise ValueError(f"当前状态 {run.status} 不允许恢复")
+        if requested_by is not None and not (run.context or {}).get("_action_requested_by"):
+            run.context = {**(run.context or {}), "_action_requested_by": requested_by,
+                           "_action_impersonating": is_impersonating}
         steps = db.query(WorkflowStep).filter(WorkflowStep.run_id == run.id).order_by(WorkflowStep.seq).all()
         for step in steps:
             if step.status in ("failed", "blocked", "skipped"):

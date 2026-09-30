@@ -6,12 +6,27 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..agents.listing import ListingAgent
-from ..auth import get_current_user, require_compliance_approver, require_write
+from ..agents.orchestrator import invoke_listing
+from ..auth import (
+    get_current_user,
+    is_impersonating_user,
+    require_compliance_approver,
+    require_write,
+)
 from ..db import get_db
 from ..models import Listing, ListingReviewDecision, Product, User
 from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
+from ..services.ai_actions import ActionError
+from ..services.workspace_context import resolve_workspace_context
+
+
+def _invoke(db, user, method, *args):
+    ctx = resolve_workspace_context(db, user, is_impersonating=is_impersonating_user(user))
+    try:
+        return invoke_listing(db, ctx, method, *args)
+    except ActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 router = APIRouter(prefix="/listings", tags=["listings"])
 
@@ -58,12 +73,7 @@ def generate(body: GenerateIn, user: User = Depends(require_write), db: Session 
     p = db.get(Product, body.product_id)
     if not p or p.tenant_id != user.tenant_id:
         raise HTTPException(status_code=404, detail="商品不存在")
-    with ListingAgent(user.tenant_id) as a:
-        result = a.generate(body.product_id, body.platform, body.language)
-    row = db.get(Listing, result["id"])
-    row.created_by = row.last_edited_by = user.id
-    db.commit()
-    return result
+    return _invoke(db, user, "generate", body.product_id, body.platform, body.language)
 
 
 @router.put("/{listing_id}")
@@ -86,12 +96,7 @@ def edit_listing(listing_id: int, body: ListingEdit,
 @router.post("/{listing_id}/optimize")
 def optimize(listing_id: int, user: User = Depends(require_write), db: Session = Depends(get_db)):
     _owned(db, user.tenant_id, listing_id)
-    with ListingAgent(user.tenant_id) as a:
-        result = a.optimize(listing_id)
-    listing = db.get(Listing, listing_id)
-    listing.last_edited_by = user.id
-    db.commit()
-    return result
+    return _invoke(db, user, "optimize", listing_id)
 
 
 class PublishIn(BaseModel):
@@ -186,85 +191,8 @@ def approve_review(listing_id: int, body: ReviewApprovalIn,
 @router.post("/{listing_id}/publish")
 def publish(listing_id: int, body: PublishIn | None = None,
             user: User = Depends(require_write), db: Session = Depends(get_db)):
-    row = _owned(db, user.tenant_id, listing_id)
-    shop_id = body.shop_id if body else None
-    if shop_id:
-        from ..models import PlatformPublishAttempt, Product, Shop
-        from ..services import platforms
-
-        shop = db.get(Shop, shop_id)
-        if not shop or shop.tenant_id != user.tenant_id or shop.archived_at is not None:
-            raise HTTPException(status_code=404, detail="店铺不存在")
-        if row.platform != shop.platform:
-            raise HTTPException(status_code=400,
-                                detail=f"Listing 平台为 {row.platform}，不能发布到 {shop.platform} 店铺")
-        product = db.get(Product, row.product_id)
-        if not shop.is_demo and shop.status != "authorized":
-            raise HTTPException(status_code=400,
-                                detail=f"店铺未授权（当前 {shop.status}），请先完成 OAuth 授权")
-        from ..agents.listing_review import ListingReviewAgent
-        with ListingReviewAgent(user.tenant_id) as reviewer:
-            review = reviewer.review(row.id)
-        if review["decision"] != "approved":
-            label = "驳回" if review["decision"] == "rejected" else "要求人工审批"
-            raise HTTPException(status_code=400 if review["decision"] == "rejected" else 409,
-                                detail=f"上架复核{label}：" + "；".join(review["reasons"]))
-        # 客户端超时重试时直接返回既有结果，避免重复创建平台商品。
-        if row.status == "published" and row.external_id:
-            return {**to_dict(row), "publish_url": "", "source": "api",
-                    "idempotent_replay": True}
-        attempt = (db.query(PlatformPublishAttempt)
-                   .filter(PlatformPublishAttempt.tenant_id == user.tenant_id,
-                           PlatformPublishAttempt.listing_id == row.id,
-                           PlatformPublishAttempt.shop_id == shop.id).first())
-        if attempt and attempt.status == "succeeded" and attempt.external_id:
-            row.status, row.external_id = "published", attempt.external_id
-            db.commit()
-            return {**to_dict(row), "publish_url": "", "source": "api",
-                    "idempotent_replay": True}
-        if not attempt:
-            import uuid
-            attempt = PlatformPublishAttempt(
-                tenant_id=user.tenant_id, listing_id=row.id, shop_id=shop.id,
-                platform=shop.platform, idempotency_key=str(uuid.uuid4()),
-                status="queued", checkpoint={}, requested_by=user.id,
-                request_payload={"listing_id": row.id, "shop_id": shop.id})
-            db.add(attempt); db.commit()
-        def save_checkpoint(values: dict):
-            attempt.checkpoint = {**(attempt.checkpoint or {}), **values}
-            attempt.status = "processing"; db.commit()
-        try:
-            attempt.status = "processing"
-            attempt.started_at = attempt.started_at or datetime.utcnow()
-            db.commit()
-            if shop.is_demo:
-                result = platforms.demo_publish(row, product)
-                source = "demo"
-            else:
-                result = platforms.publish_to_shop(db, shop, row, product,
-                    resume=attempt.checkpoint or {}, checkpoint=save_checkpoint)
-                source = "api"
-        except platforms.PlatformError as e:
-            attempt.status = "uncertain" if attempt.checkpoint else "failed"
-            attempt.error = str(e)[:2000]
-            attempt.finished_at = datetime.utcnow()
-            db.commit()
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        row.status = "published"
-        row.external_id = result.external_id
-        row.published_at = datetime.utcnow()
-        row.updated_at = datetime.utcnow()
-        attempt.status, attempt.external_id, attempt.error = "succeeded", result.external_id, ""
-        attempt.finished_at = datetime.utcnow()
-        db.commit()
-        return {**to_dict(row), "publish_url": result.url, "source": source}
-    # 缺省：本地模拟发布（合规门禁仍生效），返回结构与真实通道保持一致
-    with ListingAgent(user.tenant_id) as a:
-        try:
-            result = a.publish(listing_id)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-    return {**result, "source": "local", "publish_url": ""}
+    _owned(db, user.tenant_id, listing_id)
+    return _invoke(db, user, "publish", listing_id, body.shop_id if body else None)
 
 
 @router.delete("/{listing_id}")

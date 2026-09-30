@@ -14,6 +14,7 @@
 为什么这两处必须修：验收脚本一旦自己不可靠，就会把"功能正常"误报为"功能坏了"，
 反之也可能漏报。**假失败与假通过同样有害**。
 """
+import os
 import sys
 import time
 
@@ -37,6 +38,23 @@ def call(client, method, path, **kw):
 def add(results, flow, step, status, detail):
     results.append((flow, step, status, detail))
     print(f"[{status}] {flow} / {step}: {detail}")
+
+
+def _execute_local_approval(client, headers, action_id):
+    """仅隔离验收允许模拟人工审批；绝不自动批准真实平台发布。"""
+    if os.environ.get("ERP_ACCEPTANCE_ISOLATED") != "1":
+        return False, {"error": "需要人工审批；仅隔离 E2E 可以模拟批准本地发布"}
+    _, ok, queue = call(client, "GET", "/actions", headers=headers,
+                        params={"action_type": "PUBLISH_LISTING", "status": "PENDING_APPROVAL"})
+    action = next((item for item in queue.get("items", []) if item["id"] == action_id), None)
+    if not ok or not action or (action.get("evidence") or {}).get("shop_id") is not None:
+        return False, {"error": "隔离验收仅允许批准本地模拟发布"}
+    _, ok, approval = call(client, "POST", f"/actions/{action_id}/approve", headers=headers,
+                           json={"note": "隔离副本验收：模拟人工批准，仅本地发布"})
+    if not ok:
+        return False, approval
+    _, ok, executed = call(client, "POST", f"/actions/{action_id}/execute", headers=headers)
+    return ok and executed.get("status") == "SUCCESS", executed.get("outcome", {}).get("result", executed)
 
 
 def _product_with_stock_offer(client, headers) -> int | None:
@@ -172,6 +190,8 @@ def main() -> int:
                          headers=headers)
         lid = lg.get("id") if ok else None
         _, ok, pb = call(c, "POST", f"/listings/{lid}/publish", json={}, headers=headers)
+        if ok and pb.get("status") == "PENDING_APPROVAL":
+            ok, pb = _execute_local_approval(c, headers, pb["action_id"])
         if ok and pb.get("source") == "local" and pb.get("status") == "published":
             add(results, "采集→选品→Listing→发布", "全链状态", "PASS",
                 f"商品#{cid} score={sc.get('total')} → Listing#{lid} 本地发布 source=local")
@@ -187,6 +207,11 @@ def main() -> int:
         steps_ok = None
         for _ in range(60):
             _, ok2, rd2 = call(c, "GET", f"/workflows/runs/{run_id}", headers=headers)
+            if ok2 and rd2.get("status") == "blocked" and (rd2.get("context") or {}).get("pending_action_ids"):
+                ids = rd2["context"]["pending_action_ids"]
+                if all(_execute_local_approval(c, headers, action_id)[0] for action_id in ids):
+                    call(c, "POST", f"/workflows/runs/{run_id}/resume", headers=headers)
+                    continue
             if ok2 and rd2.get("status") != "running":
                 steps_ok = all(s.get("status") == "success" for s in rd2.get("steps", []))
                 break

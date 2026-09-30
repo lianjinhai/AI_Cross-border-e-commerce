@@ -12,6 +12,7 @@
       </div>
     </el-card>
 
+    <PublishActions v-if="write" ref="publishActions" @executed="load" />
     <el-card>
       <el-table :data="items" v-loading="loading" size="small">
         <el-table-column prop="id" label="ID" width="60" />
@@ -33,7 +34,7 @@
         <el-table-column label="操作" width="255" fixed="right">
           <template #default="{ row }">
             <el-button size="small" @click="preview(row)">预览</el-button>
-            <el-button v-if="write" size="small" type="primary" @click="optimize(row)">AI 优化</el-button>
+            <el-button v-if="write && row.status === 'draft'" size="small" type="primary" @click="optimize(row)">AI 优化</el-button>
             <el-button v-if="write" size="small" type="warning" @click="openReview(row)">复核</el-button>
             <el-button v-if="write && row.status !== 'published'" size="small" type="success" @click="publish(row)">发布</el-button>
             <el-button v-if="row.platform === 'walmart' && row.status === 'published' && row.external_id" size="small" @click="checkSubmission(row)">Feed 状态</el-button>
@@ -172,6 +173,9 @@ import { ElMessage } from '../ui'
 import api from '../api'
 import { canApprove, canWrite, can } from '../permissions'
 import RunStatus from './RunStatus.vue'
+import PublishActions from '../components/PublishActions.vue'
+
+const publishActions = ref(null)
 
 const items = ref([])
 const total = ref(0)
@@ -350,8 +354,8 @@ async function confirmPublish() {
   try {
     const body = pubTarget.value === 'demo' ? {} : { shop_id: pubTarget.value }
     const { data } = await api.post(`/listings/${pubRow.value.id}/publish`, body)
-    const srcLabel = { api: '平台真实上架', demo: '演示店铺', local: '本地模拟' }[data.source] || data.source
-    ElMessage.success(`发布成功（${srcLabel}）单号 ${data.external_id}`)
+    ElMessage.success(data.action_status === 'SUCCESS' ? '该发布动作已执行，返回既有结果' : `发布提案 #${data.action_id} 已进入审批队列，尚未上架`)
+    await publishActions.value?.load()
     pubDialog.value = false
     load()
   } finally { publishing.value = false }
