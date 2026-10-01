@@ -45,30 +45,108 @@ class ListingAgent(BaseAgent):
         color = str(attrs.get("color") or "classic")
         scene = str(attrs.get("scene") or "daily use")
         suffix = _PLATFORM_SUFFIX.get(platform, "Hot Sale")
-        if language.startswith("zh"):
-            title = f"{raw_title} {material}材质 {color}色 跨境爆款"
-            desc = (f"{raw_title}，采用{material}材质，{color}配色，适合{scene}。"
-                    "工厂直供、品质保障，支持一件代发，跨境卖家首选。")
-            bullets = ["工厂直供 品质保障", "优选材质 经久耐用", "多场景适用", "支持一件代发", "7天无理由退换"]
-            keywords = [p["category"], raw_title, f"{raw_title}批发",
-                        f"{color} {p['category']}"]
-        else:
-            title = f"{base} {material.title()} {color.title()} for {scene} | {suffix} 2026"
-            desc = (f"Upgrade your {scene} with this {color} {base}. Made of durable {material}, "
-                    f"it combines practical design with reliable quality. Perfect for {scene} and everyday use. "
-                    f"Shipped directly from factory with quality inspection before dispatch.")
-            bullets = ["Factory direct with strict quality control",
-                       f"Durable {material} build, {color} finish",
-                       f"Ideal for {scene} and gifting",
-                       "Compact, portable and easy to clean",
-                       "24/7 customer support & easy returns"]
-            keywords = [base, f"{base} {color}", f"{base} {material}",
-                        f"best {p['category']}", f"{p['category']} 2026",
-                        f"{base} for {scene}"]
+        lang = (language or "en").strip().lower()
+        copy = self._localized_copy(lang, raw_title, base, material, color, scene,
+                                     suffix, p, banned)
+        title, desc, bullets, keywords = copy
         while len(keywords) < 12:
             keywords.append(f"{base} {len(keywords)}")
         return {"title": title[:220], "description": desc, "bullets": bullets[:5],
                 "keywords": keywords[:15]}
+
+    @staticmethod
+    def _localized_copy(lang: str, raw_title: str, base: str, material: str,
+                        color: str, scene: str, suffix: str, p: dict,
+                        banned: list[str] | None) -> tuple[str, str, list[str], list[str]]:
+        """按目的国语种生成 fallback 文案（D60 多语言扩展）。
+
+        之前只有 zh / en 两分支，日韩德法西泰越等目的国一律落进 en 分支，
+        卖到日本页面全是英文——转化率与 SEO 双输。这里按语种给出本地化模板，
+        关键词同步本地化；未覆盖语种回退到 en（保留原行为）。
+        """
+        category = p.get("category", "")
+        if lang.startswith("zh"):
+            title = f"{raw_title} {material}材质 {color}色 跨境爆款"
+            desc = (f"{raw_title}，采用{material}材质，{color}配色，适合{scene}。"
+                    "工厂直供、品质保障，支持一件代发，跨境卖家首选。")
+            bullets = ["工厂直供 品质保障", "优选材质 经久耐用", "多场景适用", "支持一件代发", "7天无理由退换"]
+            keywords = [category, raw_title, f"{raw_title}批发", f"{color} {category}"]
+            return title, desc, bullets, keywords
+        if lang.startswith("ja"):
+            title = f"{base} {material} {color} {scene}用 | {suffix} 2026"
+            desc = (f"{scene}に最適な{color}の{base}。耐久性のある{material}で作られ、"
+                    f"実用的なデザインと信頼できる品質を組み合わせています。工場から直接発送、品質検査済み。")
+            bullets = ["工場直送・厳格な品質管理", f"耐久性のある{material}、{color}仕上げ",
+                       f"{scene}やギフトに最適", "コンパクトで持ち運び簡単", "24時間サポート・返品対応"]
+            keywords = [base, f"{base} {color}", f"{base} {material}", f"おすすめ {category}", f"{category} 2026"]
+            return title, desc, bullets, keywords
+        if lang.startswith("ko"):
+            title = f"{base} {material} {color} {scene}용 | {suffix} 2026"
+            desc = (f"{scene}에 적합한 {color} {base}. 내구성 있는 {material}로 제작되어 "
+                    f"실용적인 디자인과 신뢰할 수 있는 품질을 결합했습니다. 공장 직접 배송, 품질 검사 완료.")
+            bullets = ["공장 직송·엄격한 품질 관리", f"내구성 {material}, {color} 마감",
+                       f"{scene} 및 선물용으로 적합", "소형·휴대용·세척 용이", "24시간 고객 지원·반품 가능"]
+            keywords = [base, f"{base} {color}", f"{base} {material}", f"추천 {category}", f"{category} 2026"]
+            return title, desc, bullets, keywords
+        if lang.startswith("de"):
+            title = f"{base} {material} {color} für {scene} | {suffix} 2026"
+            desc = (f"Verbessern Sie Ihr {scene} mit diesem {color} {base}. Aus langlebigem {material} gefertigt, "
+                    f"vereint es praktisches Design mit zuverlässiger Qualität. Direktwerkversand mit Qualitätsprüfung.")
+            bullets = ["Direkt ab Werk mit strenger Qualitätskontrolle",
+                       f"Langlebiges {material}, {color}-Farbton", f"Ideal für {scene} und als Geschenk",
+                       "Kompakt, tragbar und leicht zu reinigen", "24/7 Kundenservice & einfache Rückgabe"]
+            keywords = [base, f"{base} {color}", f"{base} {material}", f"beste {category}", f"{category} 2026"]
+            return title, desc, bullets, keywords
+        if lang.startswith(("fr",)):
+            title = f"{base} {material} {color} pour {scene} | {suffix} 2026"
+            desc = (f"Améliorez votre {scene} avec ce {base} {color}. Fabriqué en {material} durable, "
+                    f"il combine design pratique et qualité fiable. Expédition directe usine, contrôle qualité inclus.")
+            bullets = ["Direct usine avec contrôle qualité strict",
+                       f"{material} durable, finition {color}", f"idéal pour {scene} et cadeaux",
+                       "Compact, portable et facile à nettoyer", "Support 24/7 et retours faciles"]
+            keywords = [base, f"{base} {color}", f"{base} {material}", f"meilleur {category}", f"{category} 2026"]
+            return title, desc, bullets, keywords
+        if lang.startswith(("es",)):
+            title = f"{base} {material} {color} para {scene} | {suffix} 2026"
+            desc = (f"Mejora tu {scene} con este {base} {color}. Fabricado en {material} resistente, "
+                    f"combina diseño práctico con calidad fiable. Envío directo de fábrica con control de calidad.")
+            bullets = ["Directo de fábrica con control de calidad estricto",
+                       f"{material} resistente, acabado {color}", f"ideal para {scene} y regalos",
+                       "Compacto, portátil y fácil de limpiar", "Soporte 24/7 y devoluciones fáciles"]
+            keywords = [base, f"{base} {color}", f"{base} {material}", f"mejor {category}", f"{category} 2026"]
+            return title, desc, bullets, keywords
+        if lang.startswith(("th",)):
+            title = f"{base} {material} สี{color} สำหรับ{scene} | {suffix} 2026"
+            desc = (f"ปรับปรุง{scene}ของคุณด้วย{base}สี{color} ทำจาก{material}ที่ทนทาน "
+                    f"ผสมผสานดีไซน์ที่ใช้งานได้จริงและคุณภาพที่เชื่อถือได้ ส่งตรงจากโรงงานพร้อมตรวจสอบคุณภาพ")
+            bullets = ["ส่งตรงจากโรงงานพร้อมการตรวจสอบคุณภาพ",
+                       f"{material}ทนทาน สี{color}", f"เหมาะสำหรับ{scene}และของขวัญ",
+                       "กะทัดรัด พกพาง่าย ทำความสะอาดง่าย", "บริการ 24/7 และคืนสินค้าง่าย"]
+            keywords = [base, f"{base} {color}", f"{base} {material}", f"{category} แนะนำ", f"{category} 2026"]
+            return title, desc, bullets, keywords
+        if lang.startswith(("vi",)):
+            title = f"{base} {material} màu {color} cho {scene} | {suffix} 2026"
+            desc = (f"Nâng tầm {scene} của bạn với {base} màu {color}. Làm từ {material} bền bỉ, "
+                    f"kết hợp thiết kế thực dụng và chất lượng đáng tin cậy. Giao trực tiếp từ nhà máy, đã kiểm tra chất lượng.")
+            bullets = ["Giao trực tiếp từ nhà máy, kiểm soát chất lượng nghiêm ngặt",
+                       f"{material} bền, màu {color}", f"phù hợp cho {scene} và quà tặng",
+                       "Nhỏ gọn, dễ mang theo, dễ làm sạch", "Hỗ trợ 24/7 và đổi trả dễ dàng"]
+            keywords = [base, f"{base} {color}", f"{base} {material}", f"{category} tốt nhất", f"{category} 2026"]
+            return title, desc, bullets, keywords
+        # 默认 en（保留原行为）
+        title = f"{base} {material.title()} {color.title()} for {scene} | {suffix} 2026"
+        desc = (f"Upgrade your {scene} with this {color} {base}. Made of durable {material}, "
+                f"it combines practical design with reliable quality. Perfect for {scene} and everyday use. "
+                f"Shipped directly from factory with quality inspection before dispatch.")
+        bullets = ["Factory direct with strict quality control",
+                   f"Durable {material} build, {color} finish",
+                   f"Ideal for {scene} and gifting",
+                   "Compact, portable and easy to clean",
+                   "24/7 customer support & easy returns"]
+        keywords = [base, f"{base} {color}", f"{base} {material}",
+                    f"best {category}", f"{category} 2026",
+                    f"{base} for {scene}"]
+        return title, desc, bullets, keywords
 
     @staticmethod
     def _self_check(copy: dict, title_max: int, banned: list[str]) -> list[str]:

@@ -33,6 +33,47 @@ def test_listing_module_cannot_write_orm():
     assert not calls, "Listing Agent 不能读取或写入 ORM，必须通过 Tool/提案"
 
 
+# ---------------------------------------------------------------- 多语言 copy（D60）
+def test_fallback_copy_supports_major_destination_languages():
+    """覆盖 zh/ja/ko/de/fr/es/th/vi 八个目的国语种的 fallback 文案（D60）。
+
+    之前只有 zh / en 两分支，日韩德法西泰越等目的国一律落进 en——卖到日本
+    页面全是英文。本测试守护扩展不被回退。
+    """
+    from app.agents.listing import ListingAgent
+
+    product = {"title": "测试商品", "category": "家居",
+               "attrs": {"material": "棉", "color": "白", "scene": "客厅"}}
+    for lang in ("zh", "ja", "ko", "de", "fr", "es", "th", "vi"):
+        copy = ListingAgent._fallback_copy(product.__class__(), "shopee", lang, None) \
+            if False else ListingAgent._localized_copy(
+                lang, product["title"], "Test Product",
+                product["attrs"]["material"], product["attrs"]["color"],
+                product["attrs"]["scene"], "Hot Sale", product, None)
+        assert copy[0], f"{lang} 标题为空"
+        assert copy[1], f"{lang} 描述为空"
+        assert len(copy[2]) >= 3, f"{lang} bullets 不足"
+        assert len(copy[3]) >= 3, f"{lang} keywords 不足"
+    # 未覆盖语种回退到 en
+    en = ListingAgent._localized_copy("xx", "测试", "Test", "cotton", "white",
+                                        "living room", "Hot Sale", product, None)
+    assert "Upgrade your" in en[1], "未覆盖语种应回退到 en 模板"
+
+
+# ---------------------------------------------------------------- 广告接口骨架（D60）
+def test_advert_skeleton_raises_without_external_account():
+    """广告 API 骨架：can_advert 默认 False，调用应显式抛错而非静默成功。"""
+    from app.services.adapters.base import BaseAdapter, PlatformError
+
+    assert BaseAdapter.can_advert is False
+    assert BaseAdapter.advert_protocol_status == "planned"
+    adapter = BaseAdapter.__new__(BaseAdapter)
+    with pytest.raises(PlatformError, match="广告 API 未接入"):
+        adapter.create_ad_campaign(product_id=1, daily_budget=10.0)
+    with pytest.raises(PlatformError, match="广告状态查询未接入"):
+        adapter.ad_campaign_status("cmp-1")
+
+
 def test_pending_publish_does_not_change_listing_and_reuses_intent(client, auth_headers):
     _, lid = make_listing(client, auth_headers)
     first = client.post(f"/api/listings/{lid}/publish", headers=auth_headers)

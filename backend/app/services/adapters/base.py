@@ -20,6 +20,8 @@ class BaseAdapter:
     can_publish = False
     can_refresh = False
     can_listing_readiness = False
+    can_advert = False                      # 广告 API 是否已接入（D60 骨架）
+    advert_protocol_status = "planned"      # planned / protocol_ready_unverified / verified
     # 发布必需的外部资源（如类目映射）
     publish_requires_category_mapping = False
     publish_required_system_fields: list[str] = []
@@ -138,3 +140,16 @@ class BaseAdapter:
 
     def submission_status(self, submission_id: str) -> dict:
         raise PlatformError(f"{self.label} 不支持异步提交状态查询")
+
+    # ---- 广告（D60 骨架：未接外部 API，只留契约与能力开关）----
+    def create_ad_campaign(self, *, product_id: int, daily_budget: float,
+                           currency: str = "USD", target_country: str = "",
+                           keywords: list[str] | None = None) -> dict:
+        """创建广告活动骨架。真实平台广告 API 需外部商家账号与 OAuth，
+        本批禁止访问外网，故只留接口契约与 ``can_advert`` 开关——
+        子类未覆盖时显式抛错，避免调用方误以为已投放。"""
+        raise PlatformError(f"{self.label} 广告 API 未接入（advert_protocol_status="
+                             f"{self.advert_protocol_status}），需外部商家账号授权后方可联调")
+
+    def ad_campaign_status(self, campaign_id: str) -> dict:
+        raise PlatformError(f"{self.label} 广告状态查询未接入")
