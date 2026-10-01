@@ -1,9 +1,9 @@
 {
   "_comment": "测试基线单一事实源。由 backend/scripts/refresh_test_baseline.py 生成，禁止手工编辑。文档正文不得再写具体数字（见 CODE_AND_DIRECTORY_STANDARD.md §10）。",
-  "generated_at": "2026-10-01T21:55:37+08:00",
+  "generated_at": "2026-10-02T00:01:02+08:00",
   "backend": {
-    "tests": 634,
-    "files": 45
+    "tests": 646,
+    "files": 46
   },
   "frontend": {
     "tests": 77,
