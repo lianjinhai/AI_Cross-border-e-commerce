@@ -268,7 +268,7 @@ class ListingAgent(BaseAgent):
 
     def publish_batch(self, params: dict | None = None, context: dict | None = None) -> dict:
         params, context = params or {}, context or {}
-        ids = params.get("listing_ids") or context.get("approved_listing_ids") or context.get("listing_ids") or []
+        ids = params.get("listing_ids", context.get("approved_listing_ids", context.get("listing_ids", [])))
         published, blocked = [], []
         for lid in ids[:50]:
             try:

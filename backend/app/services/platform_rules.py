@@ -215,7 +215,7 @@ def validate_against_rules(db: Session, platform: str, listing, product) -> list
                                    _fields_of(product))
 
 
-def check_updates(db: Session, platform: str) -> dict:
+def check_updates(db: Session, platform: str, *, before_apply=None) -> dict:
     """规则更新检查：ERP_RULES_URL 配置了远程源则拉取比对，否则与内置版本比对。"""
     remote_url = os.getenv("ERP_RULES_URL", "")
     builtin = DEFAULT_RULE_PACKS.get(platform, {})
@@ -267,6 +267,8 @@ def check_updates(db: Session, platform: str) -> dict:
         # tenant_id=None：平台级共享规则包，不归属任何租户（禁止写 0 哨兵值——
         # tenants 表无 id=0，开启 foreign_keys 后会直接违反外键约束，
         # 历史事故见 app/seed.py 的同类注释）。
+        if before_apply is not None:
+            before_apply()  # 外部读取期间身份可能撤权，写共享规则前重新验证。
         row = PlatformRulePack(tenant_id=None, platform=platform,
                                version=target["version"], rules=target["rules"],
                                source_url=str(target.get("source_url") or remote_url))

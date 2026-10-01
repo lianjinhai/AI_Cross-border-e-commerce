@@ -60,6 +60,8 @@ AI-电商ERP/
 │   │   │   │   └── <platform>.py        # 各平台适配器（ali1688/shopee/tiktok/ebay/walmart/lazada/planned）
 │   │   │   ├── platform_adapters.py     # **兼容门面**：重新导出 + 可打补丁点代理（唯一对外入口）
 │   │   │   ├── costing.py               # 成本/利润唯一实现（Agent 共享，不依赖 agents/）
+│   │   │   ├── review_analysis.py       # 上架复核纯评估与依据摘要，零数据库副作用
+│   │   │   ├── review_outputs.py        # 可信复核产物保存、独立规则同步与人工裁决
 │   │   │   ├── settings_service.py      # 配置三级回退（P1-10 隔离）
 │   │   │   ├── shop_scope.py            # 店铺可见性守卫（归档店铺一律视为不存在）
 │   │   │   ├── tenant_data_purge.py     # 演示数据清理（按外键拓扑序）

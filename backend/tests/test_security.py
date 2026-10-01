@@ -5,18 +5,19 @@
 """
 
 
+def _login_role(client, username, password):
+    response = client.post("/api/auth/login", json={"username": username, "password": password})
+    assert response.status_code == 200, response.text
+    return {"Authorization": f"Bearer {response.json()['token']}"}
+
+
 def test_role_permission_matrix(client):
     """4 角色 × 代表性端点：拦截/放行符合 RBAC 预期（viewer 只读、
     operator/admin 可写、/auth/users 仅 admin、/admin/* 仅 superadmin）。"""
-    def login(u, p):
-        r = client.post("/api/auth/login", json={"username": u, "password": p})
-        assert r.status_code == 200, r.text
-        return {"Authorization": f"Bearer {r.json()['token']}"}
-
-    roles = {"viewer": login("viewer", "viewer123"),
-             "operator": login("ops", "ops123"),
-             "admin": login("admin", "admin123"),
-             "superadmin": login("root", "root-test-123")}
+    roles = {"viewer": _login_role(client, "viewer", "viewer123"),
+             "operator": _login_role(client, "ops", "ops123"),
+             "admin": _login_role(client, "admin", "admin123"),
+             "superadmin": _login_role(client, "root", "root-test-123")}
 
     # (方法, 路径, body, 类别)
     # platform_read  = 平台级只读配置（所有角色可读）
@@ -27,6 +28,8 @@ def test_role_permission_matrix(client):
         ("POST", "/api/products/999999/standardize", None, "write"),
         ("POST", "/api/discovery/score/999999", None, "write"),
         ("POST", "/api/discovery/pick", {"limit": 1}, "write"),
+        ("POST", "/api/listings/999999/review", None, "write"),
+        ("POST", "/api/listings/999999/review/approve", {"note": "权限探针"}, "compliance_approve"),
         ("GET", "/api/orders", None, "read"),
         ("GET", "/api/pricing", None, "read"),
         ("POST", "/api/pricing/suggest", {"product_id": 999999}, "write"),
@@ -55,13 +58,13 @@ def test_role_permission_matrix(client):
         ("POST", "/api/knowledge/candidates/999999/revoke", None, "write"),
     ]
     expect_gate = {
-        "viewer": {"write", "admin", "superadmin", "platform_admin"},
-        "operator": {"admin", "superadmin", "platform_admin"},
+        "viewer": {"write", "admin", "superadmin", "platform_admin", "compliance_approve"},
+        "operator": {"admin", "superadmin", "platform_admin", "compliance_approve"},
         "admin": {"superadmin"},
         # superadmin 是平台身份，没有业务 Workspace：租户业务接口（read/write/admin）
         # 一律 403，必须先经 /api/admin/tenants/{id}/enter 代客进入。
         # 平台级端点（/api/admin/*、平台规则、AI 设置）仍可直达。
-        "superadmin": {"read", "write", "admin"},
+        "superadmin": {"read", "write", "admin", "compliance_approve"},
     }
     # 清理探测残留
     created_products = []
@@ -85,12 +88,13 @@ def test_role_permission_matrix(client):
         admin_h = roles["admin"]
         client.delete(f"/api/products/{pid}", headers=admin_h)
 
+def test_allowed_knowledge_reject_reaches_business_validation(client):
     # 写端点被放行的角色必须真正执行业务校验（而非被权限层拦下）：
     # 不存在的候选应返回 404「不存在」，证明请求已抵达业务逻辑。
-    r = client.post("/api/knowledge/candidates/999999/reject", headers=roles["admin"])
-    assert r.status_code == 404 and "不存在" in r.json()["detail"], r.text
-    r = client.post("/api/knowledge/candidates/999999/reject", headers=roles["operator"])
-    assert r.status_code == 404 and "不存在" in r.json()["detail"], r.text
+    for username, password in [("admin", "admin123"), ("ops", "ops123")]:
+        headers = _login_role(client, username, password)
+        r = client.post("/api/knowledge/candidates/999999/reject", headers=headers)
+        assert r.status_code == 404 and "不存在" in r.json()["detail"], r.text
 
 
 def test_cross_tenant_isolation(client, fetch_all):

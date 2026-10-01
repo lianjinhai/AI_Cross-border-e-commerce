@@ -72,12 +72,20 @@ Setting 表约定 key：`llm`（见 ai/llm.py DEFAULT_LLM）、`platform_fees`�
 ### 2.6 ListingAgent（name="listing"，文件 agents/listing.py）
 
 发布/复核安全补充（D53）：共享内容指纹 V2 包含目标平台与商品标题；历史 V1
-复核须重新运行，不改历史记录、不自动批准。复核持久化迁移仍在后续批次。
+复核须重新运行，不改历史记录、不自动批准。
 - `generate(product_id: int, platform: str = "shopee", language: str = "en") -> dict`：只返回 `CREATE_LISTING_DRAFT` 提案，Agent 不建 Listing 行。保留知识增强、文案自检及模板降级；HTTP/工作流由 Orchestrator 提交并自动执行草稿 Action，返回真实 Listing id、status="draft"、action_id、action_status="SUCCESS"（D48）。
 - `optimize(listing_id: int) -> dict`：只返回 `UPDATE_LISTING_CONTENT` 提案；执行器仅允许修改内容未变化的草稿。HTTP 返回执行后 Listing dict 与 Action 引用；已发布内容或陈旧提案返回 409。
 - `publish(listing_id: int, shop_id: int | None = None) -> dict`：只返回 `PUBLISH_LISTING` 提案。HTTP 先复核当前内容，提交后返回 `status="PENDING_APPROVAL"`、`action_id`、`approval_required=true`，**不立即上架**。调用 Action approve 后，还必须独立调用 execute；成功结果在 outcome.result。真实/演示/本地发布都需审批；执行时再次核对权限、内容指纹、规则、复核结论及店铺归属。
 - `generate_batch(params, context) -> {"listings":[Listing dict], "context_patch":{"listing_ids":[int]}}`：platform/language 取 params（默认 shopee/en），product_ids 取 params 或 context。
 - `publish_batch(params, context)`：Agent 保留每项提案，Orchestrator 汇总为 published/pending/blocked；context_patch 包含 pending_action_ids、published_product_ids。有未执行或拒绝动作时 business_status="blocked"，暂停下游。人工执行后 resume 不重跑成功上游；同一范围的拒绝/失败 Action 不被自动换成新提案。
+
+#### 上架复核（D54，ListingReviewAgent）
+
+- `review(listing_id, rule_sync=None)`：Agent 只返回分析及内部 `_review_analysis`，无 ORM/规则同步写入。HTTP 经 `invoke_review` 及可信产物服务保存既有 ListingReviewDecision，返回真实 review_id/decision/reasons/rule_version/rule_source/evidence，自动来源元数据不暴露在该响应。
+- 普通复核需 listing:write；人工审批入口内部复核需 compliance:approve，合规员仍无发布权限。保存前重验身份、Workspace、租户/商品归属、内容、完整规则、最新报告和人工依据；批次原子保存，陈旧或伪造输出拒绝。
+- `review_batch(params, context)`：可信 Workflow 使用原请求者与 run/step 范围，最多 50 个正整数 Listing ID；显式空列表不扩张。返回 approved/blocked/business_status/context_patch；服务端步骤局部清单用于恢复，同范围清单或依据改变返回 409。合法人工确认可解除原人工阻断；明确违规/高风险不能强制覆盖。
+- ERP_RULES_URL 配置时由可信服务独立会话同步规则，写入前再次验权；同步失败转人工且其摘要纳入依据。人工审批保留填写依据和禁止编辑人自批，不复制自动来源元数据；旧批准不覆盖新的同步失败或规则/报告变化。
+- 单项及批量发布先调用可信复核；新产物在执行发布时验证规则全文和最新报告依据。历史人工结论无新摘要时须重新人工确认，不回填升级；复核不等于批准发布 Action，发布仍需独立审批与执行。
 
 ### 2.7 ComplianceAgent（name="compliance"，文件 agents/compliance.py）
 - `check(target_type: str, ref_id: int) -> dict`：创建 ComplianceReport。检测项（每命中一条计一次扣分）：

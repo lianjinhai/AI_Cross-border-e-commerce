@@ -19,6 +19,7 @@ from .action_content import owned
 from .action_records import listing_fingerprint
 from .ai_actions import ActionError
 from .platform_rules import get_active_rules, validate_against_rules
+from .review_analysis import digest, review_inputs
 
 
 def publish_targets(db, tenant_id, listing_id, shop_id=None):
@@ -59,6 +60,13 @@ def publish_facts(db, tenant_id, listing_id, shop_id=None):
             or review.rule_version != pack["version"]
             or (review.evidence or {}).get("content_fingerprint") != content_fingerprint):
         raise ActionError(409, "当前内容与规则版本尚未通过上架复核")
+    if (review.evidence or {}).get("review_inputs") is not None:
+        inputs = review_inputs(to_dict(listing), to_dict(product), pack, to_dict(report) if report else None)
+        sync = (review.evidence or {}).get("rule_sync")
+        if sync and (sync.get("error") or sync.get("latest") == "not-found"):
+            inputs["rule_sync_failure"] = digest({key: sync.get(key) for key in ("error", "latest", "hint")})
+        if review.evidence["review_inputs"] != inputs:
+            raise ActionError(409, "复核规则或最新合规报告已变化，请重新复核")
     payload = {"listing": {key: getattr(listing, key) for key in
                            ("title", "description", "bullets", "keywords", "platform")},
                "product": {key: getattr(product, key) for key in

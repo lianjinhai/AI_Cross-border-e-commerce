@@ -824,9 +824,8 @@ def test_listing_review_agent_reads_go_through_tool_layer(client):
         assert expected <= actions, (
             "listing_review 的读取没有全部走 Tool 层——§18.3 第 2 步的迁移被回退了？缺失：%s"
             % sorted(expected - actions))
-        # 反向断言：写路径（复核结论落库）必须仍然生效——它是第 3 步欠账，
-        # 迁移期间不得被顺手删掉（删掉等于「复核点了没反应」）。
-        assert decision_rows == [(ids["listing_id"], "approved", False)], decision_rows
+        # 分析 Agent 不再落库；可信调度入口保存的覆盖见 test_review_outputs.py。
+        assert decision_rows == [], decision_rows
     finally:
         db = SessionLocal()
         try:

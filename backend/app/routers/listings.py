@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..agents.orchestrator import invoke_listing
+from ..agents.orchestrator import invoke_listing, invoke_review
 from ..auth import (
     get_current_user,
     is_impersonating_user,
@@ -18,6 +18,7 @@ from ..models import Listing, ListingReviewDecision, Product, User
 from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
 from ..services.ai_actions import ActionError
+from ..services.review_outputs import approve_review_output
 from ..services.workspace_context import resolve_workspace_context
 
 
@@ -112,9 +113,11 @@ def review_listing(listing_id: int, user: User = Depends(require_write),
                    db: Session = Depends(get_db)):
     """显式执行上架前复核，便于审批台展示证据与阻断原因。"""
     _owned(db, user.tenant_id, listing_id)
-    from ..agents.listing_review import ListingReviewAgent
-    with ListingReviewAgent(user.tenant_id) as reviewer:
-        return reviewer.review(listing_id)
+    ctx = resolve_workspace_context(db, user, is_impersonating=is_impersonating_user(user))
+    try:
+        return invoke_review(db, ctx, "review", listing_id)
+    except ActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.get("/review-queue")
@@ -168,24 +171,12 @@ def approve_review(listing_id: int, body: ReviewApprovalIn,
         raise HTTPException(status_code=403, detail="提交或编辑该 Listing 的人员不能审批自己的内容")
     if not body.note.strip():
         raise HTTPException(status_code=400, detail="人工审批必须填写依据")
-    from ..agents.listing_review import ListingReviewAgent
-    with ListingReviewAgent(user.tenant_id) as reviewer:
-        result = reviewer.review(listing_id)
-    if result["decision"] == "rejected":
-        raise HTTPException(status_code=400, detail="明确违规或高风险不可人工强制放行")
-    if result["decision"] == "approved":
-        return {**result, "already_approved": True}
-    current = db.get(ListingReviewDecision, result["review_id"])
-    approval = ListingReviewDecision(
-        tenant_id=user.tenant_id, listing_id=current.listing_id,
-        product_id=current.product_id, platform=current.platform,
-        decision="approved", reasons=[body.note.strip()],
-        evidence={**(current.evidence or {}), "approved_review_id": current.id,
-                  "approval_note": body.note.strip()},
-        rule_version=current.rule_version, rule_source=current.rule_source,
-        reviewer=f"human:{user.username}", human_override=True)
-    db.add(approval); db.commit(); db.refresh(approval)
-    return to_dict(approval)
+    ctx = resolve_workspace_context(db, user, is_impersonating=is_impersonating_user(user))
+    try:
+        result = invoke_review(db, ctx, "review", listing_id, approval=True)
+        return approve_review_output(db, ctx, listing_id, body.note, result["review_id"])
+    except ActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.post("/{listing_id}/publish")

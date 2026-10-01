@@ -22,6 +22,7 @@ from ..services.product_outputs import (
     recover_product,
     recover_range,
 )
+from ..services.review_outputs import finalize_reviews, review_targets, synchronize_review_rules
 from .base import BaseAgent
 from .discovery import DiscoveryAgent, ProductAgent
 from .listing import ListingAgent
@@ -70,6 +71,46 @@ def invoke_product(db, ctx, method, *args, scope_key=None):
     return batch_result(results, errors, manifest)
 
 
+def invoke_review(db, ctx, method, *args, scope_key=None, approval=False):
+    """调度复核分析并保存产物；审批身份仍只需既有合规审批权限。"""
+    permission = "compliance:approve" if approval else "listing:write"
+    ctx = require_action_permission(db, ctx, permission)
+    if method not in {"review", "review_batch"}:
+        raise ActionError(400, "未迁移的复核分析")
+    scope = scope_key or ctx.trace_id
+    if method == "review":
+        ids = [args[0]]
+    else:
+        params, context = args
+        ids = params.get("listing_ids", context.get("listing_ids", []))
+        manifest = context.get("_action_review_manifest")
+        if manifest and (manifest.get("scope") != scope or manifest.get("listing_ids") != ids):
+            raise ActionError(409, "同一工作流复核范围已变化")
+    if not isinstance(ids, list) or len(ids) > 50 or any(type(lid) is not int or lid <= 0 for lid in ids):
+        raise ActionError(400, "复核 Listing 范围无效")
+    ids = list(dict.fromkeys(ids))
+    syncs = synchronize_review_rules(db, ctx, ids, permission)
+    ctx = require_action_permission(db, ctx, permission)
+    items = []
+    try:
+        with ListingReviewAgent(ctx.legacy_tenant_id, context=ctx) as agent:
+            for lid in ids:
+                platform = review_targets(db, ctx, lid)[0].platform
+                items.append(agent.review(lid, rule_sync=syncs.get(platform)))
+    except ValueError as exc:
+        raise ActionError(409, str(exc)) from exc
+    results = finalize_reviews(db, ctx, items, scope, ids, permission, syncs)
+    if method == "review":
+        return results[0]
+    approved, blocked = [], []
+    for lid, result in zip(ids, results, strict=True):
+        (approved if result["decision"] == "approved" else blocked).append({"listing_id": lid, **result})
+    return {"approved": approved, "blocked": blocked,
+            "business_status": "partial" if approved and blocked else ("blocked" if blocked else "success"),
+            "context_patch": {"approved_listing_ids": [item["listing_id"] for item in approved],
+                              "review_blocked": blocked, "_action_review_manifest": {"scope": scope, "listing_ids": ids}}}
+
+
 def invoke_listing(db, ctx, method, *args, scope_key=None):
     """同步调度已迁移的 Listing 动作；Task/Trace 仍属后续阶段。"""
     if method not in {"generate", "generate_batch", "optimize", "publish", "publish_batch"}:
@@ -77,14 +118,36 @@ def invoke_listing(db, ctx, method, *args, scope_key=None):
     ctx = require_action_permission(db, ctx, "listing:write")
     if method == "publish":
         publish_targets(db, ctx.legacy_tenant_id, args[0], args[1] if len(args) > 1 else None)
-        with ListingReviewAgent(ctx.legacy_tenant_id, context=ctx) as reviewer:
-            review = reviewer.review(args[0])
+        review = invoke_review(db, ctx, "review", args[0], scope_key=f"{scope_key or ctx.trace_id}:review")
         if review["decision"] != "approved":
             raise ActionError(400 if review["decision"] == "rejected" else 409,
                               "上架复核未通过：" + "；".join(review["reasons"]))
+    if method == "publish_batch":
+        return _publish_reviewed_batch(db, ctx, args[0], args[1], scope_key or ctx.trace_id)
     with ListingAgent(ctx.legacy_tenant_id, context=ctx) as agent:
         output = getattr(agent, method)(*args)
     return finalize_listing_output(db, ctx, output, scope_key or ctx.trace_id)
+
+
+def _publish_reviewed_batch(db, ctx, params, context, scope):
+    ids = params.get("listing_ids", context.get("approved_listing_ids", context.get("listing_ids", [])))
+    if not isinstance(ids, list) or len(ids) > 50 or any(type(lid) is not int or lid <= 0 for lid in ids):
+        raise ActionError(400, "发布 Listing 范围无效")
+    approved, blocked = [], []
+    for lid in dict.fromkeys(ids):
+        try:
+            publish_targets(db, ctx.legacy_tenant_id, lid, params.get("shop_id"))
+            review = invoke_review(db, ctx, "review", lid, scope_key=f"{scope}:review:{lid}")
+            if review["decision"] == "approved":
+                approved.append(lid)
+            else:
+                blocked.append({"listing_id": lid, "reason": "；".join(review["reasons"])})
+        except ActionError as exc:
+            blocked.append({"listing_id": lid, "reason": str(exc)})
+    with ListingAgent(ctx.legacy_tenant_id, context=ctx) as agent:
+        output = agent.publish_batch({**params, "listing_ids": approved}, context)
+    output["blocked"] += blocked
+    return finalize_listing_output(db, ctx, output, scope)
 
 
 def invoke_ad_drafts(db, ctx, params, context, *, scope_key=None):

@@ -18,6 +18,7 @@ from ..agents.orchestrator import (
     invoke_listing,
     invoke_pricing,
     invoke_product,
+    invoke_review,
 )
 from ..db import SessionLocal
 from ..models import User, WorkflowRun, WorkflowStep, WorkflowTemplate, utcnow
@@ -110,7 +111,7 @@ def run_step(agent_name: str, action: str, tenant_id: int, params: dict, context
     if (agent_name, action) in {("listing", "generate_batch"),
                                 ("listing", "publish_batch"), ("ads", "draft_batch"),
                                 ("pricing", "reprice_batch"), ("product", "standardize_batch"),
-                                ("discovery", "pick_candidates")}:
+                                ("discovery", "pick_candidates"), ("listing_review", "review_batch")}:
         with SessionLocal() as action_db:
             requester_id = context.get("_action_requested_by")
             requester = action_db.get(User, requester_id) if requester_id is not None else None
@@ -122,6 +123,9 @@ def run_step(agent_name: str, action: str, tenant_id: int, params: dict, context
                 return {"business_status": "blocked", "context_patch": {},
                         "reason": "缺少可信 Action 发起者，请由人工恢复流程"}
             ctx = resolve_workspace_context(action_db, requester, is_impersonating=impersonating)
+            if agent_name == "listing_review":
+                return invoke_review(action_db, ctx, action, params, context,
+                                     scope_key=context.get("_action_scope"))
             if agent_name == "discovery":
                 explicit = params.get("product_ids", context.get("product_ids"))
                 return invoke_discovery(action_db, ctx, action, int(params.get("limit", 3)),
@@ -194,12 +198,16 @@ def start_run(tenant_id: int, template_key: str, context: dict | None = None,
 
 def _step_context(context, run_id, step):
     scoped = {key: value for key, value in context.items()
-              if key != "_action_product_manifest"}
+              if key not in {"_action_product_manifest", "_action_review_manifest"}}
     scoped["_action_scope"] = f"workflow:{run_id}:step:{step.id}"
     if (step.agent, step.action) == ("product", "standardize_batch"):
         manifest = (step.output or {}).get("_standardization_manifest")
         if manifest is not None:
             scoped["_action_product_manifest"] = manifest
+    if (step.agent, step.action) == ("listing_review", "review_batch"):
+        manifest = (step.output or {}).get("context_patch", {}).get("_action_review_manifest")
+        if manifest is not None:
+            scoped["_action_review_manifest"] = manifest
     return scoped
 
 
