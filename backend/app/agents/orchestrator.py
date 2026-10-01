@@ -14,6 +14,14 @@ from ..services.action_identity import require_action_permission
 from ..services.action_publish import publish_targets
 from ..services.agent_outputs import finalize_ad_drafts, finalize_listing_output
 from ..services.ai_actions import ActionError
+from ..services.compliance_facts import targets as compliance_targets
+from ..services.compliance_outputs import (
+    compliance_batch_result,
+    compliance_scope_items,
+    finalize_compliance,
+    recover_compliance,
+    validate_items,
+)
 from ..services.discovery_outputs import finalize_discovery_scores, recover_discovery_score
 from ..services.pricing_outputs import finalize_pricing_output
 from ..services.product_outputs import (
@@ -24,10 +32,41 @@ from ..services.product_outputs import (
 )
 from ..services.review_outputs import finalize_reviews, review_targets, synchronize_review_rules
 from .base import BaseAgent
+from .compliance import ComplianceAgent
 from .discovery import DiscoveryAgent, ProductAgent
 from .listing import ListingAgent
 from .listing_review import ListingReviewAgent
 from .pricing import AdsAgent, PricingAgent
+
+
+def invoke_compliance(db, ctx, method, *args, scope_key=None):
+    """真实身份发起检测，先恢复原范围，再原子保存报告与风险 Action。"""
+    ctx = require_action_permission(db, ctx, "compliance:check")
+    scope = scope_key or ctx.trace_id
+    if method in {"check", "check_product", "check_listing"}:
+        items = [{"target_type": args[0], "ref_id": args[1]}] if method == "check" else [
+            {"target_type": "product" if method == "check_product" else "listing", "ref_id": args[0]}]
+    elif method == "check_batch":
+        params, context = args
+        items = compliance_scope_items(params, context)
+        manifest = context.get("_action_compliance_manifest")
+        if manifest is not None and manifest != {"scope": scope, "items": items}:
+            raise ActionError(409, "同一工作流合规目标范围已变化")
+    else:
+        raise ActionError(400, "未迁移的合规动作")
+    validate_items(items)
+    for item in items:
+        # 提前验证不存在/跨租户，HTTP 保留明确 404，不依赖 Agent 模糊失败。
+        compliance_targets(db, ctx.legacy_tenant_id, item["target_type"], item["ref_id"])
+    reports = recover_compliance(db, ctx, scope, items)
+    if reports is None:
+        try:
+            with ComplianceAgent(ctx.legacy_tenant_id, context=ctx) as agent:
+                outputs = [agent.check(item["target_type"], item["ref_id"]) for item in items]
+        except ValueError as exc:
+            raise ActionError(409, str(exc)) from exc
+        reports = finalize_compliance(db, ctx, outputs, scope, items)
+    return compliance_batch_result(reports, scope, items) if method == "check_batch" else reports[0]
 
 
 def invoke_product(db, ctx, method, *args, scope_key=None):

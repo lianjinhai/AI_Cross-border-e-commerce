@@ -3,12 +3,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..agents.compliance import ComplianceAgent
-from ..auth import get_current_user, require_permission
+from ..agents.orchestrator import invoke_compliance
+from ..auth import get_current_user, is_impersonating_user, require_permission
 from ..db import get_db
 from ..models import ComplianceReport, User
 from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
+from ..services.ai_actions import ActionError
+from ..services.workspace_context import resolve_workspace_context
 
 router = APIRouter(prefix="/compliance", tags=["compliance"])
 
@@ -65,8 +67,8 @@ def check(body: CheckIn,
     """
     if body.target_type not in ("product", "listing"):
         raise HTTPException(status_code=400, detail="target_type 必须是 product 或 listing")
-    with ComplianceAgent(user.tenant_id) as a:
-        try:
-            return a.check(body.target_type, body.ref_id)
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
+    ctx = resolve_workspace_context(db, user, is_impersonating=is_impersonating_user(user))
+    try:
+        return invoke_compliance(db, ctx, "check", body.target_type, body.ref_id)
+    except ActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc

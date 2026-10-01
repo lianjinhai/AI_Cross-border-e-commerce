@@ -211,10 +211,8 @@ def test_costing_service_has_no_agent_dependency(name):
 #   一处就下调一次基线，任何人都不能在不知情的情况下新增直连调用。
 #   本表之和即 §18.3 第 2 步的剩余工作量。
 _ORM_CALL_BASELINE = {
-    # compliance.py 的读取点已迁完（Product / Listing / Knowledge Tool）；
-    # 剩下的 1 次 get 是**写路径**（`_sync_listing_risk` 回写 Listing.risk_level），
-    # 属 §18.3 第 3 步（Action 层）范围，不随读取迁移下降。
-    "compliance.py": (0, 1),
+    # 合规报告由可信产物服务保存，风险副本经独立 Action Executor 接管。
+    "compliance.py": (0, 0),
     # 剩余趋势 upsert 查询；商品标准化已由 Action 执行器接管。
     "discovery.py": (1, 0),
     # factory_opportunity.py 的读取点已迁完（Supply / Product Tool）；剩下的

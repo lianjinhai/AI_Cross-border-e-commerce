@@ -14,6 +14,7 @@ from sqlalchemy import or_
 from .. import config
 from ..agents.orchestrator import (
     invoke_ad_drafts,
+    invoke_compliance,
     invoke_discovery,
     invoke_listing,
     invoke_pricing,
@@ -22,6 +23,7 @@ from ..agents.orchestrator import (
 )
 from ..db import SessionLocal
 from ..models import User, WorkflowRun, WorkflowStep, WorkflowTemplate, utcnow
+from ..services.compliance_outputs import compliance_scope_items
 from ..services.workspace_context import resolve_workspace_context
 
 # (agent, action) 注册表： dispatch 时 lazy import，避免循环依赖
@@ -111,7 +113,8 @@ def run_step(agent_name: str, action: str, tenant_id: int, params: dict, context
     if (agent_name, action) in {("listing", "generate_batch"),
                                 ("listing", "publish_batch"), ("ads", "draft_batch"),
                                 ("pricing", "reprice_batch"), ("product", "standardize_batch"),
-                                ("discovery", "pick_candidates"), ("listing_review", "review_batch")}:
+                                ("discovery", "pick_candidates"), ("listing_review", "review_batch"),
+                                ("compliance", "check_batch")}:
         with SessionLocal() as action_db:
             requester_id = context.get("_action_requested_by")
             requester = action_db.get(User, requester_id) if requester_id is not None else None
@@ -123,6 +126,9 @@ def run_step(agent_name: str, action: str, tenant_id: int, params: dict, context
                 return {"business_status": "blocked", "context_patch": {},
                         "reason": "缺少可信 Action 发起者，请由人工恢复流程"}
             ctx = resolve_workspace_context(action_db, requester, is_impersonating=impersonating)
+            if agent_name == "compliance":
+                return invoke_compliance(action_db, ctx, action, params, context,
+                                         scope_key=context.get("_action_scope"))
             if agent_name == "listing_review":
                 return invoke_review(action_db, ctx, action, params, context,
                                      scope_key=context.get("_action_scope"))
@@ -198,7 +204,7 @@ def start_run(tenant_id: int, template_key: str, context: dict | None = None,
 
 def _step_context(context, run_id, step):
     scoped = {key: value for key, value in context.items()
-              if key not in {"_action_product_manifest", "_action_review_manifest"}}
+              if key not in {"_action_product_manifest", "_action_review_manifest", "_action_compliance_manifest"}}
     scoped["_action_scope"] = f"workflow:{run_id}:step:{step.id}"
     if (step.agent, step.action) == ("product", "standardize_batch"):
         manifest = (step.output or {}).get("_standardization_manifest")
@@ -208,7 +214,37 @@ def _step_context(context, run_id, step):
         manifest = (step.output or {}).get("context_patch", {}).get("_action_review_manifest")
         if manifest is not None:
             scoped["_action_review_manifest"] = manifest
+    if (step.agent, step.action) == ("compliance", "check_batch"):
+        manifest = (step.output or {}).get("context_patch", {}).get("_action_compliance_manifest")
+        if manifest is not None:
+            scoped["_action_compliance_manifest"] = manifest
     return scoped
+
+
+def _prepare_compliance_step(db, context, run_id, step):
+    """派发前记下服务端原清单；整批回滚和异常重试也不能缩掉或扩大范围。"""
+    if (step.agent, step.action) != ("compliance", "check_batch"):
+        return
+    previous = (step.output or {}).get("context_patch", {}).get("_action_compliance_manifest")
+    if previous is not None:
+        return
+    manifest = {"scope": f"workflow:{run_id}:step:{step.id}",
+                "items": compliance_scope_items(dict(step.params or {}), context)}
+    step.output = {**(step.output or {}), "context_patch": {"_action_compliance_manifest": manifest}}
+    db.commit()
+
+
+def _claim_run(db, run_id, worker_id):
+    """按既有队列/过期租约条件领取运行，保持条件更新的单 worker 语义。"""
+    now = datetime.utcnow()
+    claimed = (db.query(WorkflowRun).filter(
+        WorkflowRun.id == run_id,
+        or_(WorkflowRun.status == "queued",
+            (WorkflowRun.status == "running") & (WorkflowRun.lease_until < now)))
+        .update({WorkflowRun.status: "running", WorkflowRun.worker_id: worker_id,
+                 WorkflowRun.lease_until: now + timedelta(minutes=5)}, synchronize_session=False))
+    db.commit()
+    return claimed
 
 
 def run_workflow(run_id: int) -> None:
@@ -216,16 +252,7 @@ def run_workflow(run_id: int) -> None:
     db = SessionLocal()
     try:
         worker_id = uuid.uuid4().hex
-        now = datetime.utcnow()
-        claimed = (db.query(WorkflowRun).filter(
-            WorkflowRun.id == run_id,
-            or_(WorkflowRun.status == "queued",
-                (WorkflowRun.status == "running") & (WorkflowRun.lease_until < now)))
-            .update({WorkflowRun.status: "running", WorkflowRun.worker_id: worker_id,
-                     WorkflowRun.lease_until: now + timedelta(minutes=5)},
-                    synchronize_session=False))
-        db.commit()
-        if not claimed:
+        if not _claim_run(db, run_id, worker_id):
             return
         run = db.get(WorkflowRun, run_id)
         steps = (db.query(WorkflowStep).filter(WorkflowStep.run_id == run_id)
@@ -244,6 +271,7 @@ def run_workflow(run_id: int) -> None:
             db.commit()
             try:
                 with _LeaseHeartbeat(run_id, worker_id):
+                    _prepare_compliance_step(db, ctx, run_id, step)
                     step_context = _step_context(ctx, run_id, step)
                     output = run_step(step.agent, step.action, run.tenant_id,
                                       dict(step.params or {}), step_context)

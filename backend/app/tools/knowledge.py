@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from ..ai.knowledge import retrieve
+from ..ai.knowledge import _tf_retrieve, retrieve
 from .base import BaseTool, Reading, reading
 from .contract import ERR_BAD_PARAM, ToolError, ToolSpec
 
@@ -25,12 +25,14 @@ class KnowledgeTool(BaseTool):
                  writes=False, summary="检索本租户知识库，返回带评分的文档片段"),
     )
 
-    def _search(self, query: str = "", top_k: int = _DEFAULT_TOP_K) -> Reading:
+    def _search(self, query: str = "", top_k: int = _DEFAULT_TOP_K, read_only: bool = False) -> Reading:
         if not (query or "").strip():
             raise ToolError(ERR_BAD_PARAM, "query 不能为空")
         if not 1 <= int(top_k) <= _MAX_TOP_K:
             raise ToolError(ERR_BAD_PARAM,
                             "top_k 必须在 1~%d 之间，实际 %r" % (_MAX_TOP_K, top_k))
-        docs = retrieve(self.db, self.context.tenant_id, query, int(top_k))
+        # 合规依据读取禁止向量缓存写入，确定性 TF 可由可信保存服务再次验证。
+        docs = (_tf_retrieve(self.db, self.context.tenant_id, query, int(top_k)) if read_only
+                else retrieve(self.db, self.context.tenant_id, query, int(top_k)))
         return reading(docs, source="knowledge_docs", query=query,
                        doc_ids=[d["id"] for d in docs], count=len(docs))

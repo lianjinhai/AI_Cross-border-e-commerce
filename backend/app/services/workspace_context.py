@@ -75,7 +75,7 @@ _WRITE_PERMISSIONS = frozenset({
 })
 
 # 特殊权限 key（不属于批量读写集合）
-# compliance:check = 发起合规检测（生成报告，不改业务数据）——合规员职责所需
+# compliance:check = 检测报告与受限风险副本 Action；不授权内容编辑或发布
 _PERM_COMPLIANCE_CHECK = "compliance:check"
 
 ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
@@ -326,7 +326,8 @@ def membership_table_available(db) -> bool:
     from sqlalchemy import inspect
 
     try:
-        return "workspace_memberships" in set(inspect(db.get_bind()).get_table_names())
+        # 复用调用方连接；独立 Inspector 连接的关闭可能回滚 SQLite 共用连接上的原子写入。
+        return "workspace_memberships" in set(inspect(db.connection()).get_table_names())
     except Exception:  # pragma: no cover - 探测失败按未落地处理
         return False
 

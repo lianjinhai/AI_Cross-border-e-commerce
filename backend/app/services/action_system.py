@@ -14,10 +14,12 @@ from .action_identity import requester_context, require_action_permission
 from .action_policy import POLICIES
 from .action_publish import publish_facts, publish_listing
 from .ai_actions import ActionError, _tenant_id, owned_action
+from .compliance_risk import update_listing_compliance_risk, validate_risk_projection
 from .pii_redact import redact
 from .product_standardization import update_product_content
 
 HANDLERS = {
+    "UPDATE_LISTING_COMPLIANCE_RISK": update_listing_compliance_risk,
     "UPDATE_PRODUCT_CONTENT": update_product_content,
     "CREATE_AD_CAMPAIGN_DRAFT": action_content.create_ad_campaign_draft,
     "CREATE_LISTING_DRAFT": action_content.create_listing_draft,
@@ -100,9 +102,11 @@ def _intent_key(db, ctx, agent_type, action_type, target_id, scope_key, encoded,
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def submit_action(db, ctx, agent_type, proposal, scope_key, *, scope_manifest=None):
+def submit_action(db, ctx, agent_type, proposal, scope_key, *, scope_manifest=None, commit=True):
     action_type = proposal["action_type"]
     policy = _policy(action_type)
+    if not commit and action_type != "UPDATE_LISTING_COMPLIANCE_RISK":
+        raise ActionError(400, "外部原子事务仅支持合规风险投影")
     if agent_type not in policy.agents or agent_type == "pricing":
         raise ActionError(403, "该 Agent 无权提出此类 Action")
     if action_type == "UPDATE_PRODUCT_CONTENT":
@@ -156,6 +160,9 @@ def submit_action(db, ctx, agent_type, proposal, scope_key, *, scope_manifest=No
         requested_by=current.user_id, outcome={}, idempotency_key=key,
         created_at=now, updated_at=now)
     db.add(action)
+    if not commit:
+        db.flush()
+        return action
     try:
         db.commit()
     except IntegrityError:
@@ -187,9 +194,14 @@ def decide_action(db, ctx, action_id, approve, note):
     return action
 
 
-def execute_action(db, ctx, action_id):
+def execute_action(db, ctx, action_id, *, commit=True):
     action = owned_action(db, ctx, action_id)
     policy = _policy(action.action_type)
+    if action.action_type == "UPDATE_LISTING_COMPLIANCE_RISK":
+        table = Tenant.__table__
+        db.execute(table.update().where(table.c.id == action.tenant_id).values(id=table.c.id))
+    if not commit and action.action_type != "UPDATE_LISTING_COMPLIANCE_RISK":
+        raise ActionError(400, "外部原子事务仅支持合规风险投影")
     if (action.agent_type not in policy.agents
             or action.required_permission != policy.permission
             or action.risk_level != policy.risk
@@ -200,6 +212,8 @@ def execute_action(db, ctx, action_id):
     require_action_permission(db, ctx, policy.permission)
     requester_context(db, action)
     if action.status == "SUCCESS":
+        if action.action_type == "UPDATE_LISTING_COMPLIANCE_RISK":
+            validate_risk_projection(db, action, _payload(action))
         return action
     if action.status != "APPROVED":
         raise ActionError(409, "Action 尚未获批或已终止")
@@ -209,6 +223,8 @@ def execute_action(db, ctx, action_id):
         AiAction.id == action.id, AiAction.status == "APPROVED").values(
         status="EXECUTING", updated_at=datetime.utcnow()))
     if changed.rowcount != 1:
+        if not commit:
+            raise ActionError(409, "Action 已被其他执行者领取")
         db.rollback()
         db.refresh(action)
         if action.status == "SUCCESS":
@@ -229,9 +245,14 @@ def execute_action(db, ctx, action_id):
         action.executed_at = datetime.utcnow()
         action.updated_at = action.executed_at
         action.outcome = {**(action.outcome or {}), **outcome}
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
     except Exception as exc:  # 执行器边界：意外数据库/平台异常也必须留失败终态。
         logger.error("Action %s 执行失败：%s", action.id, type(exc).__name__)
+        if not commit:
+            raise  # 可信保存服务整批回滚，失败不得留下报告与未完成风险副本。
         db.rollback()
         db.refresh(action)
         action.status = "FAILED"

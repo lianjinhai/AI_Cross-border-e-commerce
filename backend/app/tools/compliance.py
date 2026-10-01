@@ -3,11 +3,10 @@
 为什么 `check_product` / `check_listing` 是**读**而不是「发起一次检测」
     §10.4 把这两个方法冻结为读操作（权限 `compliance:read`，读写列标「读」）。
     因此它们返回**已持久化的最近一次**报告，不重新跑检测、不落库。
-    真正的「跑检测并生成报告」是写操作，按 §9 必须走 Action 路径（第 3 步），
-    本层不提供该入口——否则 `compliance:read` 就成了绕过写闸的后门。
+    检测分析报告由可信 Orchestrator/产物服务保存；Listing 风险副本经受限
+    compliance:check Action 执行。本层不提供写入口，防止 compliance:read 绕过写闸。
 
-    「检测算法仍在 `ComplianceAgent` 内、没有下沉到 services」这一点已登记为
-    债务：算法归位后才能让 Tool 层提供无副作用的即时评估。
+    纯检测规则已下沉 services/compliance_analysis；Tool 冻结方法仍只读既有报告。
 """
 
 from __future__ import annotations

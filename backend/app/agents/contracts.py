@@ -349,11 +349,10 @@ RISK_COMPLIANCE = AgentContract(
     spec_section="§7.9",
     known_gaps=(
         "当前由 ComplianceAgent 与 ListingReviewAgent 分担，尚未归并为单一 Agent",
-        "「高风险判定不得由 LLM 单独决定，必须有确定性规则命中」（§7.9 约束）"
-        "需在实现时强制；现有 platform_rules.validate_against_rules 是确定性规则，"
-        "但 LLM 路径与规则路径的判定关系尚未冻结",
+        "ComplianceAgent 已强制确定性规则风险底线及 HIGH 规则依据；"
+        "完整 Risk Assessment 输出与跨领域风险判定仍待归并",
         "Risk Agent 的**否决权**（HIGH 必须阻断后续自动执行）属 Action 层职责，"
-        "当前无 Action 层故未生效",
+        "合规报告与发布门禁已阻断 HIGH；其他领域的统一否决仍待接管",
     ),
 )
 

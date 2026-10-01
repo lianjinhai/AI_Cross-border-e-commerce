@@ -88,14 +88,14 @@ Setting 表约定 key：`llm`（见 ai/llm.py DEFAULT_LLM）、`platform_fees`�
 - 单项及批量发布先调用可信复核；新产物在执行发布时验证规则全文和最新报告依据。历史人工结论无新摘要时须重新人工确认，不回填升级；复核不等于批准发布 Action，发布仍需独立审批与执行。
 
 ### 2.7 ComplianceAgent（name="compliance"，文件 agents/compliance.py）
-- `check(target_type: str, ref_id: int) -> dict`：创建 ComplianceReport。检测项（每命中一条计一次扣分）：
+- `check(target_type: str, ref_id: int) -> dict`：Agent 只经 Tool 返回内部 `_compliance_analysis`，不创建报告或修改风险副本。HTTP/Workflow 经 `invoke_compliance` 及可信服务，复核 compliance:check、当前身份/Workspace/归属与不可变依据，在同一事务保存既有 ComplianceReport/AiDecision 及 Listing 风险 Action，返回真实报告字段（D55）。检测项（每命中一条计一次扣分）：
   1. 品牌风险：文本含品牌黑名单词（从 KnowledgeDoc 检索"商标黑名单"+内置兜底列表 Apple/iPhone/Samsung/Nike/Adidas/Disney/LEGO/LV/Rolex/Pokemon 等）→ level=high，每词扣50（单一品牌词命中即 high）。
   2. 违禁宣称：最/第一/顶级/ No.1 /cure/FDA approved/杀菌/防癌/100% safe → level=mid，扣15。
-  3. 图片风险：images 为空→mid 扣20；URL 含 watermark/logo→mid 扣15。
+  3. 图片风险：images 为空→mid 问题扣15；URL 含 watermark/logo_/_logo/shuiyin→mid 问题扣15。保留旧 Listing images=[] 口径，迁移不偷偷改用关联商品图片。
   4. 平台规则：retrieve() 知识库平台规则相关命中作参考（LLM 模式下作为上下文）。
-  score=max(0,100-扣分)；risk_level：score<60→high，<85→mid，else low。suggestions 每个问题给中文整改建议。同步写 Listing.risk_level（若 target 是 listing）。返回 to_dict(report)+`"model"`。
+  score=max(0,100-扣分)；risk_level：score<60→high，<85→mid，else low。suggestions 每个问题给中文整改建议。模型输出须有限、字段合法、不高于规则分数且不低于规则风险；非法、遗漏或 LLM 单独 high 降级规则。Listing.risk_level 仅由 UPDATE_LISTING_COMPLIANCE_RISK（LOW/compliance:check/AUTO_SAFE）执行器投影可信最新报告，不改内容、不授权发布。
 - `check_product(product_id)` / `check_listing(listing_id)`：薄封装调 check。
-- `check_batch(params, context) -> {"reports":[report dict], "context_patch":{"risk_high":[ref_id...]}}`：items=params["items"] 或由 product_ids/listing_ids 构造（context["product_ids"]→product 检查，context["listing_ids"]→listing 检查）。
+- `check_batch(params, context)`：原始 Agent 只返回 analyses；可信入口返回 reports/business_status/context_patch（risk_high、blocked_product_ids、blocked_listing_ids 及服务端步骤局部 manifest）。最多 100 个不重复目标，显式空清单不扩张；派发前记录原范围，失败恢复不能换目标。任一保存/Action 失败整批回滚，异常显式阻断；有 high 时 business_status=blocked，不继续自动下游。相同 scope 重放原报告并核验最新依据，旧 low 不覆盖新 high；合规只读知识使用 TF，无 ai:read 时明确 builtin/not_used，不扩大知识或发布权限。
 
 ### 2.8 SupportAgent（name="support"，文件 agents/support.py）
 - `classify(text: str) -> str`：意图 order_status（订单/发货/到货/where is my order/delivered）/logistics（物流/快递/tracking/shipping）/refund（退款/退货/refund/return/broken/损坏）/product_qa（尺寸/材质/颜色/尺码/how to use）/other。

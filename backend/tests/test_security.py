@@ -29,6 +29,7 @@ def test_role_permission_matrix(client):
         ("POST", "/api/discovery/score/999999", None, "write"),
         ("POST", "/api/discovery/pick", {"limit": 1}, "write"),
         ("POST", "/api/listings/999999/review", None, "write"),
+        ("POST", "/api/compliance/check", {"target_type": "listing", "ref_id": 999999}, "write"),
         ("POST", "/api/listings/999999/review/approve", {"note": "权限探针"}, "compliance_approve"),
         ("GET", "/api/orders", None, "read"),
         ("GET", "/api/pricing", None, "read"),

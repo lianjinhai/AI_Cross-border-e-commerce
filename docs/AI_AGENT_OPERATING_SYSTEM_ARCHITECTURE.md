@@ -622,6 +622,9 @@ D54 的上架复核同样由可信调度/产物服务保存既有 ListingReviewD
 Agent 只输出分析；保存和重放复核当前身份、归属、内容、规则全文及最新报告。
 规则同步迁出 Agent，在独立服务会话执行；人工裁决不复制自动产物来源，
 新风险不能借旧批准放行。复核产物不等同发布审批，发布仍经 Action 四道闸。
+D55 的合规报告及来源链也由可信服务保存；Listing.risk_level 业务副本经
+受限 Action 投影，报告与风险动作原子提交，失败整批回滚；错误与 high 阻断下游。
+模型不能低估规则风险或独自认定 high，合规知识新路径不触发向量缓存写。
 
 唯一合法路径：
 
@@ -711,6 +714,7 @@ Business API（既有 Router / Service）
 |---|---|---|---|---|
 | `UPDATE_LISTING_CONTENT` | LOW / `listing:write` | AUTO_SAFE，仅草稿 | Workspace、发起人、类型、目标、服务端执行范围和载荷的 SHA256；执行时复核原始内容 | 按 outcome.before 人工恢复草稿；已发布内容禁止自动覆盖 |
 | `CREATE_AD_CAMPAIGN_DRAFT`（D49） | LOW / `finance:write` | AUTO_SAFE，仅本地草稿，日预算 5～500 USD，不启动投放 | Workspace、发起人、Agent、类型、目标、服务端 run/step/输入位置和载荷的 SHA256；数据库唯一约束 | 人工删除新建草稿，保留 Action 审计；禁止自动调用投放平台 |
+| `UPDATE_LISTING_COMPLIANCE_RISK`（D55） | LOW / `compliance:check` | AUTO_SAFE，仅可信最新报告风险副本，不改内容/发布 | 服务端原 scope/目标、报告与来源摘要；执行及成功重放核验当前依据，旧 low 不覆盖新 high | 按当前报告重新检测/发起受限投影，不盲目恢复旧 low；报告与 Action 原子失败整批回滚 |
 
 既有 `CREATE_LISTING_DRAFT` 的自动权限仅限新建草稿，不包括发布。
 既有 `UPDATE_PRODUCT_CONTENT`（D51）固定 LOW / `product:write` / AUTO_SAFE，
@@ -1456,7 +1460,7 @@ Platform Identity（`superadmin`，ADR-F03 相关）**没有业务 Workspace**�
 |---|---|---|
 | 1 | ✅ **完成**（D35） | 8 条冻结契约落在 `backend/app/agents/contracts.py`；`SupportAgent` 显式未登记（DEBT-34） |
 | 2 | ✅ **Agent 侧读取迁移完成**（D37 ~ D46；D52 补只读聚合） | Tool 共 11 个、44 个方法（§10.4.1）。9/9 个 Agent 文件的读取点经 Tool；历史 ORM query/get 棘轮 21→8 的剩余均属第 3 步写路径。D52 将 DiscoveryAgent._rule_scores 的 get_performance 隐性缓存写改为 product.calculate_performance，只读真实订单即时聚合，保留真实来源过滤和新品中性分；Tool 审计及真库全方法覆盖保持。 |
-| 3 | 🔶 **进行中**（D47～D54） | 广告预算/草稿、Listing 草稿/优化/发布及商品安全标准化已接 Action Guardrail/Executor；定价、选品评分和上架复核分析由 Orchestrator/产物服务保存，不生成经营 Action。评分与依据链原子保存；复核绑定内容、完整规则与报告，合法人工裁决可恢复原人工阻断，新风险拒绝重放。HTTP/聊天/Workflow 入口绑定真实身份，规则同步已迁出复核 Agent。发布须人工批准、执行后再恢复；广告仅本地 draft；标准化失败保留原范围。ORM query/get 棘轮仍为 5（不代表全部写入数）；趋势、供应评分快照/预测/私域报价、合规报告及风险副本、客服/知识学习、告警和基础审计仍待迁移。**第 3 步未完成；第 4～6 步未开始**。 |
+| 3 | 🔶 **进行中**（D47～D55） | 广告预算/草稿、Listing 草稿/优化/发布及商品安全标准化已接 Action Guardrail/Executor；定价、评分、复核报告由可信产物服务保存。D55 合规报告/来源与受限风险 Action 原子提交，错误/high 阻断下游，服务端原清单防止失败恢复换范围；HTTP/Workflow 绑定真实权限，旧 low 不覆盖新 high，规则同步已迁出复核 Agent。发布须独立人工批准与执行，广告仅本地 draft。ORM query/get 棘轮为 4（不代表全部写入数）；趋势、供应评分快照/预测/私域报价、客服/知识学习、默认知识向量缓存、告警和基础审计仍待迁移。**第 3 步未完成；第 4～6 步未开始**。 |
 | 4 | ⏳ 未开始 | Orchestrator 仍同步直调 |
 | 5 | ⏳ 未开始 | `BaseAgent.SessionLocal()` 仍自持会话；完成后才能关闭 DEBT-35 |
 | 6 | ⏳ 未开始 | `trace_id` / `task_id` / `parent_trace_id` / `steps[]` 未补 |

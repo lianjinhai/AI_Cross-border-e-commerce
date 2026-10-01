@@ -14,6 +14,9 @@ class ActionPolicy:
 
 
 POLICIES = {
+    "UPDATE_LISTING_COMPLIANCE_RISK": ActionPolicy(
+        frozenset({"compliance"}), "compliance:check", "listing",
+        rollback="按 outcome.before 人工恢复风险副本，先核验最新合规报告；不修改内容或发布"),
     "UPDATE_PRODUCT_CONTENT": ActionPolicy(
         frozenset({"product"}), "product:write", "product",
         rollback="按 outcome.before 人工恢复商品安全标准化内容；保留 Action 审计"),

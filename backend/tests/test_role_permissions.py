@@ -85,10 +85,19 @@ def test_compliance_role_can_check_but_not_write_business(client, role_headers):
     """合规员职责边界：可发起检测、可审批；不能改商品、不能发布、不能管用户。"""
     h = role_headers["compliance"]
     assert h, "合规员登录失败"
-    # 可发起检测（本轮新增能力）
-    r = client.post("/api/compliance/check", headers=h,
-                    json={"target_type": "product", "ref_id": 1})
-    assert r.status_code == 200, f"合规员应可发起检测: {r.status_code} {r.text[:80]}"
+    # 自建目标，不能依赖被其他业务用例删除的种子商品。
+    created = client.post("/api/products", headers=role_headers["admin"],
+                          json={"title": "合规权限隔离探针"})
+    assert created.status_code == 200, created.text
+    product_id = created.json()["id"]
+    try:
+        r = client.post("/api/compliance/check", headers=h,
+                        json={"target_type": "product", "ref_id": product_id})
+        assert r.status_code == 200, f"合规员应可发起检测: {r.status_code} {r.text[:80]}"
+        assert r.json()["product_id"] == product_id
+    finally:
+        deleted = client.delete(f"/api/products/{product_id}", headers=role_headers["admin"])
+        assert deleted.status_code == 200, deleted.text
     # 不能改商品
     r = client.post("/api/products", headers=h, json={"title": "合规员不应能建商品"})
     assert r.status_code == 403

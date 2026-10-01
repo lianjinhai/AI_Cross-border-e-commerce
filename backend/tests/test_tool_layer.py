@@ -570,17 +570,20 @@ def test_compliance_agent_reads_go_through_tool_layer(probe_tenant):
     """
     from app.agents.compliance import ComplianceAgent
     from app.db import SessionLocal
-    from app.models import AiLog, Listing
+    from app.models import AiLog, ComplianceReport, Listing
 
     tenant_id = probe_tenant["tenant_id"]
+    with SessionLocal() as before_db:
+        original_risk = before_db.get(Listing, probe_tenant["listing_id"]).risk_level
+        original_reports = before_db.query(ComplianceReport).filter_by(tenant_id=tenant_id).count()
     agent = ComplianceAgent(tenant_id)
     try:
         report = agent.check_product(probe_tenant["product_id"])
         listing_report = agent.check_listing(probe_tenant["listing_id"])
     finally:
         agent.close()
-    assert report["product_id"] == probe_tenant["product_id"]
-    assert listing_report["listing_id"] == probe_tenant["listing_id"]
+    assert report["_compliance_analysis"]["ref_id"] == probe_tenant["product_id"]
+    assert listing_report["_compliance_analysis"]["ref_id"] == probe_tenant["listing_id"]
 
     db = SessionLocal()
     try:
@@ -588,15 +591,16 @@ def test_compliance_agent_reads_go_through_tool_layer(probe_tenant):
                    .filter(AiLog.tenant_id == tenant_id, AiLog.mode == "tool").all()}
         listing = db.get(Listing, probe_tenant["listing_id"])
         risk_written = listing.risk_level
+        reports_after = db.query(ComplianceReport).filter_by(tenant_id=tenant_id).count()
     finally:
         db.close()
     assert {"tool:product.get_products", "tool:listing.get_listings",
             "tool:knowledge.search"} <= actions, (
         "compliance 的读取没有全部走 Tool 层——§18.3 第 2 步的迁移被回退了？"
         "实际审计到的 Tool 调用：%s" % sorted(actions))
-    # 反向断言：`_sync_listing_risk` 的回写必须仍然生效——它是 §18.3 第 3 步的欠账，
-    # 但在迁移期间不得被顺手删掉（删掉等于「高风险 Listing 可发布」）。
-    assert risk_written == listing_report["risk_level"]
+    # Agent 本身不得回写风险；可信调度与 Action 投影由专项反向测试覆盖。
+    assert risk_written == original_risk
+    assert reports_after == original_reports
 
 
 def test_support_agent_reads_go_through_tool_layer(client):
