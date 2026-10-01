@@ -990,9 +990,9 @@ def test_supplier_agent_reads_go_through_tool_layer(client):
         assert expected <= actions, (
             "supplier 的读取没有全部走 Tool 层——§18.3 第 2 步的迁移被回退了？缺失：%s"
             % sorted(expected - actions))
-        # 反向断言：两处写路径（评分快照 / 预测快照）必须仍然落库——它们是第 3 步欠账，
-        # 迁移期间不得被顺手删掉（删掉等于「评分/预测点了没反应」）。
-        assert score_rows == 1 and snap_rows == 1
+        # 反向断言：评分 / 预测两处直写已迁出到 services/supply_outputs（§18.3 第 3 步），
+        # Agent 现在只产出只读提案——不得再直接落库评分快照 / 预测快照。
+        assert score_rows == 0 and snap_rows == 0
     finally:
         db = SessionLocal()
         try:
@@ -1074,8 +1074,8 @@ def test_factory_opportunity_agent_reads_go_through_tool_layer(client):
             result = agent.scan_private_supply_batch({"product_ids": [ids["product_id"]]})
         finally:
             agent.close()
-        assert len(result["candidates"]) == 1, result
-        assert result["candidates"][0]["score"] > 0
+        assert len(result["matches"]) == 1, result
+        assert result["matches"][0]["total_score"] > 0
 
         db = SessionLocal()
         try:
@@ -1093,9 +1093,9 @@ def test_factory_opportunity_agent_reads_go_through_tool_layer(client):
         assert expected <= actions, (
             "factory_opportunity 的读取没有全部走 Tool 层——§18.3 第 2 步的迁移被回退了？缺失：%s"
             % sorted(expected - actions))
-        # 反向断言：两处写路径（匹配快照 / 报价 upsert）必须仍然生效——它们是
-        # 第 3 步欠账，迁移期间不得被顺手删掉（删掉等于「扫描点了没反应」）。
-        assert match_rows == 1 and offer_rows == 1
+        # 反向断言：匹配快照 / 报价 upsert 已迁出到 services/supply_outputs（§18.3 第 3 步），
+        # Agent 现在只产出只读提案——不得再直接落库匹配快照 / 报价。
+        assert match_rows == 0 and offer_rows == 0
     finally:
         db = SessionLocal()
         try:
@@ -1241,10 +1241,23 @@ def test_orchestrator_reads_go_through_tool_layer(probe_tenant):
     """
     from app.agents.orchestrator import OrchestratorAgent
     from app.db import SessionLocal
-    from app.models import AiLog
+    from app.models import AiLog, User
+    from app.services.workspace_context import resolve_workspace_context
 
     tenant_id = probe_tenant["tenant_id"]
+    # 供应商评分意图已迁移到可信身份派发（invoke_supplier，需 supply:write），
+    # 故 chat 必须持有可信 Workspace 上下文——与路由/Workflow 入口一致。
+    db = SessionLocal()
+    try:
+        user = User(tenant_id=tenant_id, username="orch-probe", password_hash="x",
+                    role="owner")
+        db.add(user)
+        db.commit()
+        ctx = resolve_workspace_context(db, user)
+    finally:
+        db.close()
     agent = OrchestratorAgent(tenant_id)
+    agent.context = ctx
     try:
         bi = agent.chat("经营情况")
         listing = agent.chat("铺货建议")
@@ -1252,6 +1265,12 @@ def test_orchestrator_reads_go_through_tool_layer(probe_tenant):
         supplier = agent.chat("供应商评分")
     finally:
         agent.close()
+        db = SessionLocal()
+        try:
+            db.query(User).filter(User.tenant_id == tenant_id).delete()
+            db.commit()
+        finally:
+            db.close()
     assert bi["intent"] == "bi" and listing["intent"] == "listing"
     assert support["intent"] == "support" and supplier["intent"] == "supplier"
     assert listing["data"]["draft_listings"] == 1, listing

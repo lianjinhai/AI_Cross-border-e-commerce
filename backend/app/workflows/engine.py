@@ -16,10 +16,12 @@ from ..agents.orchestrator import (
     invoke_ad_drafts,
     invoke_compliance,
     invoke_discovery,
+    invoke_factory_opportunity,
     invoke_listing,
     invoke_pricing,
     invoke_product,
     invoke_review,
+    invoke_supplier,
 )
 from ..db import SessionLocal
 from ..models import User, WorkflowRun, WorkflowStep, WorkflowTemplate, utcnow
@@ -115,7 +117,9 @@ def run_step(agent_name: str, action: str, tenant_id: int, params: dict, context
                                 ("listing", "publish_batch"), ("ads", "draft_batch"),
                                 ("pricing", "reprice_batch"), ("product", "standardize_batch"),
                                 ("discovery", "pick_candidates"), ("listing_review", "review_batch"),
-                                ("compliance", "check_batch"), ("discovery", "scan_trends")}:
+                                ("compliance", "check_batch"), ("discovery", "scan_trends"),
+                                ("supplier", "forecast_batch"),
+                                ("factory_opportunity", "scan_private_supply_batch")}:
         with SessionLocal() as action_db:
             requester_id = context.get("_action_requested_by")
             requester = action_db.get(User, requester_id) if requester_id is not None else None
@@ -151,6 +155,12 @@ def run_step(agent_name: str, action: str, tenant_id: int, params: dict, context
             if agent_name == "ads":
                 return invoke_ad_drafts(action_db, ctx, params, context,
                                        scope_key=context.get("_action_scope"))
+            if agent_name == "supplier":
+                return invoke_supplier(action_db, ctx, action, params, context,
+                                       scope_key=context.get("_action_scope"))
+            if agent_name == "factory_opportunity":
+                return invoke_factory_opportunity(action_db, ctx, params, context,
+                                                 scope_key=context.get("_action_scope"))
             return invoke_listing(action_db, ctx, action, params, context,
                                   scope_key=context.get("_action_scope"))
     cls = _load_agent_class(agent_name)

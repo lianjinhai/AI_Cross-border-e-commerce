@@ -209,10 +209,11 @@ _ORM_CALL_BASELINE = {
     "compliance.py": (0, 0),
     # 趋势刷新与商品标准化都由中央 Action 执行器接管。
     "discovery.py": (0, 0),
-    # factory_opportunity.py 的读取点已迁完（Supply / Product Tool）；剩下的
-    # 2 处 query 是**写路径**（匹配快照 / 报价 upsert 前的行查找），属第 3 步
-    # （Action 层）范围，不随读取迁移下降，见 D43。
-    "factory_opportunity.py": (2, 0),
+    # factory_opportunity.py 的读取点已迁完（Supply / Product Tool）；匹配快照 /
+    # 报价 upsert 的 2 处 query 与其后 calc_profit 调用已迁出到
+    # services/supply_outputs.finalize_scan_private_supply_batch（可信产物服务），
+    # 由 Orchestrator 经可信身份派发。Agent 内已无任何 ORM 写与写用途 query/get。
+    "factory_opportunity.py": (0, 0),
     # listing.py 的读取点已迁完（Product / Listing / Knowledge / Compliance Tool）；
     # 草稿、优化、发布已移到独立 Action Executor，Listing Agent 无 ORM 写路径。
     "listing.py": (0, 0),
@@ -225,9 +226,10 @@ _ORM_CALL_BASELINE = {
     # pricing.py 的读取点已迁完（Product / Market / Listing / Finance Tool，两个
     # Agent 共 7 处读取）；预算优化已改为只产出 Action 建议（D47）。
     "pricing.py": (0, 0),
-    # supplier.py 的读取点已迁完（Supply / Product / Order Tool）；剩下的 2 处
-    # `self.db.add`（评分快照 / 预测快照）是**写路径**，不在棘轮口径（query/get）内，
-    # 同属第 3 步（Action 层）欠账。
+    # supplier.py 的读取点已迁完（Supply / Product / Order Tool）；评分快照 /
+    # 预测快照的 2 处 self.db.add 已迁出到 services/supply_outputs（可信产物服务），
+    # 由 Orchestrator 经可信身份派发 finalize_supplier_scores / finalize_forecast。
+    # 棘轮口径（query/get）本就是 0，Agent 内已无任何 ORM 写。
     "supplier.py": (0, 0),
     # support.py 的读取点已迁完（Conversation / Order / Product / Knowledge Tool）；
     # 剩下的 1 次 get 是**写路径**（`_touch_conversation` 更新 last_message_at），

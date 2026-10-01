@@ -4,11 +4,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from ..agents.orchestrator import invoke_supplier
 from ..agents.supplier import SupplierAgent
-from ..auth import get_current_user, require_write
+from ..auth import get_current_user, is_impersonating_user, require_write
 from ..db import get_db
 from ..models import Supplier, SupplierOffer, SupplierScore, User
 from ..serialize import to_dict
+from ..services.ai_actions import ActionError
+from ..services.workspace_context import resolve_workspace_context
 
 router = APIRouter(prefix="/suppliers", tags=["suppliers"])
 
@@ -86,10 +89,13 @@ def match_best(body: MatchIn, user: User = Depends(require_write), db: Session =
 @router.get("/forecast")
 def forecast(product_id: int | None = None,
              user: User = Depends(require_write), db: Session = Depends(get_db)):
-    with SupplierAgent(user.tenant_id) as a:
+    ctx = resolve_workspace_context(db, user, is_impersonating=is_impersonating_user(user))
+    try:
         if product_id:
-            return a.forecast(product_id)
-        return a.forecast_batch()
+            return invoke_supplier(db, ctx, "forecast", product_id)
+        return invoke_supplier(db, ctx, "forecast_batch", {}, {})
+    except (ActionError, ValueError) as exc:
+        raise HTTPException(status_code=getattr(exc, "status_code", 400), detail=str(exc)) from exc
 
 
 class OfferIn(BaseModel):
@@ -152,5 +158,8 @@ def supplier_detail(supplier_id: int, user: User = Depends(get_current_user),
 def score_supplier(supplier_id: int, user: User = Depends(require_write),
                    db: Session = Depends(get_db)):
     _owned(db, user.tenant_id, supplier_id)
-    with SupplierAgent(user.tenant_id) as a:
-        return a.score_supplier(supplier_id)
+    ctx = resolve_workspace_context(db, user, is_impersonating=is_impersonating_user(user))
+    try:
+        return invoke_supplier(db, ctx, "score_supplier", supplier_id)
+    except (ActionError, ValueError) as exc:
+        raise HTTPException(status_code=getattr(exc, "status_code", 400), detail=str(exc)) from exc

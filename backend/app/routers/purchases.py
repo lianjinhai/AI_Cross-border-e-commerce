@@ -11,12 +11,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..agents.supplier import SupplierAgent
-from ..auth import get_current_user, require_write
+from ..agents.orchestrator import invoke_supplier
+from ..auth import get_current_user, is_impersonating_user, require_write
 from ..db import get_db
 from ..models import Product, PurchaseOrder, Shop, Supplier, SupplierOffer, User
 from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
+from ..services.ai_actions import ActionError
+from ..services.workspace_context import resolve_workspace_context
 
 router = APIRouter(prefix="/purchases", tags=["purchases"])
 
@@ -103,16 +105,19 @@ def from_forecast(body: FromForecastIn, user: User = Depends(require_write),
                 "skipped": [{"product_id": int(pid), "reason": reason,
                              "gate_checks": commercial_gate["checks"]}
                             for pid in product_ids]}
-    with SupplierAgent(user.tenant_id) as a:
+    ctx = resolve_workspace_context(db, user, is_impersonating=is_impersonating_user(user))
+    try:
         if body.product_ids:
             forecasts = []
             for pid in body.product_ids:
                 try:
-                    forecasts.append(a.forecast(int(pid)))
-                except Exception:
+                    forecasts.append(invoke_supplier(db, ctx, "forecast", int(pid)))
+                except (ActionError, ValueError):
                     continue
         else:
-            forecasts = a.forecast_batch()["forecasts"]
+            forecasts = invoke_supplier(db, ctx, "forecast_batch", {}, {})["forecasts"]
+    except (ActionError, ValueError) as exc:
+        raise HTTPException(status_code=getattr(exc, "status_code", 400), detail=str(exc)) from exc
     created, skipped = [], []
     for f in forecasts:
         if not f.get("automation_allowed", False):

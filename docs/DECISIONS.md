@@ -3263,3 +3263,52 @@ P0=0，历史任务有启用项，未改动其配置。供应、客服/知识、
 改为固定建表前版本 20260927_17，保留删表硬断言，专项及最终全量均通过。
 Orchestrator 433 行、Workflow 400 行仍超模块警戒线，未超硬限；本批修改函数
 均不超 80 行，E2E main 已等价拆分，不把模块警戒、崩溃恢复或跨库并发债务关闭。
+
+## D57：供应评分/预测与私域报价写入接管（2026-10-01）
+
+**状态**：Accepted；本批代码及验收完成，无表结构变更，主库未写入，不代表第 3 步完成。
+
+**边界**：SupplierAgent 仅读 Supply/Product/Order Tool 并做规则计算——
+`score_supplier` 只返回评分提案（不再返回 `score_id`），`forecast` / `forecast_batch`
+只返回含 `_snapshot` 的预测提案，且不再自行读取商用门禁。FactoryOpportunityAgent
+仅读目录/商品/预测并输出匹配与报价提案。三个领域的写入统一由新增
+`services/supply_outputs.py` 在服务端校验后原子保存；两个 Agent 内不再有任何
+ORM 写（含写用途的 query/get），也不再直接调用成本计算服务。
+
+**可信入口**：HTTP（`POST /suppliers/{id}/score`、`GET /suppliers/forecast`、
+`POST /purchases/from_forecast`、工厂机会扫描）、聊天 `_do_suppliers` 与
+Workflow（`supplier.forecast_batch`、`factory_opportunity.scan_private_supply_batch`）
+统一经 `invoke_supplier` / `invoke_factory_opportunity` 绑定 Workspace 身份并校验
+`supply:write`；聊天缺可信上下文显式 403；路由层把 `ActionError` 映射为对应
+HTTP 状态，不以 500 泄漏内部错误。人工写入端点（`POST /suppliers/offers`、
+`POST /factory-network/matches/{id}/promote`）保持原样，不纳入迁移。
+
+**人工报价保护**：`supplier_offers` 无来源标记列，且本批禁止改表结构与新增迁移，
+故扫描遇到已存在报价行时**整行拒绝覆盖**并在 `match.gaps` 记录原因；不做不可靠
+的来源推断，也不降级为字段级覆盖。
+
+**顺序与原子性**：私域扫描在可信服务同一会话内先 `flush` 报价、再调用
+`costing.calc_profit`（经 best_purchase 取最低在库采购价），整批末尾单次提交；
+任一异常整批回滚、错误显式上抛，不吞批量异常。预测批量保留逐条宽容语义
+（单条失败跳过），与旧 `forecast_batch` 行为一致。
+
+**判定归服务端**：`commercial_gate` 与 `automation_allowed` 不采信 Agent 传入值，
+由服务端用 `forecast_monitoring` 重算；评分数值范围、模型取值、预测数值与训练
+截止时间在服务端校验，越界即拒绝；供应商/商品/目录/报价均做租户归属校验。
+
+**范围守恒（回归修复）**：私域扫描在「无私域工厂目录」分支必须回填请求的商品
+范围。初版实现返回空 `product_ids`，被服务写入 `context_patch` 后覆盖工作流上
+下游范围，导致合规 / Listing 步骤无目标、`auto_listing` 工作流误判 success——
+由全部节点反序回归发现（单独运行亦复现），已修复并补
+`test_scan_without_catalog_keeps_product_scope` 锁定；无目录时语义为「不改范围」，
+与旧实现的空 `context_patch` 等价。
+
+**仓库缺陷顺带修复**：`.gitignore` 的 `**/_*.py` 误吞包初始化文件，致
+`backend/app/tools/__init__.py` 未入库（新克隆直接 ImportError）；新增
+`!**/__init__.py` 例外并把该文件纳入版本控制，其导入排序同步修正。
+
+**结构与部署**：本批无表结构变更、无新增迁移；主库 `erp.db` 未被写入。
+
+**遗留**：`supplier_offers` 无来源列（当前只能整行拒绝）、跨数据库并发未验收、
+Orchestrator / Workflow 模块规模警戒未清；客服/知识学习、默认知识向量缓存、
+告警业务、基础审计及 Runtime/Session/Trace 未完成。本批不得等同第 3 步完成。

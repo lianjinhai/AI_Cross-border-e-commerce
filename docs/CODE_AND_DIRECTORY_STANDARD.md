@@ -68,6 +68,7 @@ AI-电商ERP/
 │   │   │   ├── compliance_risk.py      # 受限 Listing 风险副本执行器
 │   │   │   ├── trend_refresh.py        # 内置趋势刷新 Action 执行与依据重验
 │   │   │   ├── trend_candidates.py     # 确定性日种子候选，Agent/Executor 复算共用
+│   │   │   ├── supply_outputs.py       # 供应商评分/预测/私域匹配与报价原子保存（D57）
 │   │   │   ├── schedule_identity.py    # 调度真实身份绑定与权限复核
 │   │   │   ├── settings_service.py      # 配置三级回退（P1-10 隔离）
 │   │   │   ├── shop_scope.py            # 店铺可见性守卫（归档店铺一律视为不存在）

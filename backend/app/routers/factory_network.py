@@ -6,7 +6,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from ..auth import get_current_user, hash_password, require_admin, require_write
+from ..agents.orchestrator import invoke_factory_opportunity
+from ..auth import (
+    get_current_user,
+    hash_password,
+    is_impersonating_user,
+    require_admin,
+    require_write,
+)
 from ..db import get_db
 from ..models import (
     OpportunitySupplierMatch,
@@ -18,6 +25,8 @@ from ..models import (
     User,
 )
 from ..serialize import to_dict
+from ..services.ai_actions import ActionError
+from ..services.workspace_context import resolve_workspace_context
 
 router = APIRouter(prefix="/factory-network", tags=["factory-network"])
 
@@ -203,12 +212,17 @@ def match_opportunity(body: MatchIn, user: User = Depends(require_write),
         match.gaps = gaps
         match.decision = "matched" if capability >= 50 and not gaps else "due_diligence"
         ranked.append((match, catalog, supplier))
-    db.commit()
-    from ..agents.factory_opportunity import FactoryOpportunityAgent
-    with FactoryOpportunityAgent(user.tenant_id) as agent:
-        agent.scan_private_supply_batch({"product_ids": [product.id]}, {})
-    for match, _, _ in ranked:
-        db.refresh(match)
+        db.commit()
+        # 机会扫描写入经可信产物服务原子保存（Agent 不再直写匹配/报价）。
+        # 与 suppliers/purchases 路由一致：ActionError 映射为对应 HTTP 状态，
+        # 避免权限不足时以 500 泄漏内部错误。
+        ctx = resolve_workspace_context(db, user, is_impersonating=is_impersonating_user(user))
+        try:
+            invoke_factory_opportunity(db, ctx, {"product_ids": [product.id]}, {})
+        except ActionError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        for match, _, _ in ranked:
+            db.refresh(match)
     ranked.sort(key=lambda x: x[0].total_score, reverse=True)
     return {"product": to_dict(product), "items": [
         {**to_dict(m), "catalog_product": to_dict(c), "supplier": to_dict(s),

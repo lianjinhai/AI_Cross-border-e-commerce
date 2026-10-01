@@ -718,6 +718,10 @@ Business API（既有 Router / Service）
 | `REFRESH_BUILTIN_TRENDS`（D56） | LOW / `product:write` | AUTO_SAFE，仅日种子内置估算，不覆盖 csv/api | Workspace、真实发起人、类型、租户目标、服务端范围和载荷 SHA256；重放原 Action、锁内复核快照与固定候选 | outcome.before 供人工核验后恢复，仅内置数据；失败整批回滚，不自动覆盖真实来源 |
 
 既有 `CREATE_LISTING_DRAFT` 的自动权限仅限新建草稿，不包括发布。
+D57 的供应评分快照 / 预测快照 / 私域匹配与报价**不新增 action_type**：
+与定价、选品评分、复核产物同级，由可信产物服务 `services/supply_outputs.py`
+在服务端校验后原子保存（私域扫描同事务先落报价再算成本、失败整批回滚；
+人工/既有报价整行拒绝覆盖）。
 既有 `UPDATE_PRODUCT_CONTENT`（D51）固定 LOW / `product:write` / AUTO_SAFE，
 本批次仅用于安全标准化类目、重量/材质/颜色和指纹；不改售价、采购或库存。
 执行时锁内核对原始内容与重复候选；同范围重放原 Action，失败/拒绝不被恢复绕过。
@@ -1461,16 +1465,23 @@ Platform Identity（`superadmin`，ADR-F03 相关）**没有业务 Workspace**�
 |---|---|---|
 | 1 | ✅ **完成**（D35） | 8 条冻结契约落在 `backend/app/agents/contracts.py`；`SupportAgent` 显式未登记（DEBT-34） |
 | 2 | ✅ **Agent 侧读取迁移完成**（D37 ~ D46；D52 补只读聚合） | Tool 共 11 个、44 个方法（§10.4.1）。9/9 个 Agent 文件的读取点经 Tool；历史 ORM query/get 棘轮 21→8 的剩余均属第 3 步写路径。D52 将 DiscoveryAgent._rule_scores 的 get_performance 隐性缓存写改为 product.calculate_performance，只读真实订单即时聚合，保留真实来源过滤和新品中性分；Tool 审计及真库全方法覆盖保持。 |
-| 3 | 🔶 **进行中**（D47～D56） | 广告预算/草稿、Listing 草稿/优化/发布、商品安全标准化及内置趋势已接 Action；定价、评分、复核报告由可信产物服务保存。D55 合规报告/来源与受限风险 Action 原子提交，错误/high 阻断，原清单防恢复换范围，旧 low 不覆盖新 high；规则同步已迁出复核 Agent。D56 趋势日种子复算、不覆盖真实来源，全部入口可信调度；Schedule 持久化真实身份，历史空绑定显式阻断。发布须独立人工批准与执行，广告仅本地 draft。ORM query/get 棘轮为 3（不代表全部写入数）；供应评分快照/预测/私域报价、客服/知识学习、默认知识向量缓存、告警和基础审计仍待迁移。**第 3 步未完成；第 4～6 步未开始**。 |
+| 3 | 🔶 **进行中**（D47～D57） | 广告预算/草稿、Listing 草稿/优化/发布、商品安全标准化及内置趋势已接 Action；定价、评分、复核报告由可信产物服务保存。D55 合规报告/来源与受限风险 Action 原子提交，错误/high 阻断，原清单防恢复换范围，旧 low 不覆盖新 high；规则同步已迁出复核 Agent。D56 趋势日种子复算、不覆盖真实来源，全部入口可信调度；Schedule 持久化真实身份，历史空绑定显式阻断。D57 供应评分快照 / 预测快照 / 私域匹配与报价由 `services/supply_outputs.py` 服务端校验后原子保存，四个入口（HTTP/聊天/Workflow/补货）统一可信派发，人工报价整行拒绝覆盖，无私域目录时保持上游商品范围。发布须独立人工批准与执行，广告仅本地 draft。ORM query/get 棘轮为 3（不代表全部写入数）；客服/知识学习、默认知识向量缓存、告警和基础审计仍待迁移。**第 3 步未完成；第 4～6 步未开始**。 |
 | 4 | ⏳ 未开始 | Orchestrator 仍同步直调 |
 | 5 | ⏳ 未开始 | `BaseAgent.SessionLocal()` 仍自持会话；完成后才能关闭 DEBT-35 |
 | 6 | ⏳ 未开始 | `trace_id` / `task_id` / `parent_trace_id` / `steps[]` 未补 |
 
-最新完成批次（D56，2026-10-01，代码及隔离验收完成）：趋势扫描迁为
+最新完成批次（D57，2026-10-01，代码及验收完成）：供应评分快照、预测快照与
+私域工厂机会匹配/报价的写入从 `SupplierAgent` / `FactoryOpportunityAgent`
+迁出到可信产物服务 `services/supply_outputs.py`，HTTP / 聊天 / Workflow /
+补货入口统一经 `invoke_supplier` / `invoke_factory_opportunity` 绑定 Workspace
+身份并校验 `supply:write`；`commercial_gate` 与评分/预测数值由服务端重算校验，
+人工报价整行拒绝覆盖。本批无表结构变更，主库未写入。正式结果及剩余风险以最新
+子代理索引为准，不将本批完成或隔离验收等同主库部署或第 3 步完成。
+
+上一完成批次（D56，2026-10-01）：趋势扫描迁为
 `REFRESH_BUILTIN_TRENDS` Action，HTTP/聊天/Workflow/调度统一可信入口；
 Schedule 增加真实身份绑定，可回滚迁移计划为 `20261001_19`。历史无身份任务
-不得自动绑定管理员，须重新启用；主库未升级。正式结果及剩余风险以最新
-子代理索引为准，不将本批完成或隔离验收等同主库部署或第 3 步完成。
+不得自动绑定管理员，须重新启用；主库未升级。
 
 > **为什么第 2 步要拆成前后半**：§18.3 的每一步都要求「完成后全部回归测试通过」。
 > 在第二批 Tool 清单落地前强行改 Agent，只能把 ORM 查询换成「无对应 Tool 的

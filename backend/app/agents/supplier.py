@@ -1,12 +1,13 @@
 """供应链 Agent：最优货源匹配 / 供应商评分 / 销量预测与缺货预警（对应规划第十四章）。
 
-§18.3 第 2 步：读取全部经 Tool 层；写路径（评分快照 / 预测快照）集中标注，
-属第 3 步（Action 层）欠账。
+§18.3 第 3 步：读取全部经 Tool 层（见 base.py），评分快照 / 预测快照的写入已迁出到
+``services/supply_outputs.py`` 的可信产物服务。本 Agent 只产出只读提案（规则计算 +
+经 Tool 读取），由 Orchestrator 经可信身份派发 ``finalize_supplier_scores`` /
+``finalize_forecast`` 在服务端校验后原子保存；Agent 内不得有任何 ORM 写。
 """
 import math
 from datetime import datetime, timedelta
 
-from ..models import ForecastSnapshot, SupplierScore
 from .base import BaseAgent
 from .contracts import CONTRACTS
 
@@ -96,6 +97,11 @@ class SupplierAgent(BaseAgent):
 
     # ---------------- 供应商评分 ----------------
     def score_supplier(self, supplier_id: int) -> dict:
+        """只产出评分提案（只读）：写入由 services/supply_outputs 可信服务保存。
+
+        §18.3 第 3 步：本方法不得有任何 ORM 写；评分快照的持久化在服务端校验后
+        由 ``finalize_supplier_scores`` 原子提交（含租户隔离与分值范围校验）。
+        """
         sups = self._suppliers(supplier_ids=[supplier_id], limit=1)
         if not sups:
             raise ValueError(f"供应商 {supplier_id} 不存在")
@@ -114,15 +120,9 @@ class SupplierAgent(BaseAgent):
             f"{sup['ship_days']} 天发货 → 时效 {delivery}",
             f"履约稳定性 {stability}",
         ]
-        row = SupplierScore(tenant_id=self.tenant_id, supplier_id=supplier_id,
-                            quality=quality, cost=cost, delivery=delivery,
-                            stability=stability, total=total, reasons=reasons, model="rule")
-        # 写路径（新建评分快照）：§18.3 第 3 步（Action 层）欠账，见 D41。
-        self.db.add(row)
-        self.db.commit()
         return {"supplier_id": supplier_id, "quality": quality, "cost": cost,
                 "delivery": delivery, "stability": stability, "total": total,
-                "reasons": reasons, "model": "rule", "score_id": row.id}
+                "reasons": reasons, "model": "rule"}
 
     # ---------------- 销量预测 / 缺货预警 ----------------
     def forecast(self, product_id: int) -> dict:
@@ -207,21 +207,19 @@ class SupplierAgent(BaseAgent):
                     "stockout_weeks": int((p["attrs"] or {}).get("stockout_weeks") or 0),
                     "calendar_month": now.month, "calendar_week": int(now.strftime("%W")),
                     "platform": str((p["attrs"] or {}).get("platform") or "unknown")}
-        snapshot = ForecastSnapshot(
-            tenant_id=self.tenant_id, product_id=product_id, version="demand-v2.0",
-            training_cutoff=now, target_start=now, target_end=now + timedelta(days=7),
-            dimensions={"sku": p["sku"], "platform": features["platform"],
-                        "country": str((p["attrs"] or {}).get("country") or "unknown")},
-            features=features, candidates=candidates, selected_model=method,
-            point_forecast=weekly_demand, lower_bound=round(lower, 1), upper_bound=round(upper, 1),
-            wape=round(wape, 4) if wape is not None else None,
-            bias=round(bias, 4) if bias is not None else None, confidence=confidence)
-        # 写路径（新建预测快照）：§18.3 第 3 步（Action 层）欠账，见 D41。
-        self.db.add(snapshot); self.db.commit()
-        # 自动采购使用租户级门禁，而非单个 SKU 在短窗口内看似良好的结果。
-        # 门禁还要求足量真实订单、整体 WAPE/Bias 和覆盖率均达标。
-        from ..services.commercial_analytics import forecast_monitoring
-        commercial_gate = forecast_monitoring(self.db, self.tenant_id)["commercial_gate"]
+        # 只读提案：新建预测快照的写入已迁出到 services/supply_outputs.finalize_forecast，
+        # 由可信服务在服务端重算 commercial_gate 并原子保存。本 Agent 不持有任何 ORM 写。
+        snapshot_fields = {
+            "product_id": product_id, "version": "demand-v2.0",
+            "training_cutoff": now, "target_start": now, "target_end": now + timedelta(days=7),
+            "dimensions": {"sku": p["sku"], "platform": features["platform"],
+                           "country": str((p["attrs"] or {}).get("country") or "unknown")},
+            "features": features, "candidates": candidates, "selected_model": method,
+            "point_forecast": weekly_demand, "lower_bound": round(lower, 1),
+            "upper_bound": round(upper, 1),
+            "wape": round(wape, 4) if wape is not None else None,
+            "bias": round(bias, 4) if bias is not None else None, "confidence": confidence,
+        }
         return {"product_id": product_id, "title": p["title"],
                 "weekly_demand": weekly_demand, "onhand": onhand, "shortage_risk": risk,
                 "suggest_restock_qty": max(0, int(round(weekly_demand * 4 - onhand))),
@@ -234,13 +232,15 @@ class SupplierAgent(BaseAgent):
                              "bias": round(bias, 4) if bias is not None else None},
                 "data_quality": {"history_weeks": 12, "nonzero_weeks": nonzero,
                                  "confidence": confidence, "reason": reason},
-                "automation_allowed": confidence == "high" and commercial_gate["passed"],
-                "commercial_gate": commercial_gate,
-                "snapshot_id": snapshot.id, "version": snapshot.version,
-                "training_cutoff": snapshot.training_cutoff.isoformat() + "Z",
-                "features": features, "candidates": candidates}
+                "features": features, "candidates": candidates,
+                "_snapshot": snapshot_fields}
 
     def forecast_batch(self, params: dict | None = None, context: dict | None = None) -> dict:
+        """只读批量预测：返回每条商品的预测提案（含 _snapshot）；写入由服务保存。
+
+        §18.3 第 3 步：本方法不得有任何 ORM 写；``forecast`` 仅产出提案，经
+        ``finalize_forecast_batch`` 在服务端原子保存后回填 snapshot_id 等字段。
+        """
         params, context = params or {}, context or {}
         ids = params.get("product_ids") or context.get("product_ids")
         if not ids:

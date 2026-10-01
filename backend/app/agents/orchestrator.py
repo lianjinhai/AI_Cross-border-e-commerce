@@ -32,13 +32,21 @@ from ..services.product_outputs import (
     recover_range,
 )
 from ..services.review_outputs import finalize_reviews, review_targets, synchronize_review_rules
+from ..services.supply_outputs import (
+    finalize_forecast,
+    finalize_forecast_batch,
+    finalize_scan_private_supply_batch,
+    finalize_supplier_scores,
+)
 from ..services.trend_refresh import recover_refresh
 from .base import BaseAgent
 from .compliance import ComplianceAgent
 from .discovery import DiscoveryAgent, ProductAgent
+from .factory_opportunity import FactoryOpportunityAgent
 from .listing import ListingAgent
 from .listing_review import ListingReviewAgent
 from .pricing import AdsAgent, PricingAgent
+from .supplier import SupplierAgent
 
 
 def invoke_compliance(db, ctx, method, *args, scope_key=None):
@@ -269,6 +277,36 @@ def invoke_discovery(db, ctx, method, *args, scope_key=None):
                 "context_patch": {}, "errors": errors, "business_status": status}
 
 
+def invoke_supplier(db, ctx, method, *args, scope_key=None):
+    """供应商评分 / 预测的可信派发：绑定身份，Agent 算提案，可信服务原子保存。"""
+    if method not in {"score_supplier", "forecast", "forecast_batch"}:
+        raise ValueError("未迁移的供应商动作")
+    ctx = require_action_permission(db, ctx, "supply:write")
+    scope = scope_key or ctx.trace_id
+    with SupplierAgent(ctx.legacy_tenant_id, context=ctx) as agent:
+        if method == "score_supplier":
+            proposal = agent.score_supplier(args[0])
+        elif method == "forecast":
+            proposal = agent.forecast(args[0])
+        else:
+            batch = agent.forecast_batch(*args)
+            results = finalize_forecast_batch(db, ctx, batch["forecasts"], scope)
+            return {"forecasts": results,
+                    "context_patch": {"shortages": batch["context_patch"]["shortages"]}}
+    if method == "score_supplier":
+        return finalize_supplier_scores(db, ctx, [proposal], scope)[0]
+    return finalize_forecast(db, ctx, args[0], proposal, scope)
+
+
+def invoke_factory_opportunity(db, ctx, params, context, *, scope_key=None):
+    """私域工厂机会扫描的可信派发：Agent 出只读提案，可信服务原子保存匹配与报价。"""
+    ctx = require_action_permission(db, ctx, "supply:write")
+    scope = scope_key or ctx.trace_id
+    with FactoryOpportunityAgent(ctx.legacy_tenant_id, context=ctx) as agent:
+        proposal = agent.scan_private_supply_batch(params, context)
+    return finalize_scan_private_supply_batch(db, ctx, params, proposal, scope)
+
+
 class OrchestratorAgent(BaseAgent):
     name = "orchestrator"
 
@@ -349,17 +387,16 @@ class OrchestratorAgent(BaseAgent):
         return reply, "listing", [], {"draft_listings": n}
 
     def _do_suppliers(self) -> tuple[str, str, list, object]:
-        from .supplier import SupplierAgent
-
+        if self.context is None:
+            raise ActionError(403, "供应商评分需要可信 Workspace 身份")
         # 取候选供应商也走 Tool（Supply Tool）：排序由 Tool 定为评分倒序，
         # 不再依赖数据库的隐式行序；上限 10 由调用方显式声明。
         got = self.tool("supply").call("search_suppliers", limit=10)
         sups = got.data if got.ok and isinstance(got.data, list) else []
         results = []
-        with SupplierAgent(self.tenant_id) as a:
-            for s in sups:
-                sc = a.score_supplier(s["id"])
-                results.append({"supplier_id": s["id"], "name": s["name"], "total": sc["total"]})
+        for s in sups:
+            sc = invoke_supplier(self.db, self.context, "score_supplier", s["id"])
+            results.append({"supplier_id": s["id"], "name": s["name"], "total": sc["total"]})
         results.sort(key=lambda x: -x["total"])
         lines = [f"· {x['name']}（综合 {x['total']}）" for x in results[:3]]
         return "供应商综合评分 Top3：\n" + "\n".join(lines), "supplier", ["score_supplier"], results

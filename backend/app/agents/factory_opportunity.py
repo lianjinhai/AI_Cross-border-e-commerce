@@ -1,13 +1,14 @@
 """私域工厂机会 Agent：市场机会、真实供给与单位经济性联合门禁。
 
-§18.3 第 2 步：读取全部经 Tool 层（Supply / Product Tool，见 D43）；写路径
-（匹配快照与报价 upsert）保留 ORM 访问并集中标注，属第 3 步（Action 层）欠账。
+§18.3 第 3 步：读取全部经 Tool 层（Supply / Product Tool，见 D43）；匹配快照与
+报价 upsert 的写入已迁出到 ``services/supply_outputs.py``（可信产物服务）。本 Agent
+只产出只读提案（规则计算 + 经 Tool 读取），由 Orchestrator 经可信身份派发
+``finalize_scan_private_supply_batch`` 在服务端校验、原子保存；Agent 内不得有任何
+ORM 写（含 query/get），也不得直接调用成本计算服务（改由可信服务在同一事务内调用）。
 """
 import re
 from datetime import datetime, timedelta
 
-from ..models import OpportunitySupplierMatch, SupplierOffer
-from ..services import costing
 from .base import BaseAgent
 from .contracts import CONTRACTS
 
@@ -50,17 +51,29 @@ class FactoryOpportunityAgent(BaseAgent):
 
     def scan_private_supply_batch(self, params: dict | None = None,
                                   context: dict | None = None) -> dict:
+        """只读提案：返回每个商品的匹配/报价提案；写入由可信服务原子保存。
+
+        §18.3 第 3 步：本方法不得有任何 ORM 写（含 query/get）。原 Agent 内的
+        匹配快照 upsert 与报价 upsert、以及其后的 ``costing.calc_profit`` 调用，全部
+        迁移到 ``services/supply_outputs.finalize_scan_private_supply_batch``——它先
+        flush 报价、在同一会话内调用成本计算（取最低在库采购价），再整批单次提交。
+        本 Agent 只负责读取目录/商品/预测并计算匹配分、汇总 gaps、决定是否要写报价。
+        """
         params, context = params or {}, context or {}
         product_ids = params.get("product_ids") or context.get("product_ids") or []
         min_match = float(params.get("min_match_score", 50))
-        min_margin = float(params.get("min_margin", 0.15))
 
-        ready_ids, candidates, blocked = [], [], []
         catalogs = self._catalogs()
         if not catalogs:
-            return {"candidates": [], "ready": 0, "blocked": [],
+            # 无目录时保持原有货源匹配：此处必须回填**请求的商品范围**而不是空列表，
+            # 否则可信服务会把 context_patch.product_ids 写成 []，覆盖工作流上下文里
+            # 上游（标准化）确定的商品范围，导致后续合规/Listing 步骤无目标、工作流
+            # 误判为成功。旧实现返回空 context_patch（不改范围），语义等价。
+            return {"catalog_present": False,
                     "skipped": "当前租户尚未维护私域工厂目录，继续使用原有货源匹配",
-                    "context_patch": {}}
+                    "product_ids": list(dict.fromkeys(int(x) for x in product_ids[:200])),
+                    "matches": []}
+        matches = []
         for product_id in [int(x) for x in product_ids[:200]]:
             product = self._product(product_id)
             if not product:
@@ -94,7 +107,6 @@ class FactoryOpportunityAgent(BaseAgent):
                 if best is None or total > best[0]:
                     best = (total, capability, readiness, overlap, gaps, catalog, supplier)
             if not best:
-                blocked.append({"product_id": product_id, "reason": "私域工厂暂无有效目录商品"})
                 continue
             total, capability, readiness, overlap, gaps, catalog, supplier = best
             gaps = list(gaps)
@@ -103,72 +115,27 @@ class FactoryOpportunityAgent(BaseAgent):
             forecast_fresh = bool(cutoff and cutoff >= datetime.utcnow() - timedelta(days=7))
             if not forecast_fresh or (forecast or {}).get("confidence") != "high":
                 gaps.append("缺少7天内高可信真实销量预测，禁止以产能推算营收")
-            # 写路径（匹配快照 upsert）：§18.3 第 3 步（Action 层）欠账，见 D43。
-            match = (self.db.query(OpportunitySupplierMatch).filter(
-                OpportunitySupplierMatch.tenant_id == self.tenant_id,
-                OpportunitySupplierMatch.product_id == product_id,
-                OpportunitySupplierMatch.catalog_product_id == catalog["id"]).first())
-            if not match:
-                match = OpportunitySupplierMatch(tenant_id=self.tenant_id, product_id=product_id,
-                    supplier_id=supplier["id"], catalog_product_id=catalog["id"])
-                self.db.add(match)
-            match.capability_score, match.readiness_score, match.total_score = capability, readiness, total
-            match.matched_capabilities, match.gaps = overlap, list(gaps)
-            match.decision = "due_diligence"
-            self.db.flush()
-            if total < min_match:
-                match.gaps = list(match.gaps) + [f"匹配分 {total} 低于门槛 {min_match}"]
-            elif gaps:
-                pass
-            else:
-                # 写路径（报价 upsert）：同属第 3 步欠账，见 D43。
-                offer = (self.db.query(SupplierOffer).filter(
-                    SupplierOffer.tenant_id == self.tenant_id,
-                    SupplierOffer.supplier_id == supplier["id"],
-                    SupplierOffer.product_id == product_id).first())
-                if not offer:
-                    offer = SupplierOffer(tenant_id=self.tenant_id, supplier_id=supplier["id"],
-                                          product_id=product_id)
-                    self.db.add(offer)
-                offer.price = float(catalog["unit_price"]); offer.currency = catalog["currency"].upper()
-                offer.moq = catalog["moq"]
-                offer.ship_days = catalog["lead_days"]; offer.in_stock = catalog["available_qty"] > 0
-                self.db.commit()  # 先落库报价，下面的成本计算据此取最低采购价
-                try:
-                    # 经 services/ 共享实现计算利润，而不是直接调用 PricingAgent：
-                    # Agent 间 P2P 违反 Agent OS §3 / 规范 L-3（协作只能由
-                    # Orchestrator 编排）。成本口径与定价页同源，避免两处漂移。
-                    economics = costing.calc_profit(self.db, self.tenant_id, product_id)
-                except ValueError as exc:
-                    match.gaps = list(match.gaps) + [str(exc)]
-                    economics = None
-                if economics is None:
-                    item = {"match_id": match.id, "product_id": product_id,
-                            "supplier_id": supplier["id"], "catalog_product_id": catalog["id"],
-                            "score": total, "decision": match.decision,
-                            "expected_margin": match.expected_margin, "gaps": match.gaps}
-                    candidates.append(item); blocked.append(item)
-                    continue
-                match.expected_price = economics["price"]
-                match.expected_unit_profit = economics["profit"]
-                match.expected_margin = economics["margin"]
-                monthly_demand = max(float(forecast["point_forecast"]) * 4, 0)
-                monthly_units = min(monthly_demand, max(catalog["available_qty"], 0),
-                                    max(catalog["monthly_capacity"], 0))
-                match.expected_monthly_revenue = round(monthly_units * economics["price"], 2)
-                if economics["margin"] >= min_margin and economics["profit"] > 0 and offer.in_stock:
-                    match.decision = "ready"
-                    ready_ids.append(product_id)
-                else:
-                    match.gaps = list(match.gaps) + [
-                        f"预计利润率 {economics['margin']:.1%} 未达到 {min_margin:.1%} 或当前无库存"]
-            item = {"match_id": match.id, "product_id": product_id, "supplier_id": supplier["id"],
-                    "catalog_product_id": catalog["id"], "score": total, "decision": match.decision,
-                    "expected_margin": match.expected_margin, "gaps": match.gaps}
-            candidates.append(item)
-            if match.decision != "ready": blocked.append(item)
-        self.db.commit()
-        return {"candidates": candidates, "ready": len(ready_ids), "blocked": blocked,
-                "context_patch": {"product_ids": list(dict.fromkeys(int(x) for x in product_ids)),
-                                  "private_ready_product_ids": list(dict.fromkeys(ready_ids)),
-                                  "factory_opportunity_matches": candidates}}
+            # 是否要写报价：匹配分达标、且没有任何数据/预测 gap（否则进入人工尽调）。
+            write_offer = total >= min_match and not gaps
+            matches.append({
+                "product_id": product_id,
+                "supplier_id": supplier["id"],
+                "catalog_product_id": catalog["id"],
+                "capability_score": capability,
+                "readiness_score": readiness,
+                "total_score": total,
+                "matched_capabilities": list(overlap),
+                "gaps": gaps,
+                "write_offer": write_offer,
+                "offer": ({"price": float(catalog["unit_price"]),
+                           "currency": catalog["currency"], "moq": int(catalog["moq"]),
+                           "ship_days": int(catalog["lead_days"]),
+                           "in_stock": catalog["available_qty"] > 0}
+                          if write_offer else None),
+                "forecast_point": float((forecast or {}).get("point_forecast") or 0),
+                "available_qty": catalog["available_qty"],
+                "monthly_capacity": catalog["monthly_capacity"],
+            })
+        return {"catalog_present": True, "skipped": None,
+                "product_ids": list(dict.fromkeys(int(x) for x in product_ids[:200])),
+                "matches": matches}
