@@ -374,6 +374,20 @@ def test_list_endpoints_include_reference_defaults(case):
                for item in routes), routes
 
 
+def test_us_default_rate_note_carries_verifiable_policy_anchors():
+    """美国兜底税率的政策依据锚点不得被无意识删除（D58 政策守恒）。
+
+    rate=0 是诚实兜底（ маслоeù税按 HS 子目维护），但 note 必须能让运维查到
+    现行依据：E.O. 14324 / 14388、Proclamation 临时进口附加费、Federal Register。
+    """
+    us = next(item for item in duty.DEFAULT_DUTY_RATES
+              if item["destination_country"] == "US")
+    note = us["note"]
+    for anchor in ("14324", "14388", "Proclamation 2026-02-20", "Federal Register"):
+        assert anchor in note, f"US 兜底税率 note 缺少政策锚点 {anchor}：{note}"
+    assert us["source_url"].startswith("https://www.federalregister.gov/"), us["source_url"]
+
+
 # ---------------------------------------------------------------- 接口与权限
 def test_cross_border_permissions(client, auth_headers):
     ok = client.get("/api/cross-border/duty-rates", headers=auth_headers)

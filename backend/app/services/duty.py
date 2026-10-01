@@ -3,8 +3,11 @@
 为什么必须独立成服务：2026 年低值包裹免税全球退坡后，关税与进口税从「可忽略」
 变成跨境直邮的第一成本项——
 
-    - 美国 $800 de minimis 全球暂停（E.O. 14324 及后续 EO；CBP 终局规则），
-      全部渠道需正式/非正式报关并缴税；
+    - 美国 $800 de minimis 全球暂停：E.O. 14324（2025-07-30 签署，2025-08-29 生效）
+      暂停 de minimis 免税；E.O. 14388（2026-02-20）继续暂停，并对国际邮政
+      路径按 Proclamation 2026-02-20「临时进口附加费」计征；CBP 2026-06-24
+      联邦公报 interim final rule 对非邮政路径无限期生效；邮路新邮件非正式入境
+      流程 2026-07-24 生效，2026-10-22 起 Chapter 98/99、FTA、PGA 类别排除。
     - 欧盟 (EU) 2026/382 自 2026-07-01 起废除 €150 关税豁免，过渡期按 HS 税则
       子目「每件 €3」定额征收，2028-07-01 转正常税则；IOSS 只管增值税、不含关税；
     - 英国 £135 免税暂保留至 2026-12-31，最迟 2029-03 废除。
@@ -43,8 +46,11 @@ DEFAULT_DUTY_RATES: tuple[dict, ...] = (
     {
         "destination_country": "US", "hs_prefix": "", "rate_type": "ad_valorem",
         "rate": 0.0, "currency": "USD", "de_minimis": 0.0,
-        "note": "de minimis 全球暂停，全部渠道报关缴税；具体从价税率须按 HS 与现行 301/IEEPA 措施维护",
-        "source_url": "https://www.cbp.gov/",
+        "note": "de minimis 全球暂停（E.O. 14324 / 14388），全部渠道报关缴税；非邮政"
+                "路径按 HTSUS MFN 从价税率 + 现行 301/IEEPA 附加关税，邮政路径按 "
+                "Proclamation 2026-02-20 临时进口附加费计征；具体税率须按 HS 子目与"
+                "现行措施维护（参考 CBP e-Commerce 与 Federal Register 2026-12670）",
+        "source_url": "https://www.federalregister.gov/documents/2026/06/24/2026-12670",
     },
     {
         "destination_country": "GB", "hs_prefix": "", "rate_type": "ad_valorem",
