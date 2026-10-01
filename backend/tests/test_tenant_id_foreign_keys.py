@@ -105,9 +105,13 @@ def test_migration_table_list_matches_model_metadata(client):
     # D58 的 5 张跨境成本表由后续 Revision 20 新建并在该迁移中声明外键，同理不回改
     # Revision 16 清单；其 tenant_id → tenants.id 由本文件首条元数据级契约
     # （test_all_tenant_id_columns_have_foreign_key）与 test_cross_border 共同核对。
+    # D59 的 2 张海外仓库存表由后续 Revision 21 新建，同理不回改 Revision 16 清单；
+    # warehouses 的 tenant_id → tenants.id 与 inventory_snapshots 的
+    # tenant_id → tenants.id 由本文件首条元数据级契约与 test_warehouses_inventory 核对。
     expected -= {"users", "tenant_settings", "workspace_profiles", "ai_actions",
                  "duty_rates", "logistics_routes", "platform_fee_schedules",
-                 "destination_compliance_rules", "product_compliance_evidence"}
+                 "destination_compliance_rules", "product_compliance_evidence",
+                 "warehouses", "inventory_snapshots"}
 
     assert listed == expected, (
         "迁移清单与模型层不一致——漏补：%s；多补：%s"

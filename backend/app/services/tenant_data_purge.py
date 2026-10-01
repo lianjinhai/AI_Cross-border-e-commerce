@@ -25,6 +25,7 @@ from ..models import (
     Conversation,
     ForecastOutcome,
     ForecastSnapshot,
+    InventorySnapshot,
     KnowledgeCandidate,
     Listing,
     ListingReviewDecision,
@@ -69,6 +70,7 @@ _PURGE_PLAN = (
     (Listing, "listings"),                                   # → products
     (ProductPerformance, "product_performances"),            # → products（M1 飞轮缓存）
     (ProductComplianceEvidence, "product_compliance_evidence"),  # → products（目的国合规证据，D58）
+    (InventorySnapshot, "inventory_snapshots"),                # → products / warehouses（海外仓在库快照，D59）
     (Product, "products"),                                   # 最上层，最后删
 )
 

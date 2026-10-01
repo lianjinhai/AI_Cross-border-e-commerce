@@ -869,6 +869,58 @@ class ProductComplianceEvidence(Base):
                                        "requirement", name="uq_product_compliance_evidence"),)
 
 
+class Warehouse(Base):
+    """海外仓 / FBA 库位：把海外仓持有成本从「路由计费」升级为库存模型。
+
+    没有 Warehouse 表时，costing 只能把海外仓费用塞进 logistics 路由的 ``per_item``
+    里——结果是把「仓储费率 × 在库天数」这种与库龄强相关的成本，错误地按出库件数
+    平摊，长期库存的真实持有成本被严重低估。本表定义库位费率，``InventorySnapshot``
+    记录时点库存量，二者组合出 ``holding_cost_cny = daily_fee × days_in_stock``。
+    """
+    __tablename__ = "warehouses"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tenants.id", name="fk_warehouses_tenant_id_tenants"),
+        nullable=True, index=True)
+    code: Mapped[str] = mapped_column(String(32))                       # 内部编码，如 FBA-US-USE1
+    name: Mapped[str] = mapped_column(String(64))
+    warehouse_type: Mapped[str] = mapped_column(String(16), default="overseas")  # overseas/fba/3pl
+    country: Mapped[str] = mapped_column(String(8), default="")
+    daily_fee_per_unit: Mapped[float] = mapped_column(Float, default=0)  # 单件日仓储费（CNY）
+    inbound_fee_per_unit: Mapped[float] = mapped_column(Float, default=0)  # 入库操作费/件
+    outbound_fee_per_unit: Mapped[float] = mapped_column(Float, default=0)  # 出库操作费/件
+    long_term_threshold_days: Mapped[int] = mapped_column(Integer, default=90)
+    long_term_surcharge_rate: Mapped[float] = mapped_column(Float, default=0.5)  # 超期附加费率
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    note: Mapped[str] = mapped_column(String(256), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    __table_args__ = (UniqueConstraint("tenant_id", "code", name="uq_warehouses_tenant_code"),)
+
+
+class InventorySnapshot(Base):
+    """海外仓在库快照（商品 × 库位 × 时点）：用于推算库龄与持有成本。
+
+    跨境海外仓的真实利润杀手是「库龄」：货发到海外仓卖不出去，每天扣仓储费，
+    库龄超 90 天还要叠加长期库存附加费甚至销毁费。把 Medicinev 单价 × 在库
+    天数算出来，才能让定价覆盖这部分成本。本表只记事实，不做计费——计费在
+    ``services/inventory_service.py`` 里用快照 × Warehouse 费率推算。
+    """
+    __tablename__ = "inventory_snapshots"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tenants.id", name="fk_inventory_snapshots_tenant_id_tenants"),
+        nullable=True, index=True)
+    warehouse_id: Mapped[int] = mapped_column(ForeignKey("warehouses.id"), index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    sku: Mapped[str] = mapped_column(String(64), default="")
+    qty_on_hand: Mapped[int] = mapped_column(Integer, default=0)
+    received_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)  # 入库时点，库龄起算
+    snapshot_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    note: Mapped[str] = mapped_column(String(256), default="")
+    __table_args__ = (Index("ix_inventory_snapshots_lookup",
+                            "tenant_id", "warehouse_id", "product_id"),)
+
+
 class PlatformSettlementRecord(Base):
     """销售平台结算事实，用于订单应收与实际到账对账。"""
     __tablename__ = "platform_settlement_records"

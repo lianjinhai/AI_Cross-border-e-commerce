@@ -28,7 +28,6 @@ import hashlib
 import os
 import pathlib
 import re
-import shutil
 import socket
 import sqlite3
 import subprocess
@@ -212,8 +211,17 @@ def _prepare_copy(args, prod_db, copy_db):
 
     print("=== 2. 准备副本库 ===")
     if backup_file and backup_file.is_file():
-        shutil.copy2(backup_file, copy_db)
+        # 先截断目标文件（避免残留损坏文件导致 copy2 写到不完整状态），
+        # 再用 SQLite 只读备份 API 复制（比 copy2 更安全：源库以只读打开，
+        # 目标库新建，不会继承残留文件的页结构）。
+        with open(copy_db, "wb") as f:
+            f.truncate(0)
+        with sqlite3.connect(f"file:{backup_file.as_posix()}?mode=ro", uri=True) as source:
+            with sqlite3.connect(copy_db) as target:
+                source.backup(target)
     else:
+        with open(copy_db, "wb") as f:
+            f.truncate(0)
         with sqlite3.connect(f"file:{prod_db.as_posix()}?mode=ro", uri=True) as source:
             with sqlite3.connect(copy_db) as target:
                 source.backup(target)
