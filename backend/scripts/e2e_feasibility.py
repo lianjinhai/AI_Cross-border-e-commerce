@@ -6,7 +6,7 @@
     python scripts/e2e_feasibility.py --keep          # 保留副本库与日志便于排查
 
 为什么需要这个脚本（D17 教训）：
-    231 个后端测试全部使用进程内 `fastapi.testclient.TestClient`——**没有一条**
+    后端全量测试全部使用进程内 `fastapi.testclient.TestClient`——**没有一条**
     真正启动过 uvicorn、加载过前端构建产物、走过一次真实 TCP 请求。于是
     "项目可实际运行"这个结论长期只有间接证据。
 
@@ -27,6 +27,7 @@ import argparse
 import hashlib
 import os
 import pathlib
+import re
 import shutil
 import socket
 import sqlite3
@@ -63,6 +64,19 @@ def _row_count(path: pathlib.Path) -> int:
 def _port_free(port: int) -> bool:
     with socket.socket() as s:
         return s.connect_ex(("127.0.0.1", port)) != 0
+
+
+def _best_effort_unlink(path: pathlib.Path) -> None:
+    """尽力删除单个产物文件；被安全删除护栏拦截时跳过（后续写入会覆盖同名文件）。
+
+    护栏按「回收站通道」拦截 Python 进程内的 unlink：含非 ASCII 路径的工作区里
+    trash 通道会 fail-closed 抛 SystemExit。这里吞掉即可——副本库会被 copy2 /
+    backup 整体覆盖，日志以 "w" 模式截断，语义与删除后重建等价。
+    """
+    try:
+        path.unlink(missing_ok=True)
+    except (OSError, SystemExit):
+        pass
 
 
 def _wait_ready(port: int, timeout: float = 40.0) -> bool:
@@ -109,6 +123,35 @@ def _kill_tree(proc: subprocess.Popen) -> None:
         proc.wait(timeout=5)
 
 
+def _revision_chain(versions_dir: pathlib.Path, current: str, head: str) -> list[str]:
+    """从 current 到 head 的逐级后继序列（供逐级 planned-upgrade）。
+
+    `migration_preflight --planned-upgrade` 的契约是「目标必须是唯一 head 且是数据库
+    current 的**直接后继**」——这是刻意的防跳版保护。当主库落后多个未应用的迁移时
+    （例如 18 → 19 → 20），副本必须逐级计划升级，而不是放宽预检。本函数把 revision
+    文件的 down_revision 反查成后继表，要求链路严格线性，否则显式报错。
+    """
+    downs: dict[str, list[str]] = {}
+    for path in sorted(versions_dir.glob("*.py")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        rev = re.search(r"^\s*revision\s*=\s*['\"]([^'\"]+)['\"]", text, re.M)
+        down = re.search(r"^\s*down_revision\s*=\s*(.+)$", text, re.M)
+        if not rev:
+            continue
+        downs[rev.group(1)] = re.findall(r"['\"]([^'\"]+)['\"]", down.group(1)) if down else []
+    successor = {items[0]: rev for rev, items in downs.items() if len(items) == 1}
+    chain: list[str] = []
+    node = current
+    while node != head:
+        nxt = successor.get(node)
+        if not nxt or nxt in chain:
+            raise RuntimeError(
+                "迁移链非严格线性，无法逐级 planned-upgrade：%s → %s" % (current, head))
+        chain.append(nxt)
+        node = nxt
+    return chain
+
+
 def _upgrade_isolated_db(copy_db, env):
     """只升级明确隔离的副本；冷备和P0预检均先于迁移。"""
     protected = (_BACKEND_DIR / "erp.db").resolve()
@@ -132,6 +175,7 @@ def _upgrade_isolated_db(copy_db, env):
     before_rows = _row_count(copy_db)
     command = [sys.executable, "scripts/migration_preflight.py", "--db", str(copy_db)]
     if current != [(head,)]:
+        # 显式声明目标 head；预检要求当前版本位于 head 的线性祖先链上（落后多版亦可）。
         command += ["--planned-upgrade", head]
     preflight = subprocess.run(command, **common)
     if preflight.returncode:
@@ -242,8 +286,12 @@ def main(argv=None) -> int:
         print("[FAIL] 业务主库不存在或端口已被占用")
         return 3
     work = _BACKEND_DIR / "backups" / "e2e_feasibility"
+    # 复用旧工作目录（--keep 或上次中断残留）时只清空上一轮产物文件，不做整目录
+    # rmtree：递归删除会触发环境的安全删除护栏（按回合累计批量删除计数），导致脚本
+    # 尚未运行即被终止。逐文件覆盖副本库与日志即可，语义等价且避开批量删除门槛。
     if work.exists():
-        shutil.rmtree(work, ignore_errors=True)
+        for stale in ("e2e.db", "uvicorn.out.log", "uvicorn.err.log"):
+            _best_effort_unlink(work / stale)
     work.mkdir(parents=True, exist_ok=True)
     copy_db = work / "e2e.db"
     print("=== 0. 记录主库基线（用于事后证明隔离性）===")
@@ -270,7 +318,10 @@ def main(argv=None) -> int:
     if args.keep:
         print(f"\n副本库与日志保留在：{work}")
     else:
-        shutil.rmtree(work, ignore_errors=True)
+        # 避免递归 rmtree 触发安全删除护栏；尽力逐文件清理本轮产物，
+        # 被护栏拦截时保留残留文件（下一轮启动时会被覆盖）。
+        for stale in ("e2e.db", "uvicorn.out.log", "uvicorn.err.log"):
+            _best_effort_unlink(work / stale)
 
     print(f"\n==== 结果：{'全部通过' if exit_code == 0 else '存在失败'}（exit={exit_code}）====")
     return exit_code

@@ -105,6 +105,9 @@ class Product(Base):
     title: Mapped[str] = mapped_column(String(512))
     category: Mapped[str] = mapped_column(String(64), default="")
     brand: Mapped[str] = mapped_column(String(128), default="")
+    # HS 归类（国际统一商品编码），关税与进口税计算的唯一依据。
+    # 无编码时关税引擎按「目的国兜底税率」处理并显式标记为估算，不静默按 0 计。
+    hs_code: Mapped[str] = mapped_column(String(16), default="")
     attrs: Mapped[dict] = mapped_column(JSON, default=dict)      # 标准化属性
     images: Mapped[list] = mapped_column(JSON, default=list)     # 图片 URL 列表
     source_platform: Mapped[str] = mapped_column(String(32), default="1688")  # 1688/amazon/shopee/...
@@ -720,6 +723,150 @@ class ExchangeRate(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     __table_args__ = (Index("uq_fx_tenant_pair_date", "tenant_id", "base_currency",
                             "quote_currency", "effective_at", unique=True),)
+
+
+# ---------------------------------------------------------------- 跨境成本：关税/物流/合规
+#
+# 为什么单开一节：2026 年低值包裹免税全球退坡后，关税、进口税与目的国准入认证
+# 从「可忽略」变成跨境直邮的第一成本项与第一封店原因，而在此之前全库没有任何
+# 关务/物流/目的国合规建模（利润算出来的是 2019 年的口径）。本节四张配置表 +
+# 一张证据表构成「到岸成本」的数据底座。
+#
+# 配置表统一约定（与 settings_service 的三级回退同构）：
+#   tenant_id = NULL  → 平台内置口径（所有租户可见，由平台服务商维护）
+#   tenant_id = <id>  → 该租户的自有覆盖，优先级高于平台内置
+#   两者皆无          → 代码内 DEFAULT_* 兜底（见 services/duty.py 等）
+# 这样「主库尚未灌数据」时系统依旧可用，且不把参考数据硬塞进迁移。
+
+class DutyRate(Base):
+    """目的国关税税率：目的国 × HS 前缀 × 生效期。
+
+    美国 $800 de minimis 全球暂停（E.O. 14324 及后续 EO）后全部渠道需报关缴税；
+    欧盟 (EU) 2026/382 自 2026-07-01 起废除 €150 关税豁免，过渡期按 HS 税则子目
+    「每件 €3」定额征收，2028-07-01 转正常税则。税率随目的国/归类/时间变化，
+    因此必须是带生效期的数据表，不能写死成公式。
+    """
+    __tablename__ = "duty_rates"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tenants.id", name="fk_duty_rates_tenant_id_tenants"),
+        nullable=True, index=True)
+    destination_country: Mapped[str] = mapped_column(String(8), index=True)   # US/EU/GB/…
+    hs_prefix: Mapped[str] = mapped_column(String(12), default="")            # "" = 该国兜底
+    rate_type: Mapped[str] = mapped_column(String(16), default="ad_valorem")  # ad_valorem/fixed_per_item
+    rate: Mapped[float] = mapped_column(Float, default=0)        # 从价：0.075；每件定额：3.0
+    currency: Mapped[str] = mapped_column(String(8), default="USD")           # 定额税的币种
+    de_minimis: Mapped[float | None] = mapped_column(Float, nullable=True)    # 申报货值低于此值免税
+    effective_from: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    source_url: Mapped[str] = mapped_column(String(512), default="")
+    note: Mapped[str] = mapped_column(String(256), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    __table_args__ = (Index("ix_duty_rates_lookup", "destination_country", "hs_prefix"),)
+
+
+class LogisticsRoute(Base):
+    """物流渠道计费方案（直邮/快递/头程/海外仓/FBA）。
+
+    把物流成本从一条线性公式升级为可配置费率：计费重取
+    ``max(实重, 体积重=长×宽×高/体积系数)``，再按首重 + 续重/按立方/按件计费，
+    并叠加燃油与旺季附加率。泡货（体积重大于实重）此前完全未计价。
+    """
+    __tablename__ = "logistics_routes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tenants.id", name="fk_logistics_routes_tenant_id_tenants"),
+        nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(64))
+    channel_type: Mapped[str] = mapped_column(String(24), default="direct_mail")
+    destination_country: Mapped[str] = mapped_column(String(8), default="")   # "" = 通用
+    billing_method: Mapped[str] = mapped_column(String(16), default="per_kg")  # per_kg/per_cbm/per_item
+    first_weight_kg: Mapped[float] = mapped_column(Float, default=0.5)
+    first_weight_fee: Mapped[float] = mapped_column(Float, default=0)
+    additional_per_kg: Mapped[float] = mapped_column(Float, default=0)
+    per_cbm: Mapped[float] = mapped_column(Float, default=0)
+    per_item: Mapped[float] = mapped_column(Float, default=0)
+    volumetric_divisor: Mapped[int] = mapped_column(Integer, default=6000)
+    min_charge: Mapped[float] = mapped_column(Float, default=0)
+    fuel_surcharge_rate: Mapped[float] = mapped_column(Float, default=0)
+    peak_surcharge_rate: Mapped[float] = mapped_column(Float, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    effective_from: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    note: Mapped[str] = mapped_column(String(256), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    __table_args__ = (Index("ix_logistics_routes_lookup", "destination_country", "channel_type"),)
+
+
+class PlatformFeeSchedule(Base):
+    """平台费率：平台 × 类目 × 站点 × 生效期。
+
+    替代硬编码的 ``DEFAULT_FEES`` 单一费率。真实费率是「佣金 + 交易手续费 +
+    服务费」的结构，且随类目/站点/卖家等级分层；用一个数字代表一个平台的
+    费率结构，结论必然偏。
+    """
+    __tablename__ = "platform_fee_schedules"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tenants.id", name="fk_platform_fee_schedules_tenant_id_tenants"),
+        nullable=True, index=True)
+    platform: Mapped[str] = mapped_column(String(32), index=True)
+    category: Mapped[str] = mapped_column(String(64), default="")   # "" = 该平台默认
+    site: Mapped[str] = mapped_column(String(16), default="")       # "" = 全部站点
+    commission_rate: Mapped[float] = mapped_column(Float, default=0)
+    transaction_rate: Mapped[float] = mapped_column(Float, default=0)
+    service_rate: Mapped[float] = mapped_column(Float, default=0)
+    effective_from: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    note: Mapped[str] = mapped_column(String(256), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    __table_args__ = (Index("ix_platform_fee_lookup", "platform", "category", "site"),)
+
+
+class DestinationComplianceRule(Base):
+    """目的国产品准入合规要求：目的国 × 类目 × 认证项。
+
+    补上「只审平台规则、不审目的国法规」的缺口。CE/UKCA/FCC/FDA/CPC/PSE/KC、
+    EPR/REACH/RoHS、电池 UN38.3/MSDS —— 封店/下架/罚没九成死在这些上。
+    """
+    __tablename__ = "destination_compliance_rules"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tenants.id", name="fk_destination_compliance_rules_tenant_id_tenants"),
+        nullable=True, index=True)
+    destination_country: Mapped[str] = mapped_column(String(8), index=True)
+    category: Mapped[str] = mapped_column(String(64), default="")   # "" = 全部类目
+    requirement: Mapped[str] = mapped_column(String(32))            # CE/FCC/FDA/EPR/UN38.3…
+    mandatory: Mapped[bool] = mapped_column(Boolean, default=True)
+    effective_from: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    source_url: Mapped[str] = mapped_column(String(512), default="")
+    note: Mapped[str] = mapped_column(String(256), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    __table_args__ = (Index("ix_destination_compliance_lookup",
+                            "destination_country", "category"),)
+
+
+class ProductComplianceEvidence(Base):
+    """商品的目的国合规证据：某商品在目的国已取得某项认证及其有效期。
+
+    没有证据表，合规门禁就只能「提示要求」而无法判定「是否已具备」——
+    上架前必须能回答「这个 SKU 卖到德国，CE 和 EPR 齐了吗、过期了吗」。
+    """
+    __tablename__ = "product_compliance_evidence"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_product_compliance_evidence_tenant_id_tenants"),
+        index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    destination_country: Mapped[str] = mapped_column(String(8), default="")
+    requirement: Mapped[str] = mapped_column(String(32))
+    evidence_ref: Mapped[str] = mapped_column(String(512), default="")   # 证书编号或文件 URL
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    note: Mapped[str] = mapped_column(String(256), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    __table_args__ = (UniqueConstraint("tenant_id", "product_id", "destination_country",
+                                       "requirement", name="uq_product_compliance_evidence"),)
 
 
 class PlatformSettlementRecord(Base):

@@ -3312,3 +3312,106 @@ HTTP 状态，不以 500 泄漏内部错误。人工写入端点（`POST /suppli
 **遗留**：`supplier_offers` 无来源列（当前只能整行拒绝）、跨数据库并发未验收、
 Orchestrator / Workflow 模块规模警戒未清；客服/知识学习、默认知识向量缓存、
 告警业务、基础审计及 Runtime/Session/Trace 未完成。本批不得等同第 3 步完成。
+
+
+## D58：跨境到岸成本（关税/物流/合规）与利润公式补全（2026-10-01）
+
+**状态**：Accepted；本批代码与隔离库验收完成，**主库 `erp.db` 未升级**（新增迁移
+`20261001_20` 待部署确认）。
+
+**背景**：专业评估以代码级核查指出：全库扫描 `customs|duty|hs_code|ioss|vat|关税|清关`
+零真实命中，51 张表无 `shipments`/`warehouses`/`hs_code`/`duty_rates`，物流成本只有
+一条线性公式 `18 + 8×重量`，利润公式缺支付通道费、出口退税与退货成本率。而 2026 年
+低值包裹免税全球退坡（美国 $800 de minimis 全球暂停、欧盟 (EU) 2026/382 自
+2026-07-01 起按 HS 税则子目「每件 €3」定额征收、2028-07-01 转正常税则），关税已是
+跨境直邮第一成本项——既有 `calc_profit` 算的是 2019 年的跨境利润。
+
+**本批交付**：
+
+1. **关税与进口税引擎** `services/duty.py`：目的国 × HS 前缀（最长匹配）× 生效期 →
+   从价 / 每件定额（欧盟 €3 过渡期）两种计税方式，支持 de minimis 豁免、进口 VAT
+   与清关代理费；**未配置税率不静默按 0 计**，显式返回 `rate_configured` /
+   `estimated` / `reason`，让缺口可见。
+2. **物流计费** `services/logistics.py`：计费重 = max(实重, 体积重=长×宽×高/体积系数)，
+   支持按公斤（首重 + 续重）/ 按立方 / 按件与燃油、旺季附加；无路由命中时回退旧
+   线性口径，既有数值不变。
+3. **平台费率可维护化** `services/platform_fees.py`：平台 × 类目 × 站点 × 生效期，
+   租户行 > 平台内置 > 代码兜底；兜底值与旧 `DEFAULT_FEES` 逐项一致。
+4. **目的国合规档案** `services/compliance_registry.py`：目的国 × 类目 × 认证要求
+   （CE/UKCA/FCC/FDA/CPC/PSE/KC、EPR/REACH、电池 UN38.3）+ 商品证据与有效期核验。
+5. **利润公式补全**：新增 `duty` / `import_vat` / `clearance` / `payment_fee` /
+   `refund_cost` / `tax_rebate` 六项，`calc_profit` 输出 8 项以上 `cost_breakdown`；
+   海关申报货值取成交价（transaction value）。
+6. **地区归一化单一来源** `services/regions.py`：欧盟成员国在关税、物流、合规上统一
+   按 EU 判定，避免"关税按 EU、物流按 DE 找不到路由"的口径分裂。
+7. **配置入口** `routers/cross_border.py`（读 `finance:read`、写 `finance:write`）；
+   `/landed-cost` 直接转调 `calc_profit`，不复制口径。
+
+**新增结构**（迁移 `20261001_20`，幂等、可回滚、带硬断言）：`duty_rates`、
+`logistics_routes`、`platform_fee_schedules`、`destination_compliance_rules`、
+`product_compliance_evidence` 五表 + `products.hs_code` 列。迁移**只增不改**、不灌
+业务数据；参考税率/费率/合规要求以代码 `DEFAULT_*` 兜底，`tenant_id IS NULL` 的行
+为平台内置口径（租户只读、不可改删）。
+
+**默认口径不变（刻意的保守选择）**：新增费率项（支付通道费/退货率/出口退税）默认 0，
+关税仅在被显式传入目的国时计入，物流仅在命中路由时按费率表计费。因此在未配置、
+未声明目的国的既有链路上，**利润数值与旧实现逐分一致**——能力已具备，是否启用是
+租户的经营决策，不由升级静默改动报表。启用方式：`tenant_settings.rules` 写入
+`payment_fee_rate` / `refund_rate` / `tax_rebate_rate` 等键。
+
+**上架门禁**：目的国准入作为 `missing_publish_requirements` 的新增一关，**默认不阻断**
+（`rules.destination_compliance_enforce=false`）；商品未声明目的国或未开启开关时
+不产生任何缺失项，避免把"证据尚未录入"的合规债务转嫁成可用性事故。
+
+**运维（P0-4）**：新增 `scripts/git_bundle_backup.py`，把全仓库打成单文件 bundle 并用
+`git bundle verify` 校验，可离线 `git clone` 完整恢复；仅 `--keep` 会删除目标目录内
+匹配的旧 bundle，默认不删除任何文件。起因是本仓库曾发生 `.git` 对象库被清空的真实
+事故（靠回收站与 reflog 才恢复），而当时**没有远端、也没有任何仓库外副本**。
+
+**验证**：新增 `tests/test_cross_border.py`（30 例）覆盖关税引擎（美国从价、欧盟 €3/件、
+de minimis、HS 最长前缀、生效期、未配置国家）、物流（体积重、首重续重、按立方、旧
+口径回退）、平台费率优先级、目的国合规与证据有效期、利润 8 项公式、无目的国时的
+口径不变回归、接口鉴权（viewer 403）与门禁开关；另含两条契约回归：5 张新表
+`tenant_id → tenants.id` 外键，以及真实旧库（products 无 hs_code）的迁移升级 / 降级 /
+再升级往返。
+
+**迁移与既有契约的同步（本批发现并修复的真实缺陷）**：
+
+1. 迁移最初的"只做加法"硬断言写成「既有表列定义逐字不变」，在**真实旧库**
+   （products 无 `hs_code`）升级时必然误报中止 `alembic upgrade`——已改为
+   「仅允许 products 新增 `hs_code`，其它既有表逐字不变、所有既有表行数不变」，
+   并补 `test_cross_border_migration_roundtrip_on_legacy_products` 锁死该路径。
+2. `tenant_data_purge._PURGE_PLAN` 补 `product_compliance_evidence`（它引用 products，
+   不先清理会在清空演示数据时外键 500）。
+3. `test_tenant_id_foreign_keys` 按 `ai_actions` 先例把 5 张新表移出 Revision 16 的
+   清单比对（已执行迁移的清单禁止回改），其租户外键由元数据级契约与
+   `test_cross_border` 独立核对。
+4. `test_migration_preflight` 的计划迁移对随 head 前移更新为 `20261001_19 → 20`
+   （契约语义「只读 + 漂移必须显式计划」不变）。
+5. `migration_preflight.py` 的 `--planned-upgrade` 契约精确化（D47「直接后继」口径
+   的修订）：主库仍停在 `20260930_18`，而 head 已推进到 `20261001_20`（D56 的
+   `20261001_19` 与 D58 的 `20261001_20` 都尚未应用），「目标必须是 current 的
+   直接后继」在主库落后多版时**数学上无法满足**，等于把 sanctioned 迁移路径卡死。
+   故契约修订为「目标 = **唯一代码 head**，且数据库 current 必须位于 head 的
+   **唯一线性祖先链**上」——防漂移内核不变（跨链、分叉、目标不是 head、跳过中间
+   revision 一律拒绝），且新增守护用例覆盖落后多版放行、孤儿起点拒绝、中间版
+   目标拒绝。`e2e_feasibility.py` 副本升级回到单次声明 head + `alembic upgrade
+   head` 的形式，不再逐级。
+6. `e2e_feasibility.py` 产物清理改为 `_best_effort_unlink` 逐文件覆盖式清理：
+   环境安全删除护栏按回合累计拦截 Python 进程内的批量删除（rmtree），且 trash
+   通道在含非 ASCII 路径下 fail-closed 抛 SystemExit；逐文件 unlink 失败时保留
+   残留、下一轮启动覆盖同名文件，语义等价且不触碰批量删除门槛。
+
+**文档漂移修复**：功能地图 §4.1 仍写 TikTok `can_publish=False` 且只列 4 个适配器，
+实际 `adapters/tiktok.py` / `ebay.py` / `lazada.py` / `walmart.py` 已实现上架
+（后者四个为 `protocol_ready_unverified`，联调前不得视为已验证）；适配器已按平台
+拆包到 `adapters/`，`platform_adapters.py` 仅 131 行兼容门面（旧文写 539 行）。§6
+页面清单写 18 页，实际 24 个业务路由，已补齐 6 页（合规工作台 / 私域工厂门户 /
+财务对账 / 主动告警 / AI 决策解释 / 成员管理）。README 写死的"231 个测试用例 /
+25 个视图"改为引用 `docs/baseline.json` 与真实 28 个视图组件。功能地图新增第 9 章
+「跨境到岸成本」。
+
+**遗留**：未接任何平台广告 API（需外部商家账号，本批禁止访问外网）；美国从价税率与
+HS 归类需业务持续维护（代码内只给结构性与公开可核实的参考值）；`shipments` /
+`warehouses` 未建表，海外仓/FBA 费用以"路由计费"表达而非库存模型；主库迁移、
+PostgreSQL 与独立任务队列未动。

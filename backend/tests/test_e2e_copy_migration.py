@@ -13,6 +13,14 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(e2e, "_BACKEND_DIR", tmp_path)
     work = tmp_path / "backups" / "e2e_feasibility"
     work.mkdir(parents=True)
+    # 脚本按 revision 文件反查「逐级后继」以支持落后多版时的逐级 planned-upgrade，
+    # 因此这里提供等价的最小迁移链（18 → 19）。
+    versions = tmp_path / "migrations" / "versions"
+    versions.mkdir(parents=True)
+    (versions / "20260930_18_base.py").write_text(
+        "revision = '20260930_18'\ndown_revision = None\n", encoding="utf-8")
+    (versions / "20261001_19_next.py").write_text(
+        "revision = '20261001_19'\ndown_revision = '20260930_18'\n", encoding="utf-8")
     target = work / "e2e.db"
     with sqlite3.connect(target) as db:
         db.executescript("CREATE TABLE alembic_version(version_num TEXT);"

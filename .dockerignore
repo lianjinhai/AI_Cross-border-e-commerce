@@ -39,3 +39,5 @@ backend/tests/
 .github/
 AGENTS.md
 README.md
+# Vite 构建临时文件不进镜像
+frontend/vite.config.js.timestamp-*.mjs

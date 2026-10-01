@@ -19,6 +19,11 @@ router = APIRouter(prefix="/pricing", tags=["pricing"])
 class CalcIn(BaseModel):
     product_id: int
     price: float | None = None
+    # 跨境到岸成本（D58）：给出目的国即计入关税/进口 VAT/清关费与路由物流费。
+    destination_country: str = ""
+    channel_type: str = ""
+    site: str = ""
+    qty: int = 1
 
 
 class SuggestIn(BaseModel):
@@ -50,7 +55,10 @@ def calc(body: CalcIn, user: User = Depends(require_write), db: Session = Depend
     if not p or p.tenant_id != user.tenant_id:
         raise HTTPException(status_code=404, detail="商品不存在")
     with PricingAgent(user.tenant_id) as a:
-        return a.calc_profit(body.product_id, body.price)
+        return a.calc_profit(body.product_id, body.price,
+                            destination_country=body.destination_country,
+                            channel_type=body.channel_type, site=body.site,
+                            qty=max(int(body.qty or 1), 1))
 
 
 @router.post("/suggest")

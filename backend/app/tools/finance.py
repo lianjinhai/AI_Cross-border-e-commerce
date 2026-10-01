@@ -44,7 +44,7 @@ class FinanceTool(BaseTool):
         ToolSpec(tool="finance", method="calculate_profit", permission="finance:read",
                  writes=False, summary="按唯一成本口径计算单件真实利润与利润率"),
         ToolSpec(tool="finance", method="get_unit_economics", permission="finance:read",
-                 writes=False, summary="拆出采购/物流/佣金/广告/汇率等成本要素"),
+                 writes=False, summary="拆出采购/物流/关税/佣金/广告/汇率等成本要素，可指定目的国"),
         ToolSpec(tool="finance", method="get_fx_rate", permission="finance:read",
                  writes=False, summary="读取最近一条生效汇率"),
         ToolSpec(tool="finance", method="get_campaigns", permission="finance:read",
@@ -53,20 +53,27 @@ class FinanceTool(BaseTool):
                  writes=False, summary="广告总花费/总收入聚合（经营概况 ROI 的输入）"),
     )
 
-    def _calculate_profit(self, product_id: int, price=None) -> Reading:
+    def _calculate_profit(self, product_id: int, price=None, destination_country: str = "",
+                          channel_type: str = "", site: str = "", qty: int = 1) -> Reading:
         pid = as_int(product_id, "product_id")
         self._require_product(pid)
         try:
-            data = calc_profit(self.db, self.context.tenant_id, pid, price)
+            data = calc_profit(self.db, self.context.tenant_id, pid, price,
+                               destination_country=destination_country,
+                               channel_type=channel_type, site=site, qty=qty)
         except ValueError as exc:  # costing 对「缺汇率」等 fail-closed 场景抛 ValueError
             raise ToolError(ERR_NOT_FOUND, str(exc)) from exc
         return reading(data, table="products", product_id=pid)
 
-    def _get_unit_economics(self, product_id: int, platform: str = "") -> Reading:
+    def _get_unit_economics(self, product_id: int, platform: str = "",
+                            destination_country: str = "", channel_type: str = "",
+                            site: str = "", qty: int = 1) -> Reading:
         pid = as_int(product_id, "product_id")
         product = self._require_product(pid)
         try:
-            data = dict(cost_elements(self.db, self.context.tenant_id, product, platform))
+            data = dict(cost_elements(self.db, self.context.tenant_id, product, platform,
+                                      destination_country=destination_country,
+                                      channel_type=channel_type, site=site, qty=qty))
         except ValueError as exc:
             raise ToolError(ERR_NOT_FOUND, str(exc)) from exc
         data["product_id"] = pid

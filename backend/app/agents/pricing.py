@@ -86,12 +86,20 @@ class PricingAgent(BaseAgent):
     def _best_purchase(self, product: Product) -> tuple[float, int | None]:
         return costing.best_purchase(self.db, self.tenant_id, product)
 
-    def cost_elements(self, product: Product, platform: str = "") -> dict:
-        return costing.cost_elements(self.db, self.tenant_id, product, platform)
+    def cost_elements(self, product: Product, platform: str = "",
+                      destination_country: str = "", channel_type: str = "",
+                      site: str = "", qty: int = 1) -> dict:
+        return costing.cost_elements(self.db, self.tenant_id, product, platform,
+                                     destination_country=destination_country,
+                                     channel_type=channel_type, site=site, qty=qty)
 
     # ---------- 利润计算 ----------
-    def calc_profit(self, product_id: int, price: float | None = None) -> dict:
-        return costing.calc_profit(self.db, self.tenant_id, product_id, price)
+    def calc_profit(self, product_id: int, price: float | None = None,
+                    destination_country: str = "", channel_type: str = "",
+                    site: str = "", qty: int = 1) -> dict:
+        return costing.calc_profit(self.db, self.tenant_id, product_id, price,
+                                   destination_country=destination_country,
+                                   channel_type=channel_type, site=site, qty=qty)
 
     # ---------- 动态定价 ----------
     def suggest_price(self, product_id: int) -> dict:

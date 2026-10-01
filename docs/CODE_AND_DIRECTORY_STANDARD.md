@@ -69,6 +69,11 @@ AI-电商ERP/
 │   │   │   ├── trend_refresh.py        # 内置趋势刷新 Action 执行与依据重验
 │   │   │   ├── trend_candidates.py     # 确定性日种子候选，Agent/Executor 复算共用
 │   │   │   ├── supply_outputs.py       # 供应商评分/预测/私域匹配与报价原子保存（D57）
+│   │   │   ├── regions.py              # 地区/国家归一化唯一口径（欧盟按 EU 判定，D58）
+│   │   │   ├── duty.py                 # 关税与进口税引擎：目的国×HS×申报货值（D58）
+│   │   │   ├── logistics.py            # 物流计费：体积重/首重续重/按立方/附加（D58）
+│   │   │   ├── platform_fees.py        # 平台费率表解析：平台×类目×站点×生效期（D58）
+│   │   │   ├── compliance_registry.py  # 目的国准入要求与证据核验（D58）
 │   │   │   ├── schedule_identity.py    # 调度真实身份绑定与权限复核
 │   │   │   ├── settings_service.py      # 配置三级回退（P1-10 隔离）
 │   │   │   ├── shop_scope.py            # 店铺可见性守卫（归档店铺一律视为不存在）
@@ -90,6 +95,7 @@ AI-电商ERP/
 │   ├── scripts/                    # 【运维】迁移/备份/审计/验证脚本，不参与运行时
 │   │   ├── migration_preflight.py       # 迁移前 12 项预检
 │   │   ├── backup_restore_drill.py      # 冷备与恢复演练
+│   │   ├── git_bundle_backup.py         # Git 单文件 bundle 归档备份与校验（D58，P0-4）
 │   │   ├── live_acceptance.py           # 真服务业务闭环验收（7 步）
 │   │   ├── e2e_feasibility.py           # 端到端可行性（真启动 + 隔离性校验）
 │   │   ├── docker_feasibility.py        # Docker 镜像可行性（真构建 + 真运行 + 真登录）

@@ -37,6 +37,7 @@ from ..models import (
     PlatformPublishAttempt,
     PricingRecord,
     Product,
+    ProductComplianceEvidence,
     ProductPerformance,
     ProductScore,
     PurchaseOrder,
@@ -67,6 +68,7 @@ _PURGE_PLAN = (
     (Order, "orders"),                                       # → products / listings / shops
     (Listing, "listings"),                                   # → products
     (ProductPerformance, "product_performances"),            # → products（M1 飞轮缓存）
+    (ProductComplianceEvidence, "product_compliance_evidence"),  # → products（目的国合规证据，D58）
     (Product, "products"),                                   # 最上层，最后删
 )
 

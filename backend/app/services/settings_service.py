@@ -25,13 +25,18 @@ PLATFORM_KEYS = frozenset({"llm", "1688_api"})
 # 租户级配置：每个租户独立可覆盖
 TENANT_KEYS = frozenset({"platform_fees", "fx", "rules"})
 
-# 代码内兜底默认值（与 routers/ai.py 的 _SETTING_DEFAULTS 保持一致）
+# 代码内兜底默认值（与 services/costing.py 的 DEFAULT_RULES 保持一致）
 DEFAULTS: dict[str, dict] = {
     "platform_fees": {"shopee": 0.06, "amazon": 0.15, "shopify": 0.02,
                       "ebay": 0.12, "temu": 0.05, "tiktok": 0.08},
     "fx": {"USD": 7.12, "EUR": 7.8},
+    # D58：新增跨境成本项默认 0（未配置即不计入），避免改变既有利润口径；
+    # 启用示例：{"payment_fee_rate": 0.01, "refund_rate": 0.05, "tax_rebate_rate": 0.13}
     "rules": {"min_margin": 0.15, "target_margin": 0.35,
-              "logistics_base": 18.0, "logistics_per_kg": 8.0, "ads_default": 1.5},
+              "logistics_base": 18.0, "logistics_per_kg": 8.0, "ads_default": 1.5,
+              "payment_fee_rate": 0.0, "refund_rate": 0.0, "tax_rebate_rate": 0.0,
+              "vat_in_rate": 0.13, "clearance_fee_cny": 12.0,
+              "landed_cost_include_vat": True, "destination_compliance_enforce": False},
 }
 
 

@@ -35,6 +35,9 @@ class ProductIn(BaseModel):
     sku: str = ""
     category: str = ""
     brand: str = ""
+    # HS 归类（关税计算依据）。None 表示「本次未提交该字段」，PUT 时保留原值，
+    # 避免旧前端表单未带该字段就把已维护的 HS 编码清空。
+    hs_code: str | None = None
     attrs: dict = {}
     images: list[str] = []
     source_platform: str = "1688"
@@ -103,6 +106,7 @@ def create_product(body: ProductIn, user: User = Depends(require_write),
                    db: Session = Depends(get_db)):
     p = Product(tenant_id=user.tenant_id, sku=body.sku or mock_market.gen_sku(),
                 title=body.title, category=body.category, brand=body.brand,
+                hs_code=(body.hs_code or "").strip(),
                 attrs=body.attrs, images=body.images,
                 source_platform=body.source_platform, source_url=body.source_url)
     db.add(p)
@@ -214,8 +218,13 @@ def product_detail(product_id: int, user: User = Depends(get_current_user),
 def update_product(product_id: int, body: ProductIn,
                    user: User = Depends(require_write), db: Session = Depends(get_db)):
     p = _get_owned(db, user.tenant_id, product_id)
-    for k, v in body.model_dump().items():
+    data = body.model_dump()
+    # hs_code 未提交时保留原值（None 语义），其余字段与既有行为一致。
+    hs_code = data.pop("hs_code", None)
+    for k, v in data.items():
         setattr(p, k, v)
+    if hs_code is not None:
+        p.hs_code = hs_code.strip()
     p.updated_at = datetime.utcnow()
     db.commit()
     return to_dict(p)

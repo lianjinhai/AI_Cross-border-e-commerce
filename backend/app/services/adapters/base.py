@@ -97,7 +97,38 @@ class BaseAdapter:
                 missing.append(f"缺少必填字段 {required}")
         if not (listing.keywords or []):
             missing.append("Listing 缺少关键词")
+        missing.extend(self._destination_access_issues(product))
         return missing
+
+    def _destination_access_issues(self, product) -> list[str]:
+        """目的国准入检查（P1-4）：默认**不阻断**，需租户显式开启。
+
+        为什么默认关闭：既有商品与 Listing 都没有目的国与证据数据，若默认强制
+        阻断，会让所有上架流程因"未录入证据"而失败——那是把合规债务转嫁成可用性
+        事故。开启开关（tenant_settings.rules.destination_compliance_enforce=true）
+        且商品声明了目的国后才参与阻断。目的国来源：product.attrs.destination_country
+        （后续可由店铺站点覆盖）。
+        """
+        from .. import compliance_registry
+        from ..costing import DEFAULT_RULES, setting_for
+
+        attrs = product.attrs or {}
+        country = (attrs.get("destination_country") or attrs.get("target_country") or "")
+        if not country:
+            return []
+        rules = setting_for(self.db, self.shop.tenant_id, "rules", DEFAULT_RULES)
+        if not rules.get("destination_compliance_enforce"):
+            return []
+        report = compliance_registry.check_evidence(self.db, self.shop.tenant_id,
+                                                   product, country)
+        issues = []
+        for item in report.get("blocking", []):
+            if "valid_until" in item:
+                issues.append(f"目的国 {report['country']} 准入认证已过期："
+                              f"{item['requirement']}（{item['valid_until']}）")
+            else:
+                issues.append(f"目的国 {report['country']} 缺少准入认证：{item['requirement']}")
+        return issues
 
     def publish_listing(self, listing, product, *, resume=None, checkpoint=None) -> PublishResult:
         raise PlatformError(f"{self.label} 上架协议待接入")

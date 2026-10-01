@@ -77,3 +77,7 @@ _wip_backup/
 
 # ---- Windows 保留设备名残留（禁止用 `> nul`，会生成此垃圾文件）----
 nul
+
+# ---- Vite 构建临时文件（每次 `npm run build` 生成，禁止入库）----
+frontend/vite.config.js.timestamp-*.mjs
+*.timestamp-*.mjs

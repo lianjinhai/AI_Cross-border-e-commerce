@@ -102,7 +102,12 @@ def test_migration_table_list_matches_model_metadata(client):
     # 不在本迁移清单内（其中 workspace_profiles 不注册在模型元数据上）。
     # ai_actions 由后续 Revision 18 新建并在该迁移中声明外键；禁止回改已执行的
     # Revision 16 清单。它的外键由 test_ai_action_migration 独立核对。
-    expected -= {"users", "tenant_settings", "workspace_profiles", "ai_actions"}
+    # D58 的 5 张跨境成本表由后续 Revision 20 新建并在该迁移中声明外键，同理不回改
+    # Revision 16 清单；其 tenant_id → tenants.id 由本文件首条元数据级契约
+    # （test_all_tenant_id_columns_have_foreign_key）与 test_cross_border 共同核对。
+    expected -= {"users", "tenant_settings", "workspace_profiles", "ai_actions",
+                 "duty_rates", "logistics_routes", "platform_fee_schedules",
+                 "destination_compliance_rules", "product_compliance_evidence"}
 
     assert listed == expected, (
         "迁移清单与模型层不一致——漏补：%s；多补：%s"

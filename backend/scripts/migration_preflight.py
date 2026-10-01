@@ -248,6 +248,28 @@ def discover_alembic_heads(versions_dir: Path) -> tuple:
     return heads, revisions, files
 
 
+def _ancestry_path(revisions: dict, current: str, head: str) -> list[str] | None:
+    """head 沿 down_revision 上溯到 current 的线性链（不含 current）；不可达返回 None。
+
+    用于 `--planned-upgrade`：主库一次落后多个迁移时仍可逐级应用，但仍要求目标是
+    **唯一代码 head**、且 current 在它的**唯一线性祖先链**上——分叉、跨链或目标不是
+    head 一律拒绝，防漂移内核不变（D58 对 D47「直接后继」口径的精确化）。
+    """
+    path: list[str] = []
+    node = head
+    seen: set[str] = set()
+    while node != current:
+        if node in seen:
+            return None
+        seen.add(node)
+        downs = revisions.get(node) or []
+        if len(downs) != 1:
+            return None
+        node = downs[0]
+        path.append(node)
+    return path
+
+
 def check_alembic_ledger(con: sqlite3.Connection, versions_dir: Path = VERSIONS_DIR,
                          planned_upgrade: str | None = None) -> dict:
     heads, revisions, files = discover_alembic_heads(versions_dir)
@@ -271,13 +293,16 @@ def check_alembic_ledger(con: sqlite3.Connection, versions_dir: Path = VERSIONS_
                        "代码 revision 链存在 %d 个 head（%s），账本歧义，禁止 upgrade/stamp。"
                        % (len(heads), ", ".join(heads) or "无"), evidence)
     if planned_upgrade:
-        if (len(current) == 1 and heads[0] == planned_upgrade
-                and revisions.get(planned_upgrade) == current):
+        path = (_ancestry_path(revisions, current[0], planned_upgrade)
+                if (len(current) == 1 and heads[0] == planned_upgrade) else None)
+        if path is not None:
+            evidence["planned_path"] = path
             return _result("alembic_ledger", "Alembic 账本一致性", P0, PASS,
-                           "计划迁移已验证：%s 是当前版本 %s 的直接后继。"
-                           % (planned_upgrade, current[0]), evidence)
+                           "计划迁移已验证：%s 可从当前版本 %s 沿线性链到达（%d 步）。"
+                           % (planned_upgrade, current[0], len(path)), evidence)
         return _result("alembic_ledger", "Alembic 账本一致性", P0, FAIL,
-                       "计划迁移目标必须是唯一代码 head，且是数据库 current 的直接后继。", evidence)
+                       "计划迁移目标必须是唯一代码 head，且数据库 current 必须是它的"
+                       "线性祖先（跨链、分叉或跳过中间 revision 一律拒绝）。", evidence)
     if sorted(current) != heads:
         return _result("alembic_ledger", "Alembic 账本一致性", P0, FAIL,
                        "迁移账本漂移：数据库 current=%s，代码 head=%s；禁止直接 upgrade 或盲目 stamp。"

@@ -56,12 +56,16 @@ EXPECTED_CHECK_KEYS = [
 ]
 
 
-def test_schedule_identity_planned_upgrade_ledger_is_readonly(tmp_path):
-    """契约守护：旧库需要显式计划，不能将新head账本漂移静默放行。"""
-    db = _build_db(tmp_path, alembic_rev="20260930_18")
+def test_planned_upgrade_ledger_requires_current_head_and_stays_readonly(tmp_path):
+    """契约守护：旧库需要显式计划，不能将新head账本漂移静默放行。
+
+    计划目标必须是「唯一代码 head」且数据库 current 位于其线性祖先链上。追加迁移后
+    这一对会随 head 前移更新（D56 为 18→19，D58 为 19→20）。
+    """
+    db = _build_db(tmp_path, alembic_rev="20261001_19")
     before = hashlib.sha256(db.read_bytes()).hexdigest()
     versions = BACKEND_DIR / "migrations" / "versions"
-    result = _run(db, versions, "--planned-upgrade", "20261001_19")
+    result = _run(db, versions, "--planned-upgrade", "20261001_20")
     assert result.returncode == 0
     assert hashlib.sha256(db.read_bytes()).hexdigest() == before
     result = _run(db, versions)
@@ -160,7 +164,12 @@ def test_explicit_direct_successor_upgrade_passes(tmp_path):
     assert _check(report, "alembic_ledger")["status"] == "PASS"
 
 
-def test_planned_upgrade_rejects_wrong_target_and_skipped_revision(tmp_path):
+def test_planned_upgrade_requires_head_and_linear_ancestry(tmp_path):
+    """契约：目标必须是最新 head，且数据库 current 必须是它的线性祖先。
+
+    落后多版（test_01 → test_02 → test_03）时允许沿链一次声明到 head；但目标不是
+    head、或 current 不在 head 的祖先链上（跨链）一律拒绝，防漂移内核不变。
+    """
     versions = _write_versions(tmp_path, "test_01")
     (versions / "test_02_next.py").write_text(
         "revision = 'test_02'\ndown_revision = 'test_01'\n", encoding="utf-8")
@@ -168,10 +177,26 @@ def test_planned_upgrade_rejects_wrong_target_and_skipped_revision(tmp_path):
         "revision = 'test_03'\ndown_revision = 'test_02'\n", encoding="utf-8")
     db = _build_db(tmp_path)
 
-    for target in ("test_02", "test_03", "unknown"):
+    # 目标不是唯一 head（test_02 只是中间版）、或目标不存在 → 拒绝
+    for target in ("test_02", "unknown"):
         result = _run(db, versions, "--planned-upgrade", target, "--json")
-        assert result.returncode == 2
+        assert result.returncode == 2, target
         assert _check(_report(result), "alembic_ledger")["status"] == "FAIL"
+
+    # 目标 = 唯一 head 且 current 在其线性祖先链上 → 允许（落后两版可一次声明到 head）
+    ok = _run(db, versions, "--planned-upgrade", "test_03", "--json")
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    ledger = _check(_report(ok), "alembic_ledger")
+    assert ledger["status"] == "PASS"
+    assert ledger["evidence"]["planned_path"] == ["test_02", "test_01"]
+
+    # current 不在 head 的祖先链上（跨链 revision）→ 拒绝
+    other = tmp_path / "other"
+    other.mkdir()
+    orphan = _build_db(other, alembic_rev="test_09")
+    bad = _run(orphan, versions, "--planned-upgrade", "test_03", "--json")
+    assert bad.returncode == 2
+    assert _check(_report(bad), "alembic_ledger")["status"] == "FAIL"
 
 
 def test_planned_upgrade_does_not_hide_other_p0_failures(tmp_path):

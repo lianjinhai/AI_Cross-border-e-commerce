@@ -22,6 +22,7 @@ from .routers import (
     auth,
     bi,
     compliance,
+    cross_border,
     discovery,
     factory_network,
     finance,
@@ -75,7 +76,7 @@ def create_app() -> FastAPI:
     for m in (auth, products, discovery, suppliers, listings, compliance, actions,
               pricing, ads, orders, support, bi, workflows, knowledge, ai,
               schedules, purchases, shops, admin, refunds, settlements, finance,
-              factory_network, me, alerts):
+              factory_network, cross_border, me, alerts):
         app.include_router(m.router, prefix="/api")
 
     @app.get("/api/health", include_in_schema=False)

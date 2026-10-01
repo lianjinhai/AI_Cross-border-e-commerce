@@ -143,7 +143,7 @@ Caddy 自动申请 Let's Encrypt 证书，暴露 80/443，并把真实客户端�
 
 ```bash
 cd backend
-python -m pytest -q          # 231 个测试用例（含发布恢复、代发幂等、财务结算、预测评估、工厂机会归因、店铺归档与配置隔离）
+python -m pytest -q          # 后端全量测试（用例数以 docs/baseline.json 为单一事实源，勿在此写死数字）
 
 # 端到端可行性验证：真启动服务 + 真实 HTTP + 静态前端检查（在数据库副本上跑，不碰业务库）
 python scripts/e2e_feasibility.py
@@ -196,7 +196,7 @@ AI-电商ERP/
 > 规则包为官方文档整理快照（带版本日期），可通过 ERP_RULES_URL 对接远程规则源持续更新；
 > 平台接口字段如有变更，以平台最新文档为准，系统会将平台真实报错原样透传。
 > 演示账号与种子数据仅用于本地演示（可一键清空），商用前请配置真实凭证并清空演示数据。
-├── frontend/                  # Vue3 + Element Plus + ECharts（25 个视图组件）
+├── frontend/                  # Vue3 + Element Plus + ECharts（28 个视图组件）
 └── docs/                      # 契约、决策记录、需求说明书
 ```
 

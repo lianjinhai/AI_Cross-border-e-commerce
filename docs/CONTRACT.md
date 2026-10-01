@@ -30,7 +30,22 @@ from app.ai.knowledge import retrieve                 # retrieve(db, tenant_id, 
 from app.agents.base import BaseAgent                 # BaseAgent(tenant_id)，支持 with；.ask_json(action, system, prompt, fallback, small_task=False) -> (dict, "llm"|"rule")
 ```
 
-Setting 表约定 key：`llm`（见 ai/llm.py DEFAULT_LLM）、`platform_fees`（{"shopee":0.06,"amazon":0.15,"shopify":0.02,"ebay":0.12,"temu":0.05,"tiktok":0.08}）、`fx`（{"USD":7.12,"EUR":7.8}）、`rules`（{"min_margin":0.15,"target_margin":0.35,"logistics_base":18.0,"logistics_per_kg":8.0,"ads_default":1.5}）。读取方式：`db.get(Setting, key)`，不存在用上述默认。
+Setting 表约定 key：`llm`（见 ai/llm.py DEFAULT_LLM）、`platform_fees`（{"shopee":0.06,"amazon":0.15,"shopify":0.02,"ebay":0.12,"temu":0.05,"tiktok":0.08}）、`fx`（{"USD":7.12,"EUR":7.8}）、`rules`（{"min_margin":0.15,"target_margin":0.35,"logistics_base":18.0,"logistics_per_kg":8.0,"ads_default":1.5}；D58 起另可选配 `payment_fee_rate`/`refund_rate`/`tax_rebate_rate`/`vat_in_rate`/`clearance_fee_cny`/`landed_cost_include_vat`/`destination_compliance_enforce`，默认值均不改变既有口径）。读取方式：`db.get(Setting, key)`，不存在用上述默认。
+
+**跨境到岸成本服务（D58，可直接 import，纯领域计算不建会话）**：
+
+```python
+from app.services import duty, logistics, platform_fees, compliance_registry, regions
+duty.compute_landed_cost(db, tenant_id, country="DE", hs_code="610910", declared_value_cny=500, qty=1)
+#   -> {duty_cny, import_vat_cny, clearance_cny, total_cny, rate_type, rate, rate_source,
+#       rate_configured, de_minimis_exempt, estimated, vat_rate, reason, note}
+logistics.quote(db, tenant_id, attrs, destination_country="US")   # -> {billing_weight_kg, total_cny, source, breakdown}
+platform_fees.resolve(db, tenant_id, "shopee", category="", site="")  # -> {total_rate, source, ...}
+compliance_registry.check_evidence(db, tenant_id, product, "DE")  # -> {required, missing, expired, satisfied, passed, blocking}
+regions.normalize_country("美国") / regions.region_code("DE")     # -> "US" / "EU"
+```
+
+约定：`tenant_id IS NULL` 的配置行是平台内置口径；代码内 `DEFAULT_*` 兜底保证主库未灌数据时仍可用；缺少输入（如未给目的国）时**只降级不静默**——返回显式原因字段而非"看起来正常的 0"。
 
 ## 2. 智能体层契约（agents/*）
 
@@ -58,8 +73,9 @@ Setting 表约定 key：`llm`（见 ai/llm.py DEFAULT_LLM）、`platform_fees`�
 - `forecast_batch(params, context) -> {"forecasts":[forecast dict], "context_patch":{"shortages":[{product_id,title,weekly_demand,onhand,shortage_risk,suggest_restock_qty}]}}`（product_ids 缺省=全部 active 商品）；批量保存逐条宽容（单条失败跳过，与旧语义一致），经 `finalize_forecast_batch` 提交。
 
 ### 2.4 PricingAgent（name="pricing"，文件 agents/pricing.py）
-真实利润公式（第十一章）：`profit = price - (purchase_cny + logistics_cny + platform_fee_rate*price*fx + ads_cost_cny)/fx`。
-- `calc_profit(product_id: int, price: float | None = None) -> dict`：`{"product_id","purchase_cost","logistics_cost","platform_fee_rate","ads_cost","price","profit","margin","currency","fx"}`。price 缺省=attrs.get("sale_price")；采购价=最优 SupplierOffer.price（无则 attrs.supplier_price）；logistics=rules.logistics_base + logistics_per_kg*attrs.weight_kg（默认1kg）；platform_fee_rate 从 Setting.platform_fees[attrs.get("platform","shopee")]；ads_cost=rules.ads_default（CNY）。
+真实利润公式（第十一章，D58 扩展）：`profit = price - (purchase_cny + logistics_cny + duty_cny + import_vat_cny + clearance_cny + platform_fee_rate*price*fx + payment_fee_rate*price*fx + refund_rate*(purchase+logistics+duty) - tax_rebate_rate*purchase/(1+vat_in_rate) + ads_cost_cny)/fx`。
+- `calc_profit(product_id, price=None, destination_country="", channel_type="", site="", qty=1) -> dict`：既有字段（`product_id`/`purchase_cost`/`logistics_cost`/`platform_fee_rate`/`ads_cost`/`price`/`profit`/`margin`/`currency`/`fx`）保持不变，新增 `hs_code`/`destination_country`/`duty_cost`/`import_vat_cost`/`clearance_cost`/`payment_fee_rate`/`refund_rate`/`tax_rebate_rate`/`landed_cost_applied`/`landed_cost_detail`/`logistics_detail`/`fee_detail`/`cost_total_cny`/`cost_breakdown`（8 项以上）。price 缺省=attrs.get("sale_price")；采购价=最优 SupplierOffer.price（无则 attrs.supplier_price）；物流经 `services/logistics.quote`（命中路由按费率表，否则回退 `rules.logistics_base + logistics_per_kg*weight_kg`）；平台费率经 `services/platform_fees.resolve`（表优先，兜底与旧 `Setting.platform_fees` 一致）；**未给目的国时关税/进口 VAT/清关费为 0、新增费率默认 0，利润数值与旧实现逐分一致**。
+- `suggest_price(product_id: int) -> dict`：Agent 只输出分析及内部 `_analysis_record`，id/created_at 为 null；不写 PricingRecord、不修改售价、不生成 Action。成本包含采购、物流和广告；目标价=cost_cny*(1+target_margin)/(fx*(1-fee_rate))，下限=cost_cny*(1+min_margin)/(fx*(1-fee_rate))；需求/竞争作市场修正，非有限 LLM 价格退回规则。HTTP 由 Orchestrator 调用分析产物服务，复核 finance:write、Workspace、身份和商品归属，返回真实 PricingRecord id/created_at；reason._persistence 保存服务端来源与去重键（D50）。
 - `suggest_price(product_id: int) -> dict`：Agent 只输出分析及内部 `_analysis_record`，id/created_at 为 null；不写 PricingRecord、不修改售价、不生成 Action。成本包含采购、物流和广告；目标价=cost_cny*(1+target_margin)/(fx*(1-fee_rate))，下限=cost_cny*(1+min_margin)/(fx*(1-fee_rate))；需求/竞争作市场修正，非有限 LLM 价格退回规则。HTTP 由 Orchestrator 调用分析产物服务，复核 finance:write、Workspace、身份和商品归属，返回真实 PricingRecord id/created_at；reason._persistence 保存服务端来源与去重键（D50）。
 - `reprice_batch(params, context)`：显式 params.product_ids 优先，其次 context.product_ids；均未提供时读取全部 active 商品，上限 200。返回完整分析列表 repriced 和逐商品 errors，不再静默吞掉分析异常。调度层整批原子保存可用产物，errors 非空时 business_status=blocked，context_patch.pricing_record_ids 返回记录引用。同一服务端范围、Workspace、请求人、商品复用原始快照，不覆盖已保存分析；新请求范围可保存新快照。Workflow 缺少可信发起人时阻断人工恢复。
 
@@ -169,7 +185,15 @@ def gen_order(db, tenant_id: int, platform: str | None = None) -> Order         
 - **compliance.py** `/compliance`：`GET /reports?target_type&ref_id&page&page_size`；`POST /check {"target_type":"product"|"listing","ref_id"}`；`GET /reports/{id}`。
 
 ### B2 名下
-- **pricing.py** `/pricing`：`GET ""?product_id&page&page_size`（记录列表，附 title）；`POST /calc {"product_id","price"?}`；`POST /suggest {"product_id"}`。
+- **pricing.py** `/pricing`：`GET ""?product_id&page&page_size`（记录列表，附 title）；`POST /calc {"product_id","price"?,"destination_country"?,"channel_type"?,"site"?,"qty"?}`（给出目的国即计入关税/进口 VAT/清关费与路由物流费，响应含 `cost_breakdown` 等 8 项以上明细，D58）；`POST /suggest {"product_id"}`。
+- **cross_border.py** `/cross-border`（D58，读 `finance:read` / 写 `finance:write`；`tenant_id IS NULL` 的平台内置行租户只读）：
+  - `GET /duty-rates?country=`、`POST /duty-rates`、`PUT|DELETE /duty-rates/{id}`（目的国 × HS 前缀 × 生效期；`rate_type=ad_valorem|fixed_per_item`，欧盟按 HS 子目每件 €3 过渡期）；
+  - `GET /logistics-routes`、`POST /logistics-routes`、`PUT|DELETE /logistics-routes/{id}`（计费重 = max(实重, 体积重=长×宽×高/体积系数)，`billing_method=per_kg|per_cbm|per_item` + 燃油/旺季附加）；
+  - `GET /platform-fees?platform=`、`POST /platform-fees`、`PUT|DELETE /platform-fees/{id}`（平台 × 类目 × 站点 × 生效期，费率 = 佣金 + 交易手续费 + 服务费）；
+  - `GET /compliance-rules?country=`、`POST /compliance-rules`、`PUT|DELETE /compliance-rules/{id}`（目的国 × 类目 × 认证项）；
+  - `GET /products/{id}/compliance?country=`（返回 `required/missing/expired/satisfied/passed/blocking`）；`POST /products/{id}/compliance`（登记证据 `{destination_country,requirement,evidence_ref,valid_until}`，按 租户+商品+目的国+认证项 幂等 upsert）；
+  - `POST /landed-cost {"product_id","destination_country"?,"price"?,"channel_type"?,"site"?,"qty"?}`（直接转调 `services/costing.calc_profit`，不复制口径）。
+  - **口径提示**：四张配置表的 `GET` 会附带未被覆盖的代码兜底参考行（`id=null`、`source="default"`）；`PUT/DELETE` 只能作用于本租户行，平台内置行与参考行一律 404。
 - **ads.py** `/ads`：`GET /campaigns`（roi_report 结果）；`POST /campaigns`（草稿/表单创建，可含 id 列表批量）；`POST /campaigns/{id}/optimize` 返回预算建议、`action_id` 与 `PENDING_APPROVAL`，预算不立即改变；`POST /suggest {"product_id","platform"}`。
 - **actions.py** `/actions`（D47～D51）：`GET ""?status=&action_type=` 查当前 Workspace 的指定类型 Action，缺省仍为 ADJUST_AD_BUDGET；另支持 PUBLISH_LISTING、CREATE_LISTING_DRAFT、UPDATE_LISTING_CONTENT、CREATE_AD_CAMPAIGN_DRAFT、UPDATE_PRODUCT_CONTENT，权限按服务端目录。`POST /{id}/approve|reject {"note"}` 仅人工审批动作可用；`POST /{id}/execute` 对已批准 Action 幂等执行，复核当前执行人及原请求者的真实权限、租户状态和服务授权。FAILED/REJECTED 不允许重试同一 Action；结果/失败现场保存在 outcome。Listings 页面提供独立发布审批队列。
 - **orders.py** `/orders`：`GET ""?platform&status&keyword&page&page_size`；`POST /sync {"platform","count":5}`（gen_order×n，require_write）；`PUT /{id}/status {"status"}`（校验合法值）。
