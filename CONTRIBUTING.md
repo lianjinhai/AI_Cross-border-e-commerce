@@ -143,6 +143,17 @@ $env:ERP_TEST_DB='test_erp_worker2.db'; python -m pytest -q
 
 结构变更**必须**走 Alembic 迁移，禁止手工改表（M-1）。
 
+**趋势与调度身份迁移（2026-10-01，代码及隔离验收完成，主库待部署）**：Schedule 的可信发起人与
+Workspace 绑定需要新增列；`create_all()` 不会升级既有表，也不得靠应用启动
+时的轻量补列代替 Alembic。部署新代码前先停止旧应用/调度器，完成冷备、备份
+验证、只读预检及显式迁移，再启动并验收。历史任务不得自动挑选管理员绑定；
+须由有权限的真实成员重新绑定后启用。主任务当前只验证隔离库，不自动升级
+`backend/erp.db`；具体迁移版本与最终验收以 Agent OS §18.3.1 和最新交接索引为准。
+本批计划目标为 `20261001_19`：新增 revision 后，旧库与代码 head 不同是预期的
+待部署状态，但不是允许忽略的账本漂移。升级前须使用
+`python scripts/migration_preflight.py --planned-upgrade 20261001_19` 验证唯一 head
+是当前版本的直接后继；升级后再运行无计划参数的预检。任何 P0 失败都不得继续。
+
 ```powershell
 cd backend
 

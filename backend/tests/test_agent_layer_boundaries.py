@@ -38,9 +38,9 @@ AGENTS_DIR = BACKEND_DIR / "app" / "agents"
 _ALLOWED_INTERNAL = {"base", "contracts"}
 # 负责编排的模块：架构规定它才可以引用其它 Agent。
 _ORCHESTRATOR = "orchestrator"
-# 已登记债务（规范 §11 DEBT-09）：scheduler 反向依赖 agents，Phase 2 事件总线时解决。
+# scheduler 已经通过编排桥接移除反向 Agent 依赖，不再保留豁免。
 # 登记在此是为了「不假装它不存在」——新出现的越层依赖仍会被拦下。
-_KNOWN_SERVICE_TO_AGENT_DEBT = {"scheduler.py"}
+_KNOWN_SERVICE_TO_AGENT_DEBT = set()
 
 
 def _iter_relative_imports(source: str, *, level: int):
@@ -162,8 +162,7 @@ def test_services_do_not_import_agents():
     `agents -> services` 是规范 §4 的正向依赖；反过来会让 services 无法脱离
     Agent 独立测试（`costing.py` 抽出的意义之一就是可被非 Agent 场景复用）。
 
-    例外：`scheduler.py` 是规范 §11 已登记债务 DEBT-09（Phase 2 事件总线时解决）。
-    登记而非忽略——新增的越层依赖仍会被拦下。
+    所有 services 模块统一检查，包括调度器。
     """
     violations = []
     for path in sorted((BACKEND_DIR / "app" / "services").rglob("*.py")):
@@ -176,16 +175,11 @@ def test_services_do_not_import_agents():
     assert not violations, "services/ 反向依赖 agents/：" + ", ".join(violations)
 
 
-def test_known_service_to_agent_debt_is_still_present():
-    """债务「仍存在」也要断言：债务被修掉后本测试会红，提醒同步更新台账。
-
-    为什么反过来断言：若只写「已知债务被豁免」，那么债务修好后豁免清单会
-    悄悄失效成死代码，台账与实际长期脱节（规范 Doc-5 禁止文档与代码脱节）。
-    """
+def test_scheduler_no_longer_imports_agents():
+    """契约守护：调度器只能调用编排桥接，不能直接调用领域Agent。"""
     source = (BACKEND_DIR / "app" / "services" / "scheduler.py").read_text(encoding="utf-8")
     imports = list(_iter_relative_imports(source, level=2))
-    assert any(module == "agents" for _lineno, module in imports), (
-        "DEBT-09 似已修复——请同步更新规范 §11 台账与本测试的豁免清单")
+    assert not any(module == "agents" for _lineno, module in imports)
 
 
 @pytest.mark.parametrize("name", ["costing.py"])
@@ -209,12 +203,12 @@ def test_costing_service_has_no_agent_dependency(name):
 #   §18.3 第 2 步的 Agent 侧迁移依赖「第二批 Tool 清单」补齐（规范 §11 DEBT-36），
 #   在清单补齐前无法一次性清零。棘轮的作用是让**剩余进度可见且单调**：迁移掉
 #   一处就下调一次基线，任何人都不能在不知情的情况下新增直连调用。
-#   本表之和即 §18.3 第 2 步的剩余工作量。
+#   第 2 步读取迁移已完成；当前表之和是第 3 步剩余写路径 query/get 数，非全部写入数。
 _ORM_CALL_BASELINE = {
     # 合规报告由可信产物服务保存，风险副本经独立 Action Executor 接管。
     "compliance.py": (0, 0),
-    # 剩余趋势 upsert 查询；商品标准化已由 Action 执行器接管。
-    "discovery.py": (1, 0),
+    # 趋势刷新与商品标准化都由中央 Action 执行器接管。
+    "discovery.py": (0, 0),
     # factory_opportunity.py 的读取点已迁完（Supply / Product Tool）；剩下的
     # 2 处 query 是**写路径**（匹配快照 / 报价 upsert 前的行查找），属第 3 步
     # （Action 层）范围，不随读取迁移下降，见 D43。
@@ -222,9 +216,7 @@ _ORM_CALL_BASELINE = {
     # listing.py 的读取点已迁完（Product / Listing / Knowledge / Compliance Tool）；
     # 草稿、优化、发布已移到独立 Action Executor，Listing Agent 无 ORM 写路径。
     "listing.py": (0, 0),
-    # listing_review.py 的读取点已迁完（Listing / Product / Compliance Tool）；
-    # 剩下的 1 处 `self.db.add` 是**写路径**（复核结论落库），不在棘轮口径内，
-    # 同属第 3 步（Action 层）欠账，见 D42。
+    # listing_review.py 的读取经 Tool，复核产物已由 D54 可信服务保存，无 Agent 直写。
     "listing_review.py": (0, 0),
     # orchestrator.py 的读取点已迁完（Conversation / Listing / Supply / Order /
     # Finance / Product Tool）；`chat()` 里的 AiLog 写入是**写路径**，不在棘轮

@@ -193,7 +193,7 @@ MARKET_INTELLIGENCE = AgentContract(
     spec_section="§7.2",
     known_gaps=(
         "当前实现为 DiscoveryAgent（含 scan_trends / expand_keywords / score_product），"
-        "直接读写 ORM（MarketTrend / ProductScore），尚未经 Tool 层——§18.3 第 2 步",
+        "读取经Tool；评分由可信产物服务保存，趋势经中央Action执行；完整Opportunity schema仍待实现",
         "评分依据的可复算性（§7.2 约束）尚未由 schema 强制",
     ),
 )

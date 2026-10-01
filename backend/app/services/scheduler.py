@@ -8,9 +8,13 @@ import threading
 import traceback
 from datetime import datetime, timedelta
 
+from sqlalchemy import update
+
 from .. import config
 from ..db import SessionLocal
 from ..models import Schedule
+from .ai_actions import ActionError
+from .schedule_identity import schedule_context
 
 _TICK_SECONDS = 30
 _started = threading.Event()
@@ -44,10 +48,14 @@ def _tick() -> None:
         due = db.query(Schedule).filter(Schedule.enabled.is_(True)).all()
         for task in due:
             next_at = (task.last_run_at or task.created_at) + timedelta(minutes=task.interval_minutes)
-            if now < next_at:
+            if now < next_at or task.last_status == "running":
                 continue
-            task.last_status = "running"
+            changed = db.execute(update(Schedule).where(
+                Schedule.id == task.id, Schedule.enabled.is_(True), Schedule.last_status != "running"
+            ).values(last_status="running"))
             db.commit()
+            if changed.rowcount != 1:
+                continue
             threading.Thread(target=_execute, args=(task.id,), daemon=True).start()
     finally:
         db.close()
@@ -57,12 +65,13 @@ def _execute(schedule_id: int) -> None:
     db = SessionLocal()
     try:
         task = db.get(Schedule, schedule_id)
-        if not task:
+        if not task or not task.enabled:
             return
-        ok, detail = run_task(task.tenant_id, task.kind, task.workflow_key)
+        ok, detail = run_task(task.tenant_id, task.kind, task.workflow_key, schedule=task)
         task.last_run_at = datetime.utcnow()
         task.run_count += 1
-        task.last_status = "success" if ok else "failed"
+        task.last_status = ("dispatched" if ok and task.kind == "workflow" and
+                            ("(running)" in detail or "(queued)" in detail) else "success" if ok else "failed")
         db.commit()
         print(f"[scheduler] #{task.id} {task.name} -> {task.last_status} {detail}")
     except Exception:
@@ -77,21 +86,30 @@ def _execute(schedule_id: int) -> None:
         db.close()
 
 
-def run_task(tenant_id: int, kind: str, workflow_key: str) -> tuple[bool, str]:
+def run_task(tenant_id: int, kind: str, workflow_key: str, *, schedule=None) -> tuple[bool, str]:
     """执行一次任务体：workflow 跑工作流模板；trend_scan 扫趋势；alert_scan 主动巡检。"""
-    if kind == "workflow":
-        from ..workflows.engine import start_run
-
-        run = start_run(tenant_id, workflow_key, {"trigger": "schedule"})
-        return run["status"] == "success", f"run#{run['id']}"
-    if kind == "trend_scan":
-        from ..agents.discovery import DiscoveryAgent
-
-        with DiscoveryAgent(tenant_id) as a:
-            trends = a.scan_trends()
-        return True, f"{len(trends)} trends"
+    if schedule is None or schedule.tenant_id != tenant_id or schedule.kind != kind:
+        return False, "缺少可信调度身份绑定"
+    try:
+        with SessionLocal() as identity_db:
+            stored = identity_db.get(Schedule, schedule.id)
+            if stored is None or stored.tenant_id != tenant_id or stored.kind != kind:
+                return False, "调度任务归属或类型已变化"
+            schedule_context(identity_db, stored)
+    except (ActionError, ValueError) as exc:
+        return False, str(exc)
+    if kind in {"workflow", "trend_scan"}:
+        # 既有 services→workflow 债务保留，调度不再反向调用领域Agent。
+        from ..workflows.engine import run_scheduled_task
+        try:
+            with SessionLocal() as task_db:
+                stored = task_db.get(Schedule, schedule.id, populate_existing=True)
+                if stored is None or stored.tenant_id != tenant_id or stored.kind != kind:
+                    return False, "调度任务归属或类型已变化"
+                return run_scheduled_task(task_db, stored)
+        except (ActionError, ValueError) as exc:
+            return False, str(exc)
     if kind == "alert_scan":
-        from ..db import SessionLocal
         from ..services import alerting
 
         db = SessionLocal()

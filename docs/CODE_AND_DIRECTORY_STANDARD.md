@@ -66,6 +66,9 @@ AI-电商ERP/
 │   │   │   ├── compliance_facts.py     # 当前目标/知识依据与合规产物来源口径
 │   │   │   ├── compliance_outputs.py   # 合规报告、依据与风险 Action 原子保存
 │   │   │   ├── compliance_risk.py      # 受限 Listing 风险副本执行器
+│   │   │   ├── trend_refresh.py        # 内置趋势刷新 Action 执行与依据重验
+│   │   │   ├── trend_candidates.py     # 确定性日种子候选，Agent/Executor 复算共用
+│   │   │   ├── schedule_identity.py    # 调度真实身份绑定与权限复核
 │   │   │   ├── settings_service.py      # 配置三级回退（P1-10 隔离）
 │   │   │   ├── shop_scope.py            # 店铺可见性守卫（归档店铺一律视为不存在）
 │   │   │   ├── tenant_data_purge.py     # 演示数据清理（按外键拓扑序）
@@ -175,7 +178,7 @@ models.py     数据定义
   `factory_network.py`(3)、`orders.py`(3)、`bi.py`(2)、`suppliers.py`(1)、`support.py`(1)。
   全 `app/` 共 **109 处 / 35 文件**（含 `workflows/engine.py` 11、`agents/orchestrator.py` 5、`seed.py` 5 等）。
   **只减不增**；新增必须写明原因注释（L-6）。
-- `services/scheduler.py` 反向 import `workflows.engine` 与 `agents.discovery`：登记为债务，Phase 2 通过事件总线解耦。
+- `services/scheduler.py` 仍依赖 `workflows.engine`：DEBT-09 保留，Phase 2 通过事件总线解耦。D56 已移除直接 `agents.discovery` 依赖，DEBT-29 关闭。
 - `agents/supplier.py` 反向 import `services.commercial_analytics`：登记为债务。
 
 ---
@@ -533,7 +536,7 @@ python -m ruff format .         # 格式化
 | DEBT-06 | ~~`backend/` 根目录混放 3 个 `.db`，其中 2 个无引用~~ | ~~P1~~ | `backend/*.db` | ✅ 已完成：`test_dbg.db`、`project_goal_acceptance.db` 已冷备后清理，仅留 `erp.db` |
 | DEBT-07 | ~~缺 `AGENTS.md` / `CONTRIBUTING.md` / ADR 目录~~ | ~~P1~~ | 仓库根、`docs/` | ✅ **已完成（2026-09-24）三件套齐全**：① `AGENTS.md`（面向 AI 助手，协作红线）；② 仓库根 `CONTRIBUTING.md`（面向人：环境搭建 / 开发循环 / 测试基线 / 迁移流程 / 提交与评审 / Windows 陷阱，与 `AGENTS.md` 互补不重复）；③ `docs/adr/README.md`（权威源 `DECISIONS.md` 的镜像/索引层，含 D1~D26 全量索引表 + 状态定义 + 新增流程）并拆出 7 篇自包含 ADR（`0003`/`0007`/`0018`/`0022`/`0023`/`0024`/`0026`，判定标准=改变架构边界或安全模型） |
 | DEBT-08 | `agents/base.py` 自建 `SessionLocal`，绕过依赖注入 | **P2** | `app/agents/base.py:10,19` | Phase 2 Tool Layer 落地时一并解决 |
-| DEBT-09 | `services/scheduler.py` 自建 `SessionLocal` + 反向依赖 | **P2** | `app/services/scheduler.py:12,42,57,83,88` | Phase 2 事件总线 |
+| DEBT-09 | `services/scheduler.py` 自建 `SessionLocal` + 依赖 workflows | **P2，部分整改** | `app/services/scheduler.py` | D56 只关闭直接 Agent 依赖；会话与编排桥接仍待 Phase 2 事件总线 |
 | DEBT-10 | 函数体内延迟 import：**routers/ 45 处 / 11 文件**；全 `app/` 109 处 / 35 文件（2026-09-24 AST 实测） | P2 | 11 个 router + workflows/engine.py 等 | 只减不增。**台账原写「32 处 / 8 个 router」已过期**（少 13 处）；§4 的「8 个 router」同步修正为 11 |
 | DEBT-11 | `test_api.py` 857 行 / 29 用例单文件 | **P2** | `tests/test_api.py` | 按业务域拆分 |
 | DEBT-12 | 前端 5 个视图 >300 行 | **P2** | `views/PlatformAdmin.vue` 等 | Phase 1.7 前端接入时评估 |
@@ -553,7 +556,7 @@ python -m ruff format .         # 格式化
 | DEBT-26 | ~~`_seed()` 对全局唯一的 `settings` 表不幂等~~；~~测试库单实例（固定名 + WAL 旁文件残留）~~ | ~~**P1**~~ | `app/seed.py`、`tests/conftest.py`、`.gitignore` | ✅ **已完成**：抽出 `DEFAULT_SETTINGS` + `_ensure_default_settings()`（缺什么补什么）；测试库 PID 隔离 + `ERP_TEST_DB` 覆盖 + WAL 旁文件统一清理；`.gitignore` 补齐旁文件与 PID 库名（见 `docs/DECISIONS.md` D11） |
 | DEBT-27 | ~~`page_size` 无上限；调用方用大 `page_size` 做集合比对会被静默截断~~ | ~~**P1**~~ | `app/pagination.py`、13 个 router、`tests/conftest.py`、`scripts/security_data_audit.py` | ✅ **已完成（2026-09-24）**：新增 `app/pagination.py`（`MAX_PAGE_SIZE=200`，越界 422）；13 个列表端点统一改用 `PageNum`/`PageSize`；新增 `fetch_all` 夹具与 `get_all` 辅助函数做**分页遍历取全量**；`test_pagination_edge` 收紧为「超上限必须 422」。回退法验证：去掉上限 → 被抓；`fetch_all` 只取首页 → 被抓 |
 | DEBT-28 | ~~`FactoryOpportunityAgent` 直接调用 `PricingAgent`（Agent 间 P2P），绕过 Orchestrator，且**未登记为债务**~~ | ~~**P0**~~ | `app/agents/factory_opportunity.py:30,114-115` | ✅ **已完成（2026-09-24）**：违反 Agent OS §3 / 规范 L-3（协作只能由 Orchestrator 编排）。修法：把成本/利润计算下沉到 `app/services/costing.py`，`PricingAgent` 与 `FactoryOpportunityAgent` 各自调用同一实现——既消除 P2P，又让成本口径**唯一**（两处各写一遍迟早漂移，门禁用的利润率会与定价页展示的不是同一个数）。**根因是「靠评审把关」失效**：该违规藏在方法体内的延迟 import，只扫顶层 import 的写法看不见它；现由 `tests/test_agent_layer_boundaries.py` 用 AST 扫描（覆盖函数体内 import）固化为门禁，并附判别力样本 |
-| DEBT-29 | `services/scheduler.py` 反向依赖 `agents/`（越层） | **P2** | `app/services/scheduler.py:88` | 已登记豁免（规范原文即有）；Phase 2 事件总线落地时解决。守护测试 `test_known_service_to_agent_debt_is_still_present` 反向断言其存在——债务修好后测试会红，提醒同步台账（防豁免清单变死代码） |
+| DEBT-29 | `services/scheduler.py` 反向依赖 `agents/`（越层） | **已关闭（D56）** | `app/services/scheduler.py` | 经 workflows 可信编排桥接，不直接 import Agent；测试豁免清除，新增禁止反向依赖守护；DEBT-09 仍保留 |
 | DEBT-30 | `services/` 缺「Agent 共享领域计算」层，导致 Agent 各自复制成本口径 | **P2** | `app/services/costing.py` | 本次仅抽出成本/利润；其余共享计算（销量预测口径、平台费率）Phase 2 评估 |
 | DEBT-31 | **历史静默吞异常 17 处**（2026-09-24 AST 口径，不作为当前数量） | **P1，部分整改** | `agents/compliance.py`、`agents/discovery.py`、`agents/listing.py`、`agents/orchestrator.py`、`agents/pricing.py`、`agents/supplier.py`、`ai/knowledge.py`、`auth.py`、`db.py`、`routers/bi.py`、`routers/purchases.py`、`services/scraper.py`、`services/workspace_context.py` | S-5：捕获必须记录或转换，语义上检查是否留痕/抛出。D55 已移除 Compliance 批次静默吞异常，HTTP/Workflow 显式报错阻断；其他存量仍须逐项审计，不能宣称 17 处全部关闭。历史行号不再作为当前代码定位。 |
 | DEBT-32 | **超阈值函数 11 个**（>80 行硬上限；全 `app/` 共 562 个函数，>50 行警戒线 24 个） | **P2** | `seed.py:200 _seed`(265)、`services/alerting.py:125 scan`(196)、`agents/factory_opportunity.py:25`(126)、`agents/supplier.py:94 forecast`(122)、`routers/orders.py:106 import_csv`(117)、`db.py:78 _migrate_sqlite`(112)、`routers/purchases.py:168 dropship_order`(97)、`agents/discovery.py:196 pick_candidates`(90)、`workflows/engine.py:151 run_workflow`(84)、`agents/listing_review.py:15 review`(82)、`routers/listings.py:187 publish`(81) | 按域拆函数。**口径**：`end_lineno - lineno + 1`，不含装饰器行，**含嵌套函数**（不含嵌套则 >80 为 10 个、>50 为 22 个——两种口径翻转点见 D29 索引） |

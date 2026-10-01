@@ -33,8 +33,7 @@ def trends(user: User = Depends(get_current_user), db: Session = Depends(get_db)
 
 @router.post("/trends/scan")
 def scan_trends(user: User = Depends(require_write), db: Session = Depends(get_db)):
-    with DiscoveryAgent(user.tenant_id) as a:
-        return {"items": a.scan_trends()}
+    return {"items": _invoke(db, user, "scan_trends")}
 
 
 @router.post("/expand")

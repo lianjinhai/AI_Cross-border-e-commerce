@@ -44,7 +44,8 @@ def test_ai_actions_migration_roundtrip(tmp_path):
     finally:
         engine.dispose()
 
-    alembic("downgrade", "-1")
+    # 新增迁移后 head 的直接前驱不再是 Action 建表前版本，固定验证 D47 回滚边界。
+    alembic("downgrade", "20260927_17")
     engine = create_engine(url)
     try:
         assert not inspect(engine).has_table("ai_actions")

@@ -14,6 +14,9 @@ class ActionPolicy:
 
 
 POLICIES = {
+    "REFRESH_BUILTIN_TRENDS": ActionPolicy(
+        frozenset({"discovery"}), "product:write", "tenant",
+        rollback="按 outcome.before 人工恢复内置估算；不得覆盖 csv/api 数据"),
     "UPDATE_LISTING_COMPLIANCE_RISK": ActionPolicy(
         frozenset({"compliance"}), "compliance:check", "listing",
         rollback="按 outcome.before 人工恢复风险副本，先核验最新合规报告；不修改内容或发布"),

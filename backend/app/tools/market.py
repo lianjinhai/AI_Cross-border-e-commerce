@@ -36,13 +36,16 @@ class MarketTool(BaseTool):
                  writes=False, summary="随机取一条市场趋势（无类目匹配时的需求兜底）"),
     )
 
-    def _get_trends(self, limit=20, keyword: str = "") -> Reading:
+    def _get_trends(self, limit=20, keyword: str = "", platform=None, exact=False) -> Reading:
         n = clamp_limit(limit, default=20)
         query = self.db.query(MarketTrend).filter(
             MarketTrend.tenant_id == self.context.tenant_id)
         text = (keyword or "").strip()
         if text:
-            query = query.filter(MarketTrend.keyword.like("%" + text + "%"))
+            query = query.filter(MarketTrend.keyword == text if exact else
+                                 MarketTrend.keyword.like("%" + text + "%"))
+        if platform is not None:
+            query = query.filter(MarketTrend.platform == platform)
         rows = (query.order_by(MarketTrend.search_volume.desc(), MarketTrend.id.desc())
                 .limit(n).all())
         return reading([trend_dict(t) for t in rows], table="market_trends",

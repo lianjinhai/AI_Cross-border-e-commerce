@@ -38,7 +38,7 @@ Setting 表约定 key：`llm`（见 ai/llm.py DEFAULT_LLM）、`platform_fees`�
 
 ### 2.1 DiscoveryAgent（name="discovery"，文件 agents/discovery.py）
 市场发现+选品（对应规划第七章）。当前规则评分含真实经营表现：`total = 0.30*demand + 0.15*(100-competition) + 0.25*profit + 0.10*(100-risk) + 0.20*performance_score`，无真实销售的新品表现取 50。历史 LLM 提示仍使用四维权重，不能把历史四维说明等同规则实际公式。
-- `scan_trends() -> list[dict]`：基于现有商品类目+固定关键词池 upsert 12 条 MarketTrend（同 keyword+platform 更新数值），返回 to_dict 列表。
+- `scan_trends() -> dict`：Agent 只经 Product/Market Tool 读取，输出 `REFRESH_BUILTIN_TRENDS` 提案，不直接 upsert。可信调度复核 `product:write` 后经中央 Action 执行器刷新 12 条内置估算；HTTP 保持 `items` 列表返回，聊天与 Workflow 走同一入口。演示来源必须为 builtin，不能覆盖 csv/api；失败整批回滚，同范围恢复原 Action，已变化依据不能借旧成功结果覆盖。（D56 代码及隔离验收完成，主库待部署；最终验收见最新子代理索引。）
 - `expand_keywords(keyword: str) -> {"keywords": [str]}`：8-12 个扩展词（类目词+属性词+平台词+长尾组合；LLM 可增强）。
 - `score_product(product_id: int) -> dict`：Agent 只经 Tool 返回分析及内部 `_score_analysis/_score_evidence`，不保存评分/决策、不触发表现缓存写入。HTTP 经 `invoke_discovery`、产物服务复核 product:write/可信身份/Workspace/商品归属，在单一事务保存既有 ProductScore + AiDecision，返回真实 score_id 及既有分数字段，内部标记不暴露（D52）。规则依据为趋势、类目密度、属性成本、品牌风险和真实经营表现；LLM 未使用的真实订单输入明确标为 not_used。
 - `score_batch(product_ids: list[int])`：产物服务整批原子保存；每项错误显式返回 errors/business_status=blocked，失败批次不新增部分评分，context_patch={}。同 scope 复用原评分与决策，新 scope 可新增；服务端 AiDecision.evidence._persistence 保存来源、身份、scope、score_id 与不可变指纹，不修改历史记录。
@@ -179,6 +179,7 @@ def gen_order(db, tenant_id: int, platform: str | None = None) -> Order         
   - `GET /profit?days=30 -> {"days","series":[{date,revenue,cost,profit,margin}],"summary":{...}}`
   - `GET /report -> {"report": str, "generated_at"}`（AI 经营报告：组装 KPI 数据 ask_json 生成 markdown，失败用模板文案）
 - **workflows.py** `/workflows`：`GET /templates`；`POST /run {"template_key","context"?}`（require_write → start_run 返回 run dict+steps）；`GET /runs?limit=20`（倒序）；`GET /runs/{id}`（run+steps）。
+- **schedules.py** `/schedules`（D56）：读列表；创建/修改/删除/`POST /{id}/run` 需 `ai:write`，趋势绑定/执行另验 `product:write`。创建/显式启用由服务器保存真实 requested_by/workspace_id，不接受客户端身份；代客绑定/触发拒绝。历史无身份、撤权或归属变化显式失败。手动/定时共同条件领取，正在执行返回 409；异步工作流为 dispatched（detail 含 run# 与状态），不是最终成功，须查对应 run；崩溃 running 租约未自动回收，需人工核查。结构变更需显式 Alembic 20261001_19，主库本批未升级。
 - **knowledge.py** `/knowledge`：`GET /docs?keyword&page&page_size`；`POST /docs`；`PUT /docs/{id}`；`DELETE /docs/{id}`；`GET /search?q=&top_k=4`（knowledge.retrieve）。
 - **ai.py** `/ai`：`GET /settings`（llm+platform_fees+fx+rules，api_key 脱敏为 bool `has_key`）；`PUT /settings`（admin；body 任意子集，llm 走 set_llm_config，其余 upsert Setting）；`POST /chat {"message"}`（OrchestratorAgent.chat，require_write）；`GET /logs?limit=50 -> {"items":[...]}`（倒序）；`GET /decisions?subject_type&subject_id&agent&limit=50`（M6 决策依据链，`{"items","total"}`，每条含 `decision` + `evidence`）。
 - **alerts.py** `/alerts`（M3 主动巡检，**只告警不执行**）：`GET ""?status&level&limit=100 -> {"items","returned","total","counts":{high,mid,low,open}}`。**级别排序在 SQL 内完成后再 limit**（high 优先，避免高风险被大量低风险挤出结果）；`total` 是**符合条件的总数**（不受 limit 影响，供分页用），`returned` 才是本次返回条数；`counts` 走数据库聚合，同样不受 limit 影响。`PUT /{id}/ack`（require_write，标记已处理，不删除）；`GET /rules -> {"items":[...]}`（9 条，首次访问自动初始化）；`PUT /rules/{id}`（require_write，`{enabled?,level?,threshold?}`，threshold 按 key 合并）；`POST /scan`（require_write，手动触发一轮，返回 `{created,skipped,by_rule,scanned_at}`）。

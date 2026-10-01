@@ -56,6 +56,18 @@ EXPECTED_CHECK_KEYS = [
 ]
 
 
+def test_schedule_identity_planned_upgrade_ledger_is_readonly(tmp_path):
+    """契约守护：旧库需要显式计划，不能将新head账本漂移静默放行。"""
+    db = _build_db(tmp_path, alembic_rev="20260930_18")
+    before = hashlib.sha256(db.read_bytes()).hexdigest()
+    versions = BACKEND_DIR / "migrations" / "versions"
+    result = _run(db, versions, "--planned-upgrade", "20261001_19")
+    assert result.returncode == 0
+    assert hashlib.sha256(db.read_bytes()).hexdigest() == before
+    result = _run(db, versions)
+    assert result.returncode == 2
+
+
 def _write_versions(tmp_path: Path, revision: str, down_revision=None) -> Path:
     """在临时目录写一个最小 Alembic revision 链。"""
     versions = tmp_path / "versions"

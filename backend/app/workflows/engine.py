@@ -24,6 +24,7 @@ from ..agents.orchestrator import (
 from ..db import SessionLocal
 from ..models import User, WorkflowRun, WorkflowStep, WorkflowTemplate, utcnow
 from ..services.compliance_outputs import compliance_scope_items
+from ..services.schedule_identity import schedule_context
 from ..services.workspace_context import resolve_workspace_context
 
 # (agent, action) 注册表： dispatch 时 lazy import，避免循环依赖
@@ -114,7 +115,7 @@ def run_step(agent_name: str, action: str, tenant_id: int, params: dict, context
                                 ("listing", "publish_batch"), ("ads", "draft_batch"),
                                 ("pricing", "reprice_batch"), ("product", "standardize_batch"),
                                 ("discovery", "pick_candidates"), ("listing_review", "review_batch"),
-                                ("compliance", "check_batch")}:
+                                ("compliance", "check_batch"), ("discovery", "scan_trends")}:
         with SessionLocal() as action_db:
             requester_id = context.get("_action_requested_by")
             requester = action_db.get(User, requester_id) if requester_id is not None else None
@@ -133,6 +134,10 @@ def run_step(agent_name: str, action: str, tenant_id: int, params: dict, context
                 return invoke_review(action_db, ctx, action, params, context,
                                      scope_key=context.get("_action_scope"))
             if agent_name == "discovery":
+                if action == "scan_trends":
+                    items = invoke_discovery(action_db, ctx, action,
+                                             scope_key=context.get("_action_scope"))
+                    return {"items": items, "business_status": "success", "context_patch": {}}
                 explicit = params.get("product_ids", context.get("product_ids"))
                 return invoke_discovery(action_db, ctx, action, int(params.get("limit", 3)),
                     float(params.get("min_total", 60)), True, explicit,
@@ -153,9 +158,21 @@ def run_step(agent_name: str, action: str, tenant_id: int, params: dict, context
         method = getattr(agent, action)
         if action in _BATCH_ACTIONS:
             return method(params, context)
-        if action == "scan_trends":
-            return method()
     raise ValueError(f"动作调用失败: {agent_name}.{action}")
+
+
+def run_scheduled_task(db, task):
+    """调度器边界桥接：先恢复持久化身份，再进入可信编排入口。"""
+    ctx = schedule_context(db, task)
+    if task.kind == "trend_scan":
+        items = invoke_discovery(db, ctx, "scan_trends",
+                                 scope_key=f"schedule:{task.id}:run:{task.run_count}")
+        return True, f"{len(items)} trends"
+    if task.kind == "workflow":
+        run = start_run(task.tenant_id, task.workflow_key, {"trigger": "schedule"},
+                        requested_by=ctx.user_id)
+        return run["status"] in {"success", "queued", "running"}, f"run#{run['id']} ({run['status']})"
+    raise ValueError("该调度类型不属于工作流编排")
 
 
 def start_run(tenant_id: int, template_key: str, context: dict | None = None,

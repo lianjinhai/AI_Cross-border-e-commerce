@@ -1,16 +1,15 @@
 """商品发现 Agent（市场趋势/关键词扩展/选品评分）与商品标准化 Agent。
 
 §18.3 第 2 步（D46）：读取全部经 Tool 层（Product / Market Tool）；写路径
-（趋势 upsert）保留 ORM 访问并集中标注，属第 3 步欠账。
+（趋势刷新）仅输出提案，由中央 Action 执行器调用业务服务。
 评分只输出分析产物，由 Orchestrator 保存评分和依据链。
 商品标准化仅输出 UPDATE_PRODUCT_CONTENT 提案，由 Orchestrator 调度执行。
 """
 import math
-import random
 from datetime import datetime
 
-from ..models import MarketTrend
 from ..services.product_standardization import safe_fields, snapshot
+from ..services.trend_candidates import builtin_candidates
 from .base import BaseAgent
 from .contracts import CONTRACTS
 
@@ -47,14 +46,6 @@ _RISK_BRANDS = ["apple", "iphone", "nike", "adidas", "disney", "lego", "rolex",
                 "louis vuitton", "pokemon", "samsung", "hello kitty"]
 _BANNED = ["最", "第一", "顶级", "no.1", "cure", "fda", "杀菌", "防癌", "100% safe"]
 
-_TREND_POOL = [
-    ("led strip lights", "google"), ("pet grooming gloves", "amazon"), ("car phone holder", "amazon"),
-    ("yoga mat thick", "google"), ("reusable makeup pads", "shopee"), ("baby feeding bibs", "amazon"),
-    ("kitchen drawer organizer", "google"), (" camping lantern rechargeable", "amazon"),
-    ("hair claw clips", "tiktok"), ("smart water bottle", "google"), ("dog cooling mat", "shopee"),
-    ("wireless earbuds case", "shopee"),
-]
-
 
 def _clamp(v: float, lo=0, hi=100) -> float:
     number = float(v)
@@ -70,38 +61,23 @@ class DiscoveryAgent(BaseAgent):
     # Agent OS §6.2 契约（§18.3 第 1 步）：声明能力边界，供 Guardrail / Runtime 读取。
     agent_contract = CONTRACTS["market_intelligence"]
 
-    def scan_trends(self) -> list[dict]:
-        """刷新市场趋势：基于关键词池 + 本店类目 upsert 12 条。"""
+    def scan_trends(self) -> dict:
+        """仅提出内置趋势刷新；日种子估算不冒充平台真实采集。"""
         cats = _tool_list(self, "product", "get_categories", status="active", limit=4)
-        pool = list(_TREND_POOL) + [(f"{c} wholesale", "1688") for c in cats]
-        rng = random.Random(datetime.utcnow().strftime("%Y%m%d"))  # 当日确定性
-        out = []
-        for kw, plat in pool[:12]:
-            # 写路径（§18.3 第 3 步欠账）：upsert 需要 ORM 行对象做「有则更新、
-            # 无则新建」，保留这 1 处直连查询并标注；读侧（类目）已走 Tool。
-            row = (self.db.query(MarketTrend)
-                   .filter(MarketTrend.tenant_id == self.tenant_id,
-                           MarketTrend.keyword == kw.strip(), MarketTrend.platform == plat)
-                   .first())
-            vol = rng.randint(800, 50000)
-            growth = round(rng.uniform(-15, 180), 1)
-            comp = rng.randint(20, 90)
-            if not row:
-                row = MarketTrend(tenant_id=self.tenant_id, keyword=kw.strip(), platform=plat)
-                self.db.add(row)
-            # 不覆盖真实来源数据（api/csv）：内置池只补空缺，避免污染真实趋势（红线 3）
-            if getattr(row, "source", "builtin") in ("api", "csv"):
-                out.append(row)
-                continue
-            row.search_volume, row.growth_30d, row.competition = vol, growth, comp
-            row.note = "增长率显著" if growth > 60 else ("竞争激烈" if comp > 75 else "平稳")
-            row.source = "builtin"
-            out.append(row)
-        self.db.commit()
-        return [{"id": t.id, "keyword": t.keyword, "platform": t.platform,
-                 "search_volume": t.search_volume, "growth_30d": t.growth_30d,
-                 "competition": t.competition, "note": t.note,
-                 "source": getattr(t, "source", "builtin")} for t in out]
+        day = datetime.utcnow().strftime("%Y%m%d")
+        items = []
+        for candidate in builtin_candidates(day, cats):
+            got = self.tool("market").call("get_trends", keyword=candidate["keyword"],
+                                            platform=candidate["platform"], exact=True, limit=2)
+            if not got.ok:
+                raise ValueError("趋势依据读取失败")
+            if len(got.data) > 1:
+                raise ValueError("趋势自然键重复，请先人工整理")
+            before = got.data[0] if got.data else None
+            items.append({"before": before, "candidate": candidate})
+        return {"action_type": "REFRESH_BUILTIN_TRENDS", "target_type": "tenant",
+                "target_id": self.tenant_id, "reason": "确定性日种子内置估算，非真实平台采集",
+                "payload": {"day": day, "items": items}}
 
     def expand_keywords(self, keyword: str) -> dict:
         """关键词扩展：规则组合 + LLM 增强。"""

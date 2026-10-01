@@ -109,34 +109,44 @@ def _kill_tree(proc: subprocess.Popen) -> None:
         proc.wait(timeout=5)
 
 
-def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="端到端可行性验证（不碰业务主库）")
-    parser.add_argument("--port", type=int, default=8123)
-    parser.add_argument("--keep", action="store_true",
-                        help="保留副本库与日志（默认清理）")
-    parser.add_argument("--skip-backup", action="store_true",
-                        help="跳过冷备（仅在已有可靠备份时使用）")
-    args = parser.parse_args(argv)
+def _upgrade_isolated_db(copy_db, env):
+    """只升级明确隔离的副本；冷备和P0预检均先于迁移。"""
+    protected = (_BACKEND_DIR / "erp.db").resolve()
+    allowed = (_BACKEND_DIR / "backups" / "e2e_feasibility").resolve()
+    if (copy_db.resolve() == protected or copy_db.resolve().parent != allowed
+            or env.get("ERP_DB_URL") != "sqlite:///" + copy_db.as_posix()):
+        raise RuntimeError("拒绝迁移主库或数据库配置不一致的副本")
+    cold_backup = copy_db.with_name("e2e-pre-migration.db")
+    with sqlite3.connect(f"file:{copy_db.as_posix()}?mode=ro", uri=True) as source:
+        with sqlite3.connect(cold_backup) as target:
+            source.backup(target)
+    common = {"cwd": str(_BACKEND_DIR), "capture_output": True, "text": True,
+              "encoding": "utf-8", "errors": "replace", "env": env}
+    heads = subprocess.run([sys.executable, "-m", "alembic", "heads"], **common)
+    lines = heads.stdout.strip().splitlines()
+    if heads.returncode or len(lines) != 1:
+        raise RuntimeError("迁移head无法唯一确认")
+    head = lines[0].split()[0]
+    with sqlite3.connect(f"file:{copy_db.as_posix()}?mode=ro", uri=True) as source:
+        current = source.execute("SELECT version_num FROM alembic_version").fetchall()
+    before_rows = _row_count(copy_db)
+    command = [sys.executable, "scripts/migration_preflight.py", "--db", str(copy_db)]
+    if current != [(head,)]:
+        command += ["--planned-upgrade", head]
+    preflight = subprocess.run(command, **common)
+    if preflight.returncode:
+        raise RuntimeError("副本迁移预检失败：" + preflight.stdout[-1500:])
+    if current != [(head,)]:
+        upgrade = subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], **common)
+        if upgrade.returncode:
+            raise RuntimeError("副本迁移失败：" + upgrade.stderr[-1500:])
+    after = subprocess.run([sys.executable, "scripts/migration_preflight.py", "--db", str(copy_db)], **common)
+    if after.returncode or _row_count(copy_db) != before_rows:
+        raise RuntimeError("副本迁移后预检或数据行数校验失败")
 
-    prod_db = _BACKEND_DIR / "erp.db"
-    if not prod_db.is_file():
-        print(f"[FAIL] 业务主库不存在：{prod_db}")
-        return 3
-    if not _port_free(args.port):
-        print(f"[FAIL] 端口 {args.port} 已被占用，请换 --port")
-        return 3
 
-    # 冷备父目录已同时在 .gitignore/.dockerignore 中排除；先满足 D-5 再生成。
-    work = _BACKEND_DIR / "backups" / "e2e_feasibility"
-    if work.exists():
-        shutil.rmtree(work, ignore_errors=True)
-    work.mkdir(parents=True, exist_ok=True)
-    copy_db = work / "e2e.db"
-
-    print("=== 0. 记录主库基线（用于事后证明隔离性）===")
-    before_hash, before_rows = _sha256(prod_db), _row_count(prod_db)
-    print(f"  sha256={before_hash[:32]}  rows={before_rows}")
-
+def _prepare_copy(args, prod_db, copy_db):
+    """从一致性冷备准备独立库；回退也使用SQLite只读备份。"""
     backup_file = None
     if not args.skip_backup:
         print("=== 1. 冷备业务主库 ===")
@@ -148,8 +158,7 @@ def main(argv=None) -> int:
             encoding="utf-8", errors="replace",
             env={**os.environ, "PYTHONIOENCODING": "utf-8"})
         if r.returncode != 0:
-            print(f"[FAIL] 冷备失败（exit={r.returncode}）：\n{r.stderr[-1500:]}")
-            return 3
+            raise RuntimeError(f"冷备失败（exit={r.returncode}）：\n{r.stderr[-1500:]}")
         line = next((ln for ln in (r.stdout or "").splitlines()
                      if "[PASS] backup_created" in ln), "")
         print("  " + line.strip() if line else "  冷备完成")
@@ -161,10 +170,15 @@ def main(argv=None) -> int:
     if backup_file and backup_file.is_file():
         shutil.copy2(backup_file, copy_db)
     else:
-        # 无备份文件时直接复制主库文件（只读读取，写入发生在副本上）
-        shutil.copy2(prod_db, copy_db)
+        with sqlite3.connect(f"file:{prod_db.as_posix()}?mode=ro", uri=True) as source:
+            with sqlite3.connect(copy_db) as target:
+                source.backup(target)
     print(f"  副本库：{copy_db}（{copy_db.stat().st_size} 字节）")
 
+
+
+def _run_acceptance(args, copy_db, work):
+    """副本显式迁移后真启动，并确保所有返回路径关闭本次进程。"""
     print("=== 3. 启动真实服务（uvicorn + 副本库）===")
     env = {
         **os.environ,
@@ -174,6 +188,7 @@ def main(argv=None) -> int:
         "ERP_SUPERADMIN_PASSWORD": os.environ.get("ERP_SUPERADMIN_PASSWORD", "root-test-123"),
         "PYTHONIOENCODING": "utf-8",
     }
+    _upgrade_isolated_db(copy_db, env)
     out_log, err_log = work / "uvicorn.out.log", work / "uvicorn.err.log"
     with open(out_log, "w", encoding="utf-8") as fo, open(err_log, "w", encoding="utf-8") as fe:
         proc = subprocess.Popen(
@@ -212,6 +227,34 @@ def main(argv=None) -> int:
         print("=== 6. 关闭服务 ===")
         _kill_tree(proc)
         time.sleep(1.5)
+    return exit_code
+
+
+def main(argv=None) -> int:
+    """运行副本验收，失败也核验主库并按用户选项清理产物。"""
+    parser = argparse.ArgumentParser(description="端到端可行性验证（不碰业务主库）")
+    parser.add_argument("--port", type=int, default=8123)
+    parser.add_argument("--keep", action="store_true", help="保留副本库与日志（默认清理）")
+    parser.add_argument("--skip-backup", action="store_true", help="跳过冷备（仅在已有可靠备份时使用）")
+    args = parser.parse_args(argv)
+    prod_db = _BACKEND_DIR / "erp.db"
+    if not prod_db.is_file() or not _port_free(args.port):
+        print("[FAIL] 业务主库不存在或端口已被占用")
+        return 3
+    work = _BACKEND_DIR / "backups" / "e2e_feasibility"
+    if work.exists():
+        shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True, exist_ok=True)
+    copy_db = work / "e2e.db"
+    print("=== 0. 记录主库基线（用于事后证明隔离性）===")
+    before_hash, before_rows = _sha256(prod_db), _row_count(prod_db)
+    print(f"  sha256={before_hash[:32]}  rows={before_rows}")
+    try:
+        _prepare_copy(args, prod_db, copy_db)
+        exit_code = _run_acceptance(args, copy_db, work)
+    except (RuntimeError, subprocess.SubprocessError) as exc:
+        print(f"[FAIL] {exc}")
+        exit_code = 3
 
     print("=== 7. 隔离性校验（主库必须未被写入）===")
     after_hash, after_rows = _sha256(prod_db), _row_count(prod_db)

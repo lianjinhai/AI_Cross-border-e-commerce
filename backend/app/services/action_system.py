@@ -17,8 +17,10 @@ from .ai_actions import ActionError, _tenant_id, owned_action
 from .compliance_risk import update_listing_compliance_risk, validate_risk_projection
 from .pii_redact import redact
 from .product_standardization import update_product_content
+from .trend_refresh import lock_refresh, refresh_builtin_trends, validate_refresh
 
 HANDLERS = {
+    "REFRESH_BUILTIN_TRENDS": refresh_builtin_trends,
     "UPDATE_LISTING_COMPLIANCE_RISK": update_listing_compliance_risk,
     "UPDATE_PRODUCT_CONTENT": update_product_content,
     "CREATE_AD_CAMPAIGN_DRAFT": action_content.create_ad_campaign_draft,
@@ -32,6 +34,10 @@ logger = logging.getLogger(__name__)
 
 
 def _validate_target(db, tenant_id, policy, target_id, payload):
+    if policy.target_type == "tenant":
+        if target_id != tenant_id or db.get(Tenant, target_id) is None:
+            raise ActionError(403, "趋势目标与可信租户不一致")
+        return
     models = {"product": Product, "listing": Listing,
               "ad_campaign": AdCampaign}
     model = models.get(policy.target_type)
@@ -200,6 +206,8 @@ def execute_action(db, ctx, action_id, *, commit=True):
     if action.action_type == "UPDATE_LISTING_COMPLIANCE_RISK":
         table = Tenant.__table__
         db.execute(table.update().where(table.c.id == action.tenant_id).values(id=table.c.id))
+    if action.action_type == "REFRESH_BUILTIN_TRENDS":
+        lock_refresh(db, action.tenant_id)
     if not commit and action.action_type != "UPDATE_LISTING_COMPLIANCE_RISK":
         raise ActionError(400, "外部原子事务仅支持合规风险投影")
     if (action.agent_type not in policy.agents
@@ -212,6 +220,8 @@ def execute_action(db, ctx, action_id, *, commit=True):
     require_action_permission(db, ctx, policy.permission)
     requester_context(db, action)
     if action.status == "SUCCESS":
+        if action.action_type == "REFRESH_BUILTIN_TRENDS":
+            validate_refresh(db, action, _payload(action), replay=True)
         if action.action_type == "UPDATE_LISTING_COMPLIANCE_RISK":
             validate_risk_projection(db, action, _payload(action))
         return action
@@ -265,6 +275,8 @@ def execute_action(db, ctx, action_id, *, commit=True):
 
 
 def _snapshot(db, action):
+    if action.target_type == "tenant":
+        return {"tenant_id": action.tenant_id}
     model = {"product": Product, "listing": Listing, "ad_campaign": AdCampaign}[action.target_type]
     row = db.get(model, action.target_id)
     if row is None or row.tenant_id != action.tenant_id:

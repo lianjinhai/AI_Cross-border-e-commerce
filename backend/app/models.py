@@ -782,13 +782,17 @@ class Schedule(Base):
     tenant_id: Mapped[int] = mapped_column(
         ForeignKey("tenants.id", name="fk_schedules_tenant_id_tenants"), index=True)
     name: Mapped[str] = mapped_column(String(128))
-    kind: Mapped[str] = mapped_column(String(16), default="workflow")  # workflow / trend_scan
+    kind: Mapped[str] = mapped_column(String(16), default="workflow")  # workflow / trend_scan / alert_scan
     workflow_key: Mapped[str] = mapped_column(String(64), default="")  # kind=workflow 时必填
+    requested_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", name="fk_schedules_requested_by_users"), nullable=True)
+    workspace_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tenants.id", name="fk_schedules_workspace_id_tenants"), nullable=True)
     interval_minutes: Mapped[int] = mapped_column(Integer, default=1440)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     run_count: Mapped[int] = mapped_column(Integer, default=0)
     last_run_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
-    last_status: Mapped[str] = mapped_column(String(16), default="")  # success/failed/running
+    last_status: Mapped[str] = mapped_column(String(16), default="")  # success/failed/running/dispatched
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

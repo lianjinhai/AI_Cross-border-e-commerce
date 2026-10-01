@@ -12,6 +12,7 @@ from ..ai.llm import ModelRouter
 from ..models import AiLog
 from ..services.action_identity import require_action_permission
 from ..services.action_publish import publish_targets
+from ..services.action_system import execute_action, submit_action
 from ..services.agent_outputs import finalize_ad_drafts, finalize_listing_output
 from ..services.ai_actions import ActionError
 from ..services.compliance_facts import targets as compliance_targets
@@ -31,6 +32,7 @@ from ..services.product_outputs import (
     recover_range,
 )
 from ..services.review_outputs import finalize_reviews, review_targets, synchronize_review_rules
+from ..services.trend_refresh import recover_refresh
 from .base import BaseAgent
 from .compliance import ComplianceAgent
 from .discovery import DiscoveryAgent, ProductAgent
@@ -209,6 +211,18 @@ def invoke_pricing(db, ctx, method, *args, scope_key=None):
 
 def invoke_discovery(db, ctx, method, *args, scope_key=None):
     """同步调度评分分析并保存既有产物；原服务端范围重放原评分。"""
+    if method == "scan_trends":
+        ctx = require_action_permission(db, ctx, "product:write")
+        scope = scope_key or ctx.trace_id
+        action = recover_refresh(db, ctx, scope)
+        if action is None:
+            with DiscoveryAgent(ctx.legacy_tenant_id, context=ctx) as agent:
+                proposal = agent.scan_trends()
+            action = submit_action(db, ctx, "discovery", proposal, scope)
+        action = execute_action(db, ctx, action.id)
+        if action.status != "SUCCESS":
+            raise ActionError(409, (action.outcome or {}).get("error", "趋势刷新失败"))
+        return action.outcome["items"]
     if method not in {"score_product", "score_batch", "pick_candidates"}:
         raise ValueError("未迁移的选品分析")
     ctx = require_action_permission(db, ctx, "product:write")
@@ -305,14 +319,14 @@ class OrchestratorAgent(BaseAgent):
         return reply, "pick", ["pick_candidates"], items
 
     def _do_trends(self) -> tuple[str, str, list, object]:
-        from .discovery import DiscoveryAgent
-
-        with DiscoveryAgent(self.tenant_id) as a:
-            trends = a.scan_trends()
+        if self.context is None:
+            raise ActionError(403, "趋势刷新需要可信 Workspace 身份")
+        trends = invoke_discovery(self.db, self.context, "scan_trends")
         hot = sorted(trends, key=lambda t: -t["growth_30d"])[:5]
         lines = [f"· {t['keyword']}（{t['platform']}）30天增长 {t['growth_30d']}%，月搜索 {t['search_volume']}"
                  for t in hot]
-        return "最新市场趋势 Top5：\n" + "\n".join(lines), "trends", ["scan_trends"], hot
+        return ("市场趋势 Top5（builtin 为日种子估算，非平台实时采集）：\n" +
+                "\n".join(lines)), "trends", ["scan_trends"], hot
 
     def _do_reprice(self) -> tuple[str, str, list, object]:
         if self.context is None:
