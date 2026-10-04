@@ -316,18 +316,26 @@ class TestFailClosedRequired:
             f"would_block={result and result['would_block']!r}")
 
     def test_publish_facts_must_reject_missing_evidence(self, env):
-        """断言 2b：publish_facts 是所有发布路径的唯一公共出口，必须在此阻断。
+        """断言 2b：publish_facts 必须在**真实店铺**上真正阻断。
 
-        compliance_gate 不能只当「返回体里的一个数据字段」，
-        必须真正阻止 facts 产出。
+        ⚠️ 口径澄清（本条曾因用错 shop 而误报，勿退回）：
+        ``publish_facts`` 按 ``shop is None or shop.is_demo`` 区分旁路——
+        本地（shop=None）与 demo 店铺**有意放行**（E2E 依赖，且不对外产生真实上架），
+        只有真实店铺（``is_demo=0``）走enforce 并 raise。
+        因此本条必须传真实店铺；用 shop=None 断言阻断是**测试写错**，
+        那种写法会把「有意保留的旁路」误判成缺陷。
         """
         from app.services.ai_actions import ActionError
 
         db, tenant_id = env
         product = _charger(db, tenant_id, attrs={"destination_country": "US"})
+        shop = Shop(tenant_id=tenant_id, platform="probe", role="sales",
+                    status="authorized", is_demo=False)
+        db.add(shop)
+        db.commit()
         listing = _publishable(db, tenant_id, product)
         with pytest.raises(ActionError) as excinfo:
-            publish_facts(db, tenant_id, listing.id)
+            publish_facts(db, tenant_id, listing.id, shop.id)
         assert "FCC" in str(excinfo.value), (
             f"阻断错误信息应指出缺失项，实际={excinfo.value}")
 
@@ -415,11 +423,17 @@ class TestFailClosedRequired:
         行为却放行的反例）。
 
         判定口径（关键，勿搞反）：
-          - 抛 PlatformError / 其它异常 → **拦住**（合规）；
-          - 正常返回 PublishResult，或**已经走到发网络请求的那一步** → **没拦住**。
-        因此网络哨兵抛出的异常必须计入 bypassed，而不是算通过。
+          - 抛异常且异常信息含「目的国/FCC」→ **合规闸门真的拦住了**；
+          - 抛异常但原因是**平台自身必填**（类目映射缺失、attrs 结构不对等）
+            → **不算**闸门起作用，只是恰好也失败了；
+          - 正常返回 PublishResult，或**已走到发网络请求** → **没拦住**。
+
+        ⚠️ 为什么要区分前两种（第一版曾踩这个坑）：
+        lazada/walmart 会因缺 ``attrs.lazada_product`` 抛错，shopee/tiktok 会因缺
+        类目映射抛错——这些都与合规无关。若用「抛异常就算拦住」的宽松口径，
+        会把「平台自己拦住了」误报成「合规闸门拦住了」，从而漏掉真正的失守平台。
         """
-        blocked, bypassed = [], []
+        blocked, bypassed, unrelated = [], [], []
         for name, adapter_cls in sorted(ADAPTERS.items()):
             if not getattr(adapter_cls, "can_publish", False):
                 continue
@@ -448,23 +462,30 @@ class TestFailClosedRequired:
             for hook in ("_api_call", "_call", "_upload", "_post", "_request"):
                 if hasattr(adapter, hook):
                     patches.append(patch.object(adapter, hook, _sentinel))
+            reason = ""
             try:
                 for ctx in patches:
                     ctx.start()
                 try:
                     adapter.publish_listing(listing, product)
                 except AssertionError:
-                    pass
-                except Exception:  # noqa: BLE001
-                    blocked.append(name)
-                else:
-                    bypassed.append(f"{name}(正常返回)")
+                    reason = "已发网络请求"
+                except Exception as exc:  # noqa: BLE001
+                    reason = f"{type(exc).__name__}: {exc}"
             finally:
                 for ctx in reversed(patches):
                     ctx.stop()
-            if reached_network and name not in blocked:
+            if ("目的国" in reason) or ("FCC" in reason):
+                blocked.append(name)
+            elif reached_network or reason == "已发网络请求":
                 bypassed.append(f"{name}(已发网络请求)")
+            elif reason:
+                unrelated.append(f"{name}(平台自身校验：{reason[:60]})")
+            else:
+                bypassed.append(f"{name}(正常返回)")
         assert blocked or bypassed, "未发现 can_publish=True 的适配器"
         assert not bypassed, (
             "这些 can_publish 平台在缺 FCC 时未被合规闸门拦住："
-            f"{sorted(set(bypassed))}")
+            f"{sorted(set(bypassed))}；"
+            f"另有 {len(unrelated)} 个平台是因自身必填校验抛错（与合规无关），"
+            "建议补齐其必填 attrs 后单独验证闸门口径")
