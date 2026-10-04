@@ -161,18 +161,21 @@ class EbayAdapter(BaseAdapter):
     def publish_listing(self, listing, product, *, resume=None, checkpoint=None) -> PublishResult:
         self._ensure_authorized()
         self._pre_publish_checks(listing, product)
-        # 通用前置校验（类目映射 / 必填字段）+ 目的国准入。
+        # 前置校验分两级（QA 验收 8664ebe 修出的一处真实静默失效）：
         #
-        # 两类提示语义不同，故分开取、再合并：
-        #   - `missing_publish_requirements` 是**阻断口径**（受租户开关控制），
-        #     保持既有行为不变；
-        #   - `_destination_access_issues` 是**告警口径**（无条件计算），
-        #     所以即使租户未开启准入阻断，eBay 这类 can_publish=True 的平台
-        #     仍能把「目的国缺 FCC」写进日志与错误上下文。
-        # 本轮为 warn 语义：只记日志 + 附加到下方既有错误上下文，**不单独阻断**，
-        # 不得让原本能发布的 Listing 直接失败。对齐 shopee.publish_listing 的调用方式。
-        advisory = self.missing_publish_requirements(listing, product)
-        advisory += self._destination_access_issues(product)
+        # 1) **阻断口径** = `missing_publish_requirements()`。它受租户开关
+        #    `destination_compliance_enforce` 控制——租户显式开启时返回的清单
+        #    **必须 raise**，与 shopee.publish_listing:204 完全同构。
+        #    2026-10 之前这里只 `logger.warning`，等于租户买了「合规阻断」却被
+        #    静默降级成提示：开关亮着、eBay 照发不误。这是比「默认不阻断」更糟的
+        #    失效——它让开关本身变成谎话。
+        # 2) **告警口径** = `_destination_access_issues()`（无条件计算）。
+        #    租户未开启阻断时，这些缺口只记日志 + 附加到下方既有错误上下文，
+        #    **不单独阻断**，不得让原本能发布的 Listing 直接失败。
+        blocking = self.missing_publish_requirements(listing, product)
+        if blocking:
+            raise PlatformError("eBay 发布前置校验未通过：" + "；".join(blocking))
+        advisory = self._destination_access_issues(product)
         if advisory:
             logger.warning("ebay_publish_advisory product_id=%s sku=%s missing=%s",
                            getattr(product, "id", None), product.sku, advisory)
