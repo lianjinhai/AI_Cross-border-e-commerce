@@ -22,10 +22,19 @@ from .duty import duty_country, normalize_country
 
 # 参考要求（代码兜底）。``applies_to`` 为关键词列表：命中商品类目或标题即适用；
 # 空列表表示该目的国全类目适用。租户/平台可写入 destination_compliance_rules 覆盖。
+#
+# **关键词表必须随类目扩展同步维护（2026-10 P0 教训）**：本表逐条手写、各自漂移，
+# 曾出现 FCC(US) 只认「电子/无线/蓝牙/射频」而不认 charger / adapter / 充电，
+# 导致 65W 氮化镓充电器在美国站 required=[] → 系统误报「无缺失、可上架」，
+# 而同一件商品卖日本因 PSE 命中「充电」被正确拦下。**误报绿灯比漏报更危险**：
+# 它会让运营照系统提示上架无认证商品，代价是下架甚至封店。
+# 改动本表时必须同时回答两个问题：新类目是否漏词（漏=误报绿灯）、
+# 新词是否过宽（宽=凭空要求合规证据）。两侧都有回归用例锁定。
 DEFAULT_REQUIREMENTS: tuple[dict, ...] = (
     {"destination_country": "EU", "requirement": "CE", "applies_to": [
         "电子", "electronic", "玩具", "toy", "机械", "machin", "灯具", "lamp",
-        "家电", "appliance", "无线", "wireless", "充电", "charger"],
+        "家电", "appliance", "无线", "wireless", "充电", "charger", "适配器", "adapter",
+        "电源", "power supply", "usb-c", "usb c"],
      "note": "欧盟 CE 标志：电子/玩具/机械/无线电设备等强制要求"},
     {"destination_country": "EU", "requirement": "EPR", "applies_to": [
         "包装", "packag", "电子", "electronic", "电池", "battery", "纺织", "textile"],
@@ -34,11 +43,17 @@ DEFAULT_REQUIREMENTS: tuple[dict, ...] = (
         "纺织", "textile", "玩具", "toy", "化妆", "cosmetic", "塑料", "plastic"],
      "note": "REACH / RoHS：化学物质与有害物质限制"},
     {"destination_country": "GB", "requirement": "UKCA", "applies_to": [
-        "电子", "electronic", "玩具", "toy", "机械", "machin", "家电", "appliance"],
+        "电子", "electronic", "玩具", "toy", "机械", "machin", "家电", "appliance",
+        "充电", "charger", "适配器", "adapter", "电源", "power supply"],
      "note": "英国 UKCA 标志（UKCA 已延长接受 CE 至另行通知，须逐类目确认）"},
+    # FCC Part 15B 是美国**法定强制**准入：数字设备与电源装置均在范围内。
+    # 「充电 / charger / adapter / 电源」四组词是 2026-10 补的漏词，
+    # 缺失会让充电器类目在美国站直接返回 required=[]（误报绿灯）。
     {"destination_country": "US", "requirement": "FCC", "applies_to": [
-        "电子", "electronic", "无线", "wireless", "蓝牙", "bluetooth", "射频", "rf"],
-     "note": "美国 FCC：无线电与电磁兼容设备准入"},
+        "电子", "electronic", "无线", "wireless", "蓝牙", "bluetooth", "射频", "rf",
+        "充电", "charger", "chargers", "adapter", "适配器", "电源",
+        "power supply", "power adapter", "usb-c", "usb c"],
+     "note": "美国 FCC：无线电与电磁兼容设备准入（Part 15B 含电源/充电装置）"},
     {"destination_country": "US", "requirement": "FDA", "applies_to": [
         "食品", "food", "化妆", "cosmetic", "医疗", "medical", "保健", "supplement"],
      "note": "美国 FDA：食品/化妆品/医疗器械注册"},
@@ -46,13 +61,19 @@ DEFAULT_REQUIREMENTS: tuple[dict, ...] = (
         "儿童", "child", "kids", "婴儿", "baby", "玩具", "toy"],
      "note": "美国 CPC：儿童产品证书（CPSC 强制）"},
     {"destination_country": "JP", "requirement": "PSE", "applies_to": [
-        "电子", "electronic", "电源", "power", "充电", "charger", "电器", "appliance"],
+        "电子", "electronic", "电源", "power", "充电", "charger", "电器", "appliance",
+        "适配器", "adapter"],
      "note": "日本 PSE：电气用品安全法"},
     {"destination_country": "KR", "requirement": "KC", "applies_to": [
-        "电子", "electronic", "玩具", "toy", "儿童", "child"],
+        "电子", "electronic", "玩具", "toy", "儿童", "child",
+        "充电", "charger", "适配器", "adapter", "电源", "power supply"],
      "note": "韩国 KC 认证"},
+    # UN38.3 是**锂电池运输**资质，充电器本体不含电池，因此这里刻意不含
+    # 「充电 / charger / adapter」——否则纯充电器会被凭空要求电池运输报告。
+    # 2026-10 修复 FCC 漏词时特意复核了这条边界（有用例锁定）。
     {"destination_country": "US", "requirement": "UN38.3", "applies_to": [
-        "电池", "battery", "移动电源", "power bank", "锂电池", "lithium", "充电宝"],
+        "电池", "battery", "移动电源", "power bank", "powerbank", "锂电池", "lithium",
+        "充电宝", "蓄电", "储能"],
      "note": "锂电池 UN38.3 运输测试报告 + MSDS（空运强制）"},
 )
 

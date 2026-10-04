@@ -307,6 +307,78 @@ def test_battery_requirement_by_keyword(case):
     assert "UN38.3" in requirements
 
 
+# ---- P0 回归：充电器类目在主要目的国的准入漏词（2026-10 修复）----
+#
+# 缺陷：`DEFAULT_REQUIREMENTS` 的关键词表逐条手写、各自漂移。FCC(US) 的
+# applies_to 只有「电子/无线/蓝牙/射频」，不含 charger / adapter / 充电，
+# 于是 65W 氮化镓充电器卖美国时 required=[] → 误报绿灯；同一件商品卖日本
+# 因 PSE 命中「充电」被正确拦下。**误报绿灯比漏报更危险**：它会让运营
+# 照系统提示上架无 FCC 认证的充电器，导致下架甚至封店。
+@pytest.mark.parametrize("country,requirement", [
+    ("US", "FCC"),    # 美国：Part 15B 电磁兼容 + 充电器本体
+    ("GB", "UKCA"),   # 英国：充电器属电器类目
+    ("KR", "KC"),     # 韩国：充电器属 KC 认证电器
+    ("JP", "PSE"),    # 日本：回归基线（原本就能命中，防止修 FCC 时误伤）
+    ("DE", "CE"),     # 欧盟：回归基线
+])
+def test_charger_category_triggers_destination_requirements(case, country, requirement):
+    """充电器 / 电源适配器必须在各主要目的国命中对应强制认证。"""
+    db, tenant_id = case
+    product = _product(db, tenant_id, category="3C配件",
+                       title="65W 氮化镓快充充电器",
+                       attrs={"source_desc": "GaN charger USB-C power adapter"})
+    report = compliance_registry.check_evidence(db, tenant_id, product, country)
+    requirements = {item["requirement"] for item in report["required"]}
+    assert requirement in requirements, (
+        f"{country} 站充电器未命中 {requirement}（实际命中 {sorted(requirements)}）；"
+        "关键词漏词会让系统误报『无缺失、可上架』")
+    assert report["passed"] is False
+    assert any(item["requirement"] == requirement for item in report["missing"])
+
+
+def test_charger_without_fcc_evidence_is_not_reported_as_passed_in_us(case):
+    """P0 核心断言：美国站充电器缺 FCC 证据时不得返回 passed=True。"""
+    db, tenant_id = case
+    product = _product(db, tenant_id, category="3C配件", title="65W 氮化镓快充充电器")
+    report = compliance_registry.check_evidence(db, tenant_id, product, "US")
+    assert report["required"], "美国站充电器 required 不得为空——空即误报绿灯"
+    assert report["passed"] is False, report
+    assert report["blocking"], report
+
+
+def test_pure_charger_does_not_require_battery_transport_evidence(case):
+    """反向约束：修 FCC 漏词时**不得**把「充电」泛化进 UN38.3。
+
+    充电器本体不含电池；若UN38.3 因「充电」二字命中，运营会被要求上传
+    电池运输测试报告，属于另一种形式的误导（凭空的合规债务）。
+    """
+    db, tenant_id = case
+    product = _product(db, tenant_id, category="3C配件", title="65W 氮化镓快充充电器")
+    report = compliance_registry.check_evidence(db, tenant_id, product, "US")
+    requirements = {item["requirement"] for item in report["required"]}
+    assert "UN38.3" not in requirements, (
+        f"纯充电器不应要求电池运输证据（实际命中 {sorted(requirements)}）")
+
+
+def test_battery_power_bank_still_requires_un38_3_after_charger_fix(case):
+    """回归：移动电源必须继续命中 UN38.3（防止修 FCC 时误伤电池类目）。"""
+    db, tenant_id = case
+    product = _product(db, tenant_id, category="数码配件", title="锂电池移动电源 20000mAh")
+    report = compliance_registry.check_evidence(db, tenant_id, product, "US")
+    requirements = {item["requirement"] for item in report["required"]}
+    assert "UN38.3" in requirements
+    assert "FCC" in requirements, "移动电源是电子产品，同样受 FCC 约束"
+
+
+def test_unrelated_category_does_not_require_fcc(case):
+    """反向约束：纯文本类商品不该被泛化命中 FCC（关键词过宽同样是缺陷）。"""
+    db, tenant_id = case
+    product = _product(db, tenant_id, category="纺织家居", title="纯棉针织抱枕套")
+    report = compliance_registry.check_evidence(db, tenant_id, product, "US")
+    assert report["passed"] is True, report
+    assert not report["required"], report
+
+
 def test_tenant_rule_overrides_defaults(case):
     db, tenant_id = case
     db.add(DestinationComplianceRule(tenant_id=tenant_id, destination_country="EU",

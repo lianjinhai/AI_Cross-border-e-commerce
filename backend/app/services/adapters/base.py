@@ -99,27 +99,44 @@ class BaseAdapter:
                 missing.append(f"缺少必填字段 {required}")
         if not (listing.keywords or []):
             missing.append("Listing 缺少关键词")
-        missing.extend(self._destination_access_issues(product))
+        # 目的国准入：**始终计算**（不再受开关影响），是否计入阻断由下面的
+        # destination_compliance_enforce 决定。开关是「阻断策略」而非「是否检查」。
+        issues = self._destination_access_issues(product)
+        if issues and self._destination_compliance_enforced():
+            missing.extend(issues)
         return missing
 
-    def _destination_access_issues(self, product) -> list[str]:
-        """目的国准入检查（P1-4）：默认**不阻断**，需租户显式开启。
+    def _destination_compliance_enforced(self) -> bool:
+        """租户是否已开启「目的国准入**阻断**」（tenant_settings.rules）。
 
-        为什么默认关闭：既有商品与 Listing 都没有目的国与证据数据，若默认强制
-        阻断，会让所有上架流程因"未录入证据"而失败——那是把合规债务转嫁成可用性
-        事故。开启开关（tenant_settings.rules.destination_compliance_enforce=true）
-        且商品声明了目的国后才参与阻断。目的国来源：product.attrs.destination_country
-        （后续可由店铺站点覆盖）。
+        开关语义在 2026-10 被重新定义：它过去同时控制「查不查」与「拦不拦」，
+        于是变成一个永远没人打开的死开关——检查从未真正执行过。现在
+        「查」是无条件的（见 ``_destination_access_issues``），本开关只决定
+        「缺证据时是否让上架失败」。未开启时准入缺口只记日志
+        （``services/publish_gate.py`` 统一落warn 日志），不阻断。
+        """
+        from ..costing import DEFAULT_RULES, setting_for
+
+        rules = setting_for(self.db, self.shop.tenant_id, "rules", DEFAULT_RULES)
+        return bool(rules.get("destination_compliance_enforce"))
+
+    def _destination_access_issues(self, product) -> list[str]:
+        """目的国准入问题清单（P1-4）：**无条件计算**，只读不阻断。
+
+        2026-10 移除了这里的开关判断。原实现「开关默认关闭 → 直接 return []」，
+        加上 ``product.attrs.destination_country`` 为空也直接返回，
+        等于这条合规检查在真实链路里几乎从不执行——上架美国站的充电器
+        因FCC 漏词返回 required=[]，系统给出「无缺失、可上架」的绿灯。
+        沉默的绿灯比红灯危险：运营只会照绿灯上架。
+
+        因此现在无条件解析目的国并核验证据；「是否阻断」由调用方
+        （``_destination_compliance_enforced``）决定，本批为 warn 语义。
         """
         from .. import compliance_registry
-        from ..costing import DEFAULT_RULES, setting_for
 
         attrs = product.attrs or {}
         country = (attrs.get("destination_country") or attrs.get("target_country") or "")
         if not country:
-            return []
-        rules = setting_for(self.db, self.shop.tenant_id, "rules", DEFAULT_RULES)
-        if not rules.get("destination_compliance_enforce"):
             return []
         report = compliance_registry.check_evidence(self.db, self.shop.tenant_id,
                                                    product, country)

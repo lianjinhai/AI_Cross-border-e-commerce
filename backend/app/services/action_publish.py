@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import uuid
 from datetime import datetime
 
@@ -14,12 +15,14 @@ from ..models import (
     Shop,
 )
 from ..serialize import to_dict
-from . import platforms
+from . import platforms, publish_gate
 from .action_content import owned
 from .action_records import listing_fingerprint
 from .ai_actions import ActionError
 from .platform_rules import get_active_rules, validate_against_rules
 from .review_analysis import digest, review_inputs
+
+logger = logging.getLogger(__name__)
 
 
 def publish_targets(db, tenant_id, listing_id, shop_id=None):
@@ -67,6 +70,17 @@ def publish_facts(db, tenant_id, listing_id, shop_id=None):
             inputs["rule_sync_failure"] = digest({key: sync.get(key) for key in ("error", "latest", "hint")})
         if review.evidence["review_inputs"] != inputs:
             raise ActionError(409, "复核规则或最新合规报告已变化，请重新复核")
+    # 第五道：目的国准入闸门（本轮 warn 模式）。
+    # 放在四道既有校验**之后**——前四道是「内容是否可发」，这一道是「法规是否允许发」。
+    # 为什么本轮只记日志：既有商品普遍没有目的国与证据数据，立刻阻断会造成大面积
+    # 误伤；但**必须留下结构化痕迹**，否则运营看不到「美国站缺 FCC」这类缺口。
+    # 三条发布路径（本地置 published / demo 店铺 / 真实 API）都先经过 publish_facts，
+    # 因此在这里记一次即可覆盖全部路径，无需在下游重复埋点。
+    compliance_gate = publish_gate.evaluate(
+        db, tenant_id, product=product, platform=listing.platform, shop=shop,
+        mode=publish_gate.MODE_WARN)
+    if compliance_gate["gate_status"] == publish_gate.GATE_WARN:
+        publish_gate.log_warn(compliance_gate, channel="publish_facts")
     payload = {"listing": {key: getattr(listing, key) for key in
                            ("title", "description", "bullets", "keywords", "platform")},
                "product": {key: getattr(product, key) for key in
@@ -76,7 +90,8 @@ def publish_facts(db, tenant_id, listing_id, shop_id=None):
         payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
     return {"fingerprint": fingerprint, "rule_version": pack["version"],
             "review_id": review.id, "platform": listing.platform,
-            "shop_id": shop.id if shop else None}
+            "shop_id": shop.id if shop else None,
+            "compliance_gate": compliance_gate}
 
 
 def _attempt(db, action, listing, shop):

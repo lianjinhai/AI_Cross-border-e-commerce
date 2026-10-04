@@ -3,6 +3,7 @@
 eBay OAuth、订单归一化与上架。
 """
 import base64
+import logging
 import time
 from urllib.parse import urlencode
 
@@ -11,6 +12,8 @@ import httpx
 from . import contract
 from .base import BaseAdapter
 from .contract import _TIMEOUT, NormalizedOrder, PlatformError, PublishResult, TokenPair
+
+logger = logging.getLogger(__name__)
 
 
 class EbayAdapter(BaseAdapter):
@@ -158,13 +161,31 @@ class EbayAdapter(BaseAdapter):
     def publish_listing(self, listing, product, *, resume=None, checkpoint=None) -> PublishResult:
         self._ensure_authorized()
         self._pre_publish_checks(listing, product)
+        # 通用前置校验（类目映射 / 必填字段）+ 目的国准入。
+        #
+        # 两类提示语义不同，故分开取、再合并：
+        #   - `missing_publish_requirements` 是**阻断口径**（受租户开关控制），
+        #     保持既有行为不变；
+        #   - `_destination_access_issues` 是**告警口径**（无条件计算），
+        #     所以即使租户未开启准入阻断，eBay 这类 can_publish=True 的平台
+        #     仍能把「目的国缺 FCC」写进日志与错误上下文。
+        # 本轮为 warn 语义：只记日志 + 附加到下方既有错误上下文，**不单独阻断**，
+        # 不得让原本能发布的 Listing 直接失败。对齐 shopee.publish_listing 的调用方式。
+        advisory = self.missing_publish_requirements(listing, product)
+        advisory += self._destination_access_issues(product)
+        if advisory:
+            logger.warning("ebay_publish_advisory product_id=%s sku=%s missing=%s",
+                           getattr(product, "id", None), product.sku, advisory)
         attrs = product.attrs or {}
         required = {"ebay_category_id": "eBay 类目ID", "ebay_location_key": "库存地点",
                     "ebay_fulfillment_policy_id": "履约策略", "ebay_payment_policy_id": "付款策略",
                     "ebay_return_policy_id": "退货策略", "sale_price": "销售价", "onhand": "库存"}
         missing = [label for key, label in required.items() if not attrs.get(key)]
         if missing:
-            raise PlatformError("eBay 发布前置校验未通过，缺少：" + "、".join(missing))
+            detail = "、".join(missing)
+            if advisory:
+                detail += "；另需注意（不阻断本次发布）：" + "；".join(advisory)
+            raise PlatformError("eBay 发布前置校验未通过，缺少：" + detail)
         sku = product.sku or f"ERP-{product.id}"
         from urllib.parse import quote
         self._api_call("PUT", f"/sell/inventory/v1/inventory_item/{quote(sku, safe='')}", {
