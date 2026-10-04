@@ -80,7 +80,10 @@ class LazadaAdapter(BaseAdapter):
         return out
 
     def publish_listing(self, listing, product, *, resume=None, checkpoint=None) -> PublishResult:
-        self._ensure_authorized(); attrs = product.attrs or {}; payload = attrs.get("lazada_product")
+        self._ensure_authorized()
+        # 合规闸门：与 shopee/ebay 同一入口，缺目的国准入证据时按租户开关拦截。
+        self._enforce_publish_gate(listing, product, channel="lazada")
+        attrs = product.attrs or {}; payload = attrs.get("lazada_product")
         if not isinstance(payload, dict): raise PlatformError("Lazada 发布需要 attrs.lazada_product（按站点类目 Schema）")
         root = ET.Element("Request")
         def append(parent, value):

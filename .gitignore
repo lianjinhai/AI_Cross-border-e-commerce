@@ -68,12 +68,16 @@ _wip_backup/
 #     python -m pytest --basetemp="F:/somewhere/else/_pt_tmp"
 #   仓库内没有任何测试产物，才是最省心的状态。
 #
-# 兜底：若确实要落在仓库内（本机曾这样跑过一轮），必须在此声明——
-#   D-5 要求「生成物先写进 .gitignore 再产生文件」。`_pytest_tmp/` 里的 .py
-#   是迁移/行尾用例造出来的**反面样本**（故意带 CRLF/BOM），入库即污染源码。
-#   同时 backend/scripts/check_docs_consistency.py 的 _SOURCE_EXCLUDE_DIRS
-#   也必须排除它，否则文档一致性门禁会被这些脚手架永久刷红。
+# 兜底：若确实要落在仓库内，必须在此声明——D-5 要求「生成物先写进 .gitignore
+# 再产生文件」。实测两种落点都出现过：`_pytest_tmp/`（本轮）与
+# `.pytest_basetemp/`（含 .db / -journal 迁移产物）。两者都必须拦住，否则
+# `git add .` 会把测试期生成的 sqlite 库与迁移中间文件一起卷进提交。
+# 同时 backend/scripts/check_docs_consistency.py 的 _SOURCE_EXCLUDE_DIRS
+# 也排除了测试脚手架，否则文档一致性门禁会被这些**故意带 CRLF 的反面样本**
+# 永久刷红，反而掩盖真正的源码行尾问题。
 _pytest_tmp/
+.pytest_basetemp/
+.pytest_basetemp*/
 
 # ---- 子进程输出重定向产物（脚本调试用，禁止入库）----
 # `.err` 是同一个坑的第二个入口：审计脚本与并行压测常用

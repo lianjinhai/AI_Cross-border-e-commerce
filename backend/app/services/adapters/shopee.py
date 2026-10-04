@@ -201,6 +201,10 @@ class ShopeeAdapter(BaseAdapter):
         平台的精确报错会原样透传给用户）。"""
         self._ensure_authorized()
         self._pre_publish_checks(listing, product)
+        # 法定准入守卫：与其余 can_publish 平台同一入口（基类
+        # `_enforce_publish_gate`）。放在 missing_publish_requirements 之前，
+        # 使「缺 FCC」与「缺类目映射」在报错里分属两道闸、语义清晰。
+        self._enforce_publish_gate(listing, product, channel="shopee")
         missing = self.missing_publish_requirements(listing, product)
         if missing:
             raise PlatformError("Shopee 上架前置校验未通过：" + "；".join(missing))

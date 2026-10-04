@@ -111,6 +111,9 @@ class TikTokAdapter(BaseAdapter):
         return payload.get("data") or {}
 
     def publish_listing(self, listing, product, *, resume=None, checkpoint=None) -> PublishResult:
+        # 合规闸门：与 shopee/ebay 同一入口，缺目的国准入证据时按租户开关拦截。
+        # 放在 listing_readiness 之前——法规准入优先于平台字段完整性。
+        self._enforce_publish_gate(listing, product, channel="tiktok")
         readiness = self.listing_readiness(listing, product)
         if not readiness["ready"]:
             raise PlatformError("TikTok Global Product 前置校验未通过：" +

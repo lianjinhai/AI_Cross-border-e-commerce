@@ -9,13 +9,18 @@
     1. **只读**，绝不改任何业务数据——它是闸门，不是规则编辑器；
     2. **目的国必须解析出来**，解析不出时明确告知「无法校验」，**不得静默通过**。
        沉默的绿灯比红灯更危险：运营只会照着绿灯上架；
-    3. **本轮只做 warn，不阻断**。缺证据要记日志、要让运营看得见，但既有商品普遍
-       没有目的国与证据数据，立刻阻断会造成大面积误伤。`mode="enforce"` 的接口形态
-       已预留（`would_block` 字段），下一轮再开阻断。
+    3. **两种模式，语义不同**（2026-10 返工后定稿）：
+       - ``mode="enforce"``（发布链路的实际取值）：缺证据返回 ``gate_status="block"``，
+         调用方**必须**真正拦截上架；
+       - ``mode="warn"``（``evaluate()`` 的默认值，供只读试算/界面预览使用）：
+         缺证据只返回 ``warn`` + 原因，**不阻断**。
+       之所以留一个不阻断的默认值：给「手动试算 / 证据预览」这类**不产生上架
+       行为**的场景用，避免它们把UI 查询变成硬失败。
 
 调用方：
-    - `action_publish.publish_facts()`（所有发布路径的唯一公共出口，warn 模式）；
-    - 适配器 `publish_listing` 前的补校验（同样只记日志）。
+    - `action_publish.publish_facts()`（所有发布路径的唯一公共出口，enforce 模式，
+      真实店铺 is_demo=0 时拦截；本地 shop=None 与 demo 店铺保留旁路）；
+    - 各适配器 `publish_listing` 前的 `_enforce_publish_gate()`（阻断口径）。
 
 分层：只依赖 `compliance_registry`（准入规则）、`duty`（国家归一）与适配器注册表
 （站点声明），**不 import `routers/`**（L-1），也不使用函数体内延迟 import 掩盖
@@ -124,12 +129,11 @@ def evaluate(db, tenant_id, *, product, platform: str = "", shop=None,
             f"（{item.get('valid_until')}）")
     for name in result["missing"]:
         result["reasons"].append(f"目的国 {country} 缺少准入认证：{name}")
-    # would_block：下一轮 mode="enforce" 的阻断依据，本轮只记录不阻断。
     result["would_block"] = result["missing"] + result["expired"]
     if result["would_block"]:
-        result["gate_status"] = GATE_WARN
-        if mode == MODE_ENFORCE:
-            result["reasons"].append("enforce 模式已记录待阻断项，阻断能力将在下一轮开启")
+        # enforce：调用方（publish_facts）据此真正拦截上架。
+        # warn：只提示，调用方记日志后继续，不把合规债务变成可用性事故。
+        result["gate_status"] = (GATE_BLOCK if mode == MODE_ENFORCE else GATE_WARN)
     elif report.get("required"):
         result["reasons"].append(
             f"目的国 {country} 准入要求已齐备：" + "、".join(result["required"]))

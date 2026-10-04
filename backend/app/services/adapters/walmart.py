@@ -90,7 +90,10 @@ class WalmartAdapter(BaseAdapter):
         return out
 
     def publish_listing(self, listing, product, *, resume=None, checkpoint=None) -> PublishResult:
-        self._ensure_authorized(); attrs = product.attrs or {}
+        self._ensure_authorized()
+        # 合规闸门：与 shopee/ebay 同一入口，缺目的国准入证据时按租户开关拦截。
+        self._enforce_publish_gate(listing, product, channel="walmart")
+        attrs = product.attrs or {}
         payload = attrs.get("walmart_mp_item")
         if not isinstance(payload, dict):
             raise PlatformError("Walmart Full Item Setup 需要 attrs.walmart_mp_item 官方 MP_ITEM 5.x 结构")

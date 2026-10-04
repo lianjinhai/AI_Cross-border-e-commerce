@@ -120,16 +120,30 @@ def test_warn_mode_never_blocks_even_when_everything_is_missing(env):
     assert result["would_block"], "阻断依据仍须记录，供下一轮 enforce 使用"
 
 
-def test_enforce_mode_records_intent_without_blocking_yet(env):
-    """enforce 分支接口形态已就绪，但本轮不实现阻断。"""
+def test_enforce_mode_blocks_when_evidence_missing(env):
+    """enforce 模式：缺证据必须真正 block（发布链路据此真拦截上架）。
+
+    ⚠️ 2026-10 语义变更：本条原先断言 enforce 下仍返回 ``GATE_WARN``，那是
+    返工前「本轮只做 warn、不实现阻断」的临时预期。改为 fail-closed 后，
+    enforce 必须返回 ``GATE_BLOCK``，否则 warn-only 等于没闸门。
+    """
     db, tenant_id = env
     product = _charger(db, tenant_id)
     result = publish_gate.evaluate(db, tenant_id, product=product, platform="ebay",
                                    mode=publish_gate.MODE_ENFORCE)
     assert result["mode"] == "enforce"
-    assert result["gate_status"] == publish_gate.GATE_WARN
+    assert result["gate_status"] == publish_gate.GATE_BLOCK
     assert result["would_block"]
-    assert any("阻断能力将在下一轮开启" in reason for reason in result["reasons"])
+
+
+def test_warn_mode_still_never_blocks_for_readonly_callers(env):
+    """warn 模式（evaluate 默认值，供试算/预览用）：缺证据只 warn，不阻断。"""
+    db, tenant_id = env
+    product = _charger(db, tenant_id)
+    result = publish_gate.evaluate(db, tenant_id, product=product, platform="ebay")
+    assert result["mode"] == "warn"
+    assert result["gate_status"] == publish_gate.GATE_WARN
+    assert result["would_block"], "阻断依据仍须记录"
 
 
 def test_satisfied_evidence_yields_pass(env):
@@ -266,15 +280,99 @@ def test_publish_facts_gate_does_not_block_unknown_destination(env, caplog):
     assert facts["compliance_gate"]["gate_status"] == publish_gate.GATE_WARN
 
 
+def test_publish_facts_blocks_real_shop_missing_fcc(env):
+    """真实店铺（is_demo=0）缺 FCC：publish_facts 必须抛 ActionError（fail-closed）。
+
+    2026-10 fail-closed 定稿的核心断言。本地（shop=None）与 demo 店铺的旁路
+    由 QA 用例 test_local_path_without_shop_still_publishes /
+    test_demo_shop_path_still_publishes 锁定。
+    """
+    from app.services.ai_actions import ActionError
+
+    db, tenant_id = env
+    product = _charger(db, tenant_id, attrs={"destination_country": "US"})
+    shop = Shop(tenant_id=tenant_id, platform=_PLATFORM, role="sales",
+                status="authorized", is_demo=False)
+    db.add(shop)
+    db.commit()
+    listing = _publishable(db, tenant_id, product)
+    with pytest.raises(ActionError) as excinfo:
+        publish_facts(db, tenant_id, listing.id, shop.id)
+    assert "FCC" in str(excinfo.value)
+
+
+def test_publish_facts_allows_real_shop_once_fcc_present(env):
+    """反向约束：真实店铺证据齐备时不得被闸门误拦（防止修成一律拦死）。"""
+    db, tenant_id = env
+    product = _charger(db, tenant_id, attrs={"destination_country": "US"})
+    db.add(ProductComplianceEvidence(tenant_id=tenant_id, product_id=product.id,
+                                     destination_country="US", requirement="FCC",
+                                     evidence_ref="FCC-2026-001"))
+    shop = Shop(tenant_id=tenant_id, platform=_PLATFORM, role="sales",
+                status="authorized", is_demo=False)
+    db.add(shop)
+    db.commit()
+    listing = _publishable(db, tenant_id, product)
+    facts = publish_facts(db, tenant_id, listing.id, shop.id)
+    assert facts["fingerprint"], "证据齐备的发布事实必须正常产出"
+    assert facts["compliance_gate"]["gate_status"] == publish_gate.GATE_PASS
+
+
 # ---------------------------------------------------------------- 适配器接入
-def test_ebay_publish_lists_advisory_but_still_publishes(env, monkeypatch):
-    """eBay：缺目的国证据时记日志并附加到错误上下文，但**不阻断**本可发布的 Listing。"""
+def _record_hook(name, sink):
+    """构造记录调用来源的桩（工厂函数：避免闭包 late-binding 绑错循环变量）。"""
+    def _hook(*_args, **_kwargs):
+        sink.append(name)
+        return {}
+    return _hook
+
+
+# ⚠️ 2026-10 语义变更（fail-closed 定稿）：以下两条原先断言「缺 FCC 只记日志、
+# 不阻断本可发布的 Listing」。那是「本轮只做 warn」阶段的临时预期，现已作废——
+# 法定强制认证缺失属法律硬底线，不允许靠租户开关放行。两条改为断言**必须拦截**。
+def test_ebay_publish_blocks_when_fcc_missing(env, monkeypatch):
+    """eBay：缺 FCC 认证必须拦在网络调用之前（不得发出任何真实请求）。"""
+    from types import SimpleNamespace
+
+    from app.services.adapters.contract import PlatformError
+    from app.services.adapters.ebay import EbayAdapter
+
+    db, tenant_id = env
+    product = _charger(db, tenant_id, attrs={"destination_country": "US"})
+    shop = SimpleNamespace(tenant_id=tenant_id, platform="ebay", status="authorized",
+                           token_expire_at=None, app_key="k", app_secret="s",
+                           shop_id="ru", access_token="t", refresh_token="r")
+    adapter = EbayAdapter(db, shop)
+    listing = SimpleNamespace(title="65W 氮化镓快充充电器", description="描述",
+                              keywords=["charger"])
+    # 刻意把 eBay 自身的必填字段全部补齐：证明拦住它的**只有**合规闸门，
+    # 而不是「反正字段也缺、顺手一起报」。
+    product.attrs = {**product.attrs, "ebay_category_id": "12345",
+                     "ebay_location_key": "LOC", "ebay_fulfillment_policy_id": "F",
+                     "ebay_payment_policy_id": "P", "ebay_return_policy_id": "R",
+                     "sale_price": 39.9, "onhand": 100}
+    db.commit()
+    monkeypatch.setattr(adapter, "_pre_publish_checks", lambda *a: None)
+    calls = []
+    monkeypatch.setattr(adapter, "_api_call", lambda method, path, body=None:
+                        calls.append(path) or {"offerId": "OFFER1", "listingId": "LID1"})
+    with pytest.raises(PlatformError) as excinfo:
+        adapter.publish_listing(listing, product)
+    assert "缺少准入认证：FCC" in str(excinfo.value)
+    assert not calls, f"缺 FCC 认证竟仍真实调用了 eBay 接口：{calls}"
+
+
+def test_ebay_publish_succeeds_once_fcc_evidence_present(env, monkeypatch):
+    """反向约束：补齐 FCC 证据后必须能正常发布（防止修成一律拦死）。"""
     from types import SimpleNamespace
 
     from app.services.adapters.ebay import EbayAdapter
 
     db, tenant_id = env
     product = _charger(db, tenant_id, attrs={"destination_country": "US"})
+    db.add(ProductComplianceEvidence(tenant_id=tenant_id, product_id=product.id,
+                                     destination_country="US", requirement="FCC",
+                                     evidence_ref="FCC-2026-001"))
     shop = SimpleNamespace(tenant_id=tenant_id, platform="ebay", status="authorized",
                            token_expire_at=None, app_key="k", app_secret="s",
                            shop_id="ru", access_token="t", refresh_token="r")
@@ -291,12 +389,57 @@ def test_ebay_publish_lists_advisory_but_still_publishes(env, monkeypatch):
     monkeypatch.setattr(adapter, "_api_call", lambda method, path, body=None:
                         calls.append(path) or {"offerId": "OFFER1", "listingId": "LID1"})
     result = adapter.publish_listing(listing, product)
-    assert result.external_id == "LID1", "缺 FCC 证据不得让本可发布的 Listing 失败"
+    assert result.external_id == "LID1", "证据齐备后不得被闸门误拦"
     assert calls, "仍应真实调用 eBay 接口"
 
 
-def test_ebay_publish_attaches_advisory_to_existing_error_context(env, monkeypatch):
-    """eBay 自身必填缺失时，准入提示附加进既有错误信息（不吞掉原错误）。"""
+@pytest.mark.parametrize("platform", ["lazada", "tiktok", "walmart"])
+def test_every_can_publish_adapter_blocks_when_fcc_missing(env, monkeypatch, platform):
+    """架构级回归：缺 FCC 时**每一个** can_publish 平台都必须拦住。
+
+    2026-10 验收发现 eBay 修好后，lazada / tiktok / walmart 三个同样
+    can_publish=True 的平台一次都不咨询闸门。本条逐个平台实测运行时行为，
+    避免「形状齐全、行为放行」再次发生。
+    """
+    from types import SimpleNamespace
+
+    from app.services.adapters.contract import PlatformError
+    from app.services.platform_adapters import ADAPTERS
+
+    db, tenant_id = env
+    product = _charger(db, tenant_id, attrs={"destination_country": "US"})
+    shop = SimpleNamespace(tenant_id=tenant_id, platform=platform, status="authorized",
+                           token_expire_at=None, app_key="k", app_secret="s",
+                           shop_id="100", access_token="t", refresh_token="r")
+    adapter = ADAPTERS[platform](db, shop)
+    listing = SimpleNamespace(title="65W 氮化镓快充充电器", description="描述",
+                              keywords=["charger"], platform=platform, category="3C配件",
+                              images=["https://cdn.example.com/c.jpg"], attrs=product.attrs,
+                              bullets=["65W"], brand="probe", language="en-US")
+    monkeypatch.setattr(adapter, "_pre_publish_checks", lambda *a: None)
+    monkeypatch.setattr(adapter, "listing_readiness",
+                        lambda *a: {"ready": True, "mode": "probe", "market": "US",
+                                    "category_id": "1", "shop_region": "US",
+                                    "enabled_logistics": ["1"],
+                                    "required_attribute_count": 0, "blockers": [],
+                                    "warnings": [], "next_action": ""})
+    reached = []
+    for hook in ("_api_call", "_call", "_upload_image", "_upload"):
+        if hasattr(adapter, hook):
+            monkeypatch.setattr(adapter, hook, _record_hook(hook, reached))
+    with pytest.raises(PlatformError) as excinfo:
+        adapter.publish_listing(listing, product)
+    assert "缺少准入认证：FCC" in str(excinfo.value), f"{platform} 未报出 FCC 缺口"
+    assert not reached, f"{platform} 缺 FCC 却仍发起了外部调用：{reached}"
+
+
+def test_ebay_own_field_error_not_swallowed_by_gate(env, monkeypatch):
+    """合规通过但 eBay 自身必填缺失时，必须报 eBay 自己的错（闸门不吞错误）。
+
+    ⚠️ 2026-10 语义变更：原用例断言「准入提示附加进eBay 既有错误信息」。
+    fail-closed 后闸门口径独立且**先于**平台字段检查抛错，两者不再混在一条
+    消息里——保留的是「不吞掉原错误」这个意图：证据齐备时，缺什么报什么。
+    """
     from types import SimpleNamespace
 
     from app.services.adapters.contract import PlatformError
@@ -304,6 +447,9 @@ def test_ebay_publish_attaches_advisory_to_existing_error_context(env, monkeypat
 
     db, tenant_id = env
     product = _charger(db, tenant_id, attrs={"destination_country": "US"})
+    db.add(ProductComplianceEvidence(tenant_id=tenant_id, product_id=product.id,
+                                     destination_country="US", requirement="FCC",
+                                     evidence_ref="FCC-2026-001"))
     shop = SimpleNamespace(tenant_id=tenant_id, platform="ebay", status="authorized",
                            token_expire_at=None, app_key="k", app_secret="s",
                            shop_id="ru", access_token="t", refresh_token="r")
@@ -313,5 +459,5 @@ def test_ebay_publish_attaches_advisory_to_existing_error_context(env, monkeypat
     with pytest.raises(PlatformError) as excinfo:
         adapter.publish_listing(listing, product)
     message = str(excinfo.value)
-    assert "eBay 类目ID" in message, "原有错误信息必须保留"
-    assert "缺少准入认证：FCC" in message, "准入提示应附加到错误上下文"
+    assert "eBay 类目ID" in message, "eBay 自身的必填缺失必须照常报出"
+    assert "合规闸门" not in message, "证据齐备时不应被合规闸门误拦"

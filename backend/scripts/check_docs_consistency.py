@@ -279,14 +279,14 @@ def _line_at(text: str, lineno: int) -> str:
 # 扫描时排除的目录：依赖、生成物、缓存、冷备。node_modules 实测 15782 个文件，
 # 扫进来既慢，又会把第三方依赖的行尾当成自己的问题报出来（噪音淹没真问题）。
 #
-# `_pytest_tmp`：pytest 的 basetemp 落点（见根 .gitignore）。测试脚手架按定义
-# 不是源码——里面的 .py 是迁移/行尾用例临时造出来的**反面样本**，行尾本来就是
-# CRLF（用例要验证的正是「CRLF 应被检出」）。扫进来只会让本门禁永久红灯，
-# 反而掩盖真正的源码行尾问题。
+# `_pytest_tmp` / `.pytest_basetemp`：pytest 的 basetemp 落点（见根
+# .gitignore）。测试脚手架按定义不是源码——里面的 .py 是迁移/行尾用例临时造出来
+# 的**反面样本**，行尾本来就是 CRLF（用例要验证的正是「CRLF 应被检出」）。
+# 扫进来只会让本门禁永久红灯，反而掩盖真正的源码行尾问题。
 _SOURCE_EXCLUDE_DIRS = {
     ".git", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache",
     "dist", "build", "backups", "_erp_backups", ".venv", "venv", "htmlcov",
-    "_pytest_tmp",
+    "_pytest_tmp", ".pytest_basetemp",
 }
 
 

@@ -70,17 +70,25 @@ def publish_facts(db, tenant_id, listing_id, shop_id=None):
             inputs["rule_sync_failure"] = digest({key: sync.get(key) for key in ("error", "latest", "hint")})
         if review.evidence["review_inputs"] != inputs:
             raise ActionError(409, "复核规则或最新合规报告已变化，请重新复核")
-    # 第五道：目的国准入闸门（本轮 warn 模式）。
+    # 第五道：目的国准入闸门。
     # 放在四道既有校验**之后**——前四道是「内容是否可发」，这一道是「法规是否允许发」。
-    # 为什么本轮只记日志：既有商品普遍没有目的国与证据数据，立刻阻断会造成大面积
-    # 误伤；但**必须留下结构化痕迹**，否则运营看不到「美国站缺 FCC」这类缺口。
-    # 三条发布路径（本地置 published / demo 店铺 / 真实 API）都先经过 publish_facts，
-    # 因此在这里记一次即可覆盖全部路径，无需在下游重复埋点。
+    # 放在**之前**会让闸门在规则违规时就中断，运营同时看不到两类问题，反而不利排查。
+    #
+    # 为什么用 enforce（真阻断）而不是只记日志：缺 FCC 认证的充电器一旦上架，
+    # 平台会下架甚至封店，代价远高于「多提醒一次」；2026-10 验收证实 warn-only
+    # 下缺认证商品确实能一路发到真实 eBay 店铺。
+    #
+    # 旁路：**本地（shop=None，直接置 published）与demo 店铺（is_demo=1）不拦**。
+    # 这两条路径不对外产生真实上架行为，E2E 演示也依赖它们；拦下来只会造成
+    # 「闸门把本地流程也打挂」的可用性事故。真实店铺（is_demo=0）必须拦。
+    bypass = shop is None or bool(shop.is_demo)
     compliance_gate = publish_gate.evaluate(
         db, tenant_id, product=product, platform=listing.platform, shop=shop,
-        mode=publish_gate.MODE_WARN)
-    if compliance_gate["gate_status"] == publish_gate.GATE_WARN:
+        mode=publish_gate.MODE_WARN if bypass else publish_gate.MODE_ENFORCE)
+    if compliance_gate["gate_status"] != publish_gate.GATE_PASS:
         publish_gate.log_warn(compliance_gate, channel="publish_facts")
+    if compliance_gate["gate_status"] == publish_gate.GATE_BLOCK:
+        raise ActionError(400, "上架合规闸门未通过：" + "；".join(compliance_gate["reasons"]))
     payload = {"listing": {key: getattr(listing, key) for key in
                            ("title", "description", "bullets", "keywords", "platform")},
                "product": {key: getattr(product, key) for key in
