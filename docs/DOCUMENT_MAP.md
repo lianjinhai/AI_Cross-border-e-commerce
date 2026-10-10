@@ -66,6 +66,7 @@
 
 | 文档 | 状态 | 作用 | 实施后去向 |
 |---|---|---|---|
+| `docs/PLATFORM_COMMERCE_WORKFLOW_GAP_ANALYSIS.md` | AUDITED（2026-10-10，待下一阶段设计） | 多平台生命周期与 Launch Center 的代码差距、复用边界和实施前置条件 | 设计实施期间维护，完成后归档 |
 | `docs/页面操作权限对照表.md` | 实施依据 | 页面-操作-权限 key 对照（权威源为 `workspace_context.py` 的 `ROLE_PERMISSIONS`） | 保持（随权限矩阵同步） |
 | `docs/phase1_setting_scope_design.md` | DESIGNED（**未执行 DDL**） | P1-10 Setting 作用域隔离设计 | 实施后并入 `phase1_interfaces.md` 或归档 |
 | `docs/角色权限体系梳理方案.md` | 论证中 → 待定稿 | 角色与权限体系梳理 | 定稿后拆为规范 + 实施 |
