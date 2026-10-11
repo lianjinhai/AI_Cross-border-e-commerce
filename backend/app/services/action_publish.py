@@ -119,10 +119,17 @@ def _attempt(db, action, listing, shop):
     return attempt
 
 
+def _receipt(attempt):
+    return {"attempt_id": attempt.id, "shop_id": attempt.shop_id,
+            "platform_status": attempt.platform_status,
+            "verification_status": attempt.verification_status,
+            "external_object_type": attempt.external_object_type}
+
+
 def _external_publish(db, action, listing, product, shop):
     attempt = _attempt(db, action, listing, shop)
     if attempt.status == "succeeded" and attempt.external_id:
-        return attempt.external_id, "", "demo" if shop.is_demo else "api", True
+        return attempt.external_id, "", "demo" if shop.is_demo else "api", True, _receipt(attempt)
 
     def checkpoint(values):
         attempt.checkpoint = {**(attempt.checkpoint or {}), **values}
@@ -149,10 +156,17 @@ def _external_publish(db, action, listing, product, shop):
         raise ActionError(400, str(exc)) from exc
     attempt.status = "succeeded"
     attempt.external_id = result.external_id
+    # 此入口只证明提交响应，不负责在售核验；原始状态保留但不自动映射为 ACTIVE。
+    attempt.platform_status = "SUBMITTED"
+    attempt.verification_status = "UNKNOWN" if shop.is_demo else "PENDING_VERIFICATION"
+    attempt.external_object_type = getattr(result, "external_object_type", "UNKNOWN")
+    attempt.raw_status = str((result.raw or {}).get("status") or "")[:256]
+    attempt.received_at = datetime.utcnow()
+    attempt.mapping_version = "submission-v1"
     attempt.error = ""
     attempt.finished_at = datetime.utcnow()
     db.commit()  # 外部成功凭据先落库，后续本地事务失败仍可 read-back/幂等恢复。
-    return result.external_id, result.url, source, False
+    return result.external_id, result.url, source, False, _receipt(attempt)
 
 
 def publish_listing(db, action, payload):
@@ -162,18 +176,21 @@ def publish_listing(db, action, payload):
     facts = publish_facts(db, action.tenant_id, action.target_id, payload.get("shop_id"))
     if facts["fingerprint"] != action.evidence.get("fingerprint"):
         raise ActionError(409, "审批期间内容、商品或规则已变化，请新建发布 Action")
-    if listing.status == "published" and listing.external_id:
-        return {"result": {**to_dict(listing), "source": "api" if shop else "local",
-                           "publish_url": "", "idempotent_replay": True}}
+    # Listing 的历史投影不证明当前店铺已提交；真实重放依据店铺 Attempt，
+    # 已成功 Action 的重放由 Executor 返回其原始 outcome。
     if shop is None:
         external_id, url, source, replay = (
             f"{listing.platform}-{listing.id:06d}", "", "local", False)
+        receipt = {"shop_id": None, "attempt_id": None, "platform_status": "NOT_SUBMITTED",
+                   "verification_status": "UNKNOWN", "external_object_type": "UNKNOWN"}
     else:
-        external_id, url, source, replay = _external_publish(db, action, listing, product, shop)
+        external_id, url, source, replay, receipt = _external_publish(db, action, listing, product, shop)
+    # 母稿的三态不归属任意一家店；响应用明确 shop_id 的回执覆盖。
+    # 后续店铺派生 Listing 才能保存该店状态，旧 published 仅保留兼容含义。
     listing.status = "published"
     listing.external_id = external_id
     listing.published_at = datetime.utcnow()
     listing.updated_at = listing.published_at
     db.flush()
-    return {"result": {**to_dict(listing), "publish_url": url, "source": source,
+    return {"result": {**to_dict(listing), **receipt, "publish_url": url, "source": source,
                        "idempotent_replay": replay}}

@@ -3435,3 +3435,5 @@ PostgreSQL 与独立任务队列未动。
 **权威细节**：领域/API 见 PLATFORM_COMMERCE_WORKFLOW_ARCHITECTURE.md；状态见 PLATFORM_WORKFLOW_STATE_MODEL.md；产品、迁移、测试和进度分别见对应 Launch/Platform Workflow 文档。设计一致性检查不构成迁移或功能验收，实际证据持续登记进度与 E2E 矩阵。
 
 **替代方案**：不采用新建平行 ERP、Adapter 内编排、前端硬编码步骤或 AI 自行维护状态；这些方案会复制事实或绕开已有安全边界。
+
+**实施增量（2026-10-11）**：先落实发布回执隔离和 Expand 1a（revision 20261011_22），再补 Shop/派生稿等后继增量，领域模型不变。历史 published/succeeded 不回填可信在售；提交响应仅记 SUBMITTED，并单独保留原始状态、类型、接收时间和映射版本。Listing 母稿不认领任意店铺三态。合成历史库测试对旧数据、列、索引、外键及行数作断言，有新事实拒绝降级。已有 D58/调度身份测试仅构造局部历史表，目标改为各自负责的 revision 20/19，不再将局部 schema 升级到任意 head；不放宽原数据断言，新增发布迁移与既有完整 ORM 全链迁移测试分别守护相应边界。主库迁移和完整 Launch 验收仍未完成。

@@ -6,7 +6,7 @@
           <el-option v-for="p in salesPlatforms" :key="p.value" :label="p.label" :value="p.value" />
         </el-select>
         <el-select v-model="q.status" placeholder="状态" style="width:120px" clearable @change="load">
-          <el-option label="草稿" value="draft" /><el-option label="已发布" value="published" />
+          <el-option label="草稿" value="draft" /><el-option label="已有发布记录" value="published" />
         </el-select>
         <el-button v-if="write" type="primary" @click="openGenerate">AI 生成 Listing</el-button>
       </div>
@@ -29,15 +29,15 @@
           </template>
         </el-table-column>
         <el-table-column prop="title" label="Listing 标题" min-width="260" show-overflow-tooltip />
-        <el-table-column label="状态" width="90"><template #default="{ row }"><run-status :status="row.status" /></template></el-table-column>
+        <el-table-column label="状态" width="130"><template #default="{ row }"><span v-if="row.status === 'published'">有发布记录·待核验</span><run-status v-else :status="row.status" /></template></el-table-column>
         <el-table-column label="风险" width="80"><template #default="{ row }"><run-status :status="row.risk_level" /></template></el-table-column>
         <el-table-column label="操作" width="255" fixed="right">
           <template #default="{ row }">
             <el-button size="small" @click="preview(row)">预览</el-button>
             <el-button v-if="write && row.status === 'draft'" size="small" type="primary" @click="optimize(row)">AI 优化</el-button>
             <el-button v-if="write" size="small" type="warning" @click="openReview(row)">复核</el-button>
-            <el-button v-if="write && row.status !== 'published'" size="small" type="success" @click="publish(row)">发布</el-button>
-            <el-button v-if="row.platform === 'walmart' && row.status === 'published' && row.external_id" size="small" @click="checkSubmission(row)">Feed 状态</el-button>
+            <el-button v-if="write" size="small" type="success" @click="publish(row)">选择店铺发布</el-button>
+            <el-button v-if="row.status === 'published'" size="small" @click="checkSubmission(row)">店铺回执</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -92,7 +92,7 @@
           :loading="approving" :disabled="!approvalNote.trim()" @click="approveReview">批准当前内容与规则版本</el-button>
       </template>
     </el-dialog>
-    <el-dialog v-model="submissionDialog" title="平台异步提交状态" width="680px"><div v-loading="submissionLoading"><el-alert type="info" :closable="false" title="平台接受 Feed 不等于商品已上架，请以商品级处理结果为准。" class="mb16"/><pre style="white-space:pre-wrap;max-height:440px;overflow:auto">{{ JSON.stringify(submissionResult, null, 2) }}</pre></div></el-dialog>
+    <el-dialog v-model="submissionDialog" title="店铺发布回执" width="680px" destroy-on-close><publication-receipts v-if="submissionDialog" :listing-id="submissionListingId" /></el-dialog>
 
     <el-dialog v-model="previewDialog" title="Listing 预览 / 编辑" width="640px">
       <div style="margin-bottom:12px">
@@ -174,6 +174,7 @@ import api from '../api'
 import { canApprove, canWrite, can } from '../permissions'
 import RunStatus from './RunStatus.vue'
 import PublishActions from '../components/PublishActions.vue'
+import PublicationReceipts from '../components/PublicationReceipts.vue'
 
 const publishActions = ref(null)
 
@@ -217,7 +218,7 @@ const publishing = ref(false)
 const checkingReadiness = ref(false)
 const readiness = ref(null)
 const write = can('listing:write'), approve = canApprove()
-const submissionDialog = ref(false), submissionLoading = ref(false), submissionResult = ref({})
+const submissionDialog = ref(false), submissionListingId = ref(null)
 const selectedRealShop = computed(() => pubShops.value.find(s => s.id === pubTarget.value))
 const publishDisabled = computed(() => Boolean(
   selectedRealShop.value && selectedRealShop.value.capabilities?.can_publish === false))
@@ -371,15 +372,9 @@ async function checkReadiness() {
   } finally { checkingReadiness.value = false }
 }
 
-async function checkSubmission(row) {
-  submissionDialog.value = true; submissionLoading.value = true; submissionResult.value = {}
-  try {
-    const { data } = await api.get('/shops')
-    const shop = (data.items || []).find(s => s.platform === row.platform && s.status === 'authorized' && !s.is_demo)
-    if (!shop) throw new Error('没有可查询该提交状态的已授权 Walmart 店铺')
-    submissionResult.value = (await api.get(`/shops/${shop.id}/submissions/${row.external_id}`)).data
-  } catch (e) { submissionResult.value = { error: e.response?.data?.detail || e.message } }
-  finally { submissionLoading.value = false }
+function checkSubmission(row) {
+  submissionListingId.value = row.id
+  submissionDialog.value = true
 }
 
 onMounted(load)

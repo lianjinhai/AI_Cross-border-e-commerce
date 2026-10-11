@@ -24,6 +24,7 @@ def test_role_permission_matrix(client):
     # platform_admin = 平台级配置写入（仅 admin/superadmin）
     probes = [
         ("GET", "/api/products", None, "read"),
+        ("GET", "/api/listings/999999/publication-attempts", None, "read"),
         ("POST", "/api/products", {"title": "probe-matrix"}, "write"),
         ("POST", "/api/products/999999/standardize", None, "write"),
         ("POST", "/api/discovery/score/999999", None, "write"),

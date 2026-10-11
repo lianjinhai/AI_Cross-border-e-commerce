@@ -605,7 +605,8 @@ def test_cross_border_migration_roundtrip_on_legacy_products(tmp_path):
         """)
     env = {**os.environ, "ERP_DB_URL": "sqlite:///" + target.as_posix(),
            "PYTHONIOENCODING": "utf-8"}
-    steps = (("upgrade", "head"), ("downgrade", "20261001_19"), ("upgrade", "head"))
+    # 此夹具只有旧 products，验证 D58 自身边界；全链升级由独立完整结构测试承担。
+    steps = (("upgrade", "20261001_20"), ("downgrade", "20261001_19"), ("upgrade", "20261001_20"))
     for direction, revision in steps:
         result = subprocess.run([sys.executable, "-m", "alembic", direction, revision],
                                 cwd=BACKEND, env=env, capture_output=True, text=True,

@@ -15,6 +15,7 @@ from .contract import _TIMEOUT, NormalizedOrder, PlatformError, PublishResult, T
 
 
 class WalmartAdapter(BaseAdapter):
+    can_submission_status = True
     platform, label = "walmart", "Walmart 美国站"
     docs = "https://developer.walmart.com/us-marketplace/docs/introduction-to-marketplace-apis"
     markets, auth_model = ["US"], "OAuth 2.0（Solution Provider）"
@@ -100,7 +101,7 @@ class WalmartAdapter(BaseAdapter):
         resume = resume or {}
         if resume.get("feed_id"):
             return PublishResult(resume["feed_id"], raw={"feed_id": resume["feed_id"],
-                "status": "submitted", "idempotent_replay": True})
+                "status": "submitted", "idempotent_replay": True}, external_object_type="SUBMISSION")
         raw = json.dumps(payload, ensure_ascii=False).encode()
         result = self._call("POST", "/v3/feeds", params={"feedType": "MP_ITEM"},
                             files={"file": ("mp_item.json", raw, "application/json")})
@@ -108,7 +109,8 @@ class WalmartAdapter(BaseAdapter):
         if not feed_id: raise PlatformError(f"Walmart 未返回 feedId: {str(result)[:200]}")
         if checkpoint: checkpoint({"feed_id": feed_id})
         return PublishResult(feed_id, raw={"feed_id": feed_id, "status": "submitted",
-            "verification": "awaiting_real_shop_acceptance", "note": "必须继续查询 Feed 及商品级结果"})
+            "verification": "awaiting_real_shop_acceptance", "note": "必须继续查询 Feed 及商品级结果"},
+            external_object_type="SUBMISSION")
 
     def submission_status(self, submission_id: str) -> dict:
         self._ensure_authorized()

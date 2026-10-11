@@ -27,11 +27,11 @@ export function usePublishActionQueue(onExecuted = () => {}) {
   async function execute(row) {
     if (busy.value || row.status !== 'APPROVED') return
     try {
-      await ElMessageBox.confirm(`执行 Action #${row.id}，将 Listing #${row.target_id} 上架到审批目标。`, '确认执行')
+      await ElMessageBox.confirm(`执行 Action #${row.id}，将 Listing #${row.target_id} 提交到审批目标，实际在售仍需核验。`, '确认执行')
       busy.value = true
       const { data } = await api.post(`/actions/${row.id}/execute`)
       if (data.status === 'SUCCESS') {
-        ElMessage.success('发布已执行；如来自工作流，请恢复该流程')
+        ElMessage.success('提交已执行，实际在售仍需核验；如来自工作流，请恢复该流程')
         onExecuted()
       } else ElMessage.error(data.outcome?.error || '发布执行失败，请核对现场并重新提案')
       await load()

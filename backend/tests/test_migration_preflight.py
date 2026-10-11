@@ -62,10 +62,10 @@ def test_planned_upgrade_ledger_requires_current_head_and_stays_readonly(tmp_pat
     计划目标必须是「唯一代码 head」且数据库 current 位于其线性祖先链上。追加迁移后
     这一对会随 head 前移更新（D56 为 18→19，D58 为 19→20，D59 为 20→21）。
     """
-    db = _build_db(tmp_path, alembic_rev="20261001_20")
+    db = _build_db(tmp_path, alembic_rev="20261001_21")
     before = hashlib.sha256(db.read_bytes()).hexdigest()
     versions = BACKEND_DIR / "migrations" / "versions"
-    result = _run(db, versions, "--planned-upgrade", "20261001_21")
+    result = _run(db, versions, "--planned-upgrade", "20261011_22")
     assert result.returncode == 0
     assert hashlib.sha256(db.read_bytes()).hexdigest() == before
     result = _run(db, versions)

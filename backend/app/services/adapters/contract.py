@@ -82,6 +82,7 @@ class PublishResult:
     external_id: str
     url: str = ""
     raw: dict = field(default_factory=dict)
+    external_object_type: str = "UNKNOWN"  # PRODUCT / OFFER / SUBMISSION；不能据此推断在售
 
 
 def redirect_uri_for(shop) -> str:

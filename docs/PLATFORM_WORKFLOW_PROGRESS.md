@@ -21,9 +21,9 @@
 | 已有审计 | DONE | 47161d1；不重复产出 |
 | 六份一致设计 | DONE | 已生成架构、状态、产品、迁移、矩阵和本进度；检查记录见下节 |
 | 设计冻结与决策登记 | DONE | 已校对关系、状态、权限/API；D61 登记 V2 增量；实现验收未完成 |
-| A P0 修复 | IN_PROGRESS | 已修复发布意图查询的 Store 隔离；完整双店发布与其余门禁待实现 |
+| A P0 修复 | IN_PROGRESS | 意图与店铺回执隔离已有 Contract 证据；可信在售及其余门禁待实现 |
 | B Profile/Runtime/Transition | NOT_STARTED | 复用三表和旧引擎机制 |
-| C 隔离迁移演练 | NOT_STARTED | 主库不动；检查兼容和回滚 |
+| C 隔离迁移演练 | PARTIAL | Expand 1a 合成历史库已演练；完整副本仍待验证，主库不动 |
 | D 领域服务 | NOT_STARTED | Costing/核价/备货/Artifact/Asset/Label |
 | E 前端 | NOT_STARTED | 同页双模式、渠道/深链、Factory 投影 |
 | F 本地 Profile | NOT_STARTED | SIMPLE_CONTRACT / COMPLEX_CONTRACT |
@@ -58,4 +58,14 @@
 
 后端反序运行使用 pytest collection hook 将全部 items.reverse()：728 passed / 2 xfailed / 1 xpassed，与正序一致。最终文档一致性 total=0。无运行中的验证进程；未作可部署或真实平台接通结论，隔离服务 E2E 与 Playwright 仍待后续实现后执行。
 
-这仅证明意图层隔离；Listing 全局 published 的返回路径仍需改造，不能声称完整 P0-1 或双店上线已通过。下一步进入店铺发布回执、状态语义及相应增量迁移。所有迁移仍未执行，主库不动。
+以上为 066f36d 检查点结果；后续增量如下。
+
+## 6. 2026-10-11 发布回执与状态增量
+
+- 去除 Listing 全局 published 的发布短路，以 tenant/listing/shop Attempt 作为外部重放依据。HTTP 双店审批链先复现第二店未调用发布（1 failed），修复后两店独立回执、各自重放与分页均有断言。
+- 增加三态/回执列与 migration 20261011_22。历史保持 UNKNOWN，提交只产生 SUBMITTED，演示不产生 VERIFIED；原始响应 ACTIVE 也不能直接成为在售。Walmart 明确 SUBMISSION 类型和查询能力。
+- 新增按店铺回执分页接口及前端组件，删除按平台取第一店的查询逻辑；列表和审批文案说明提交不等于在售，保留跨店再次提交入口。
+- 合成历史库预检只读、升级/降级/再升级、有事实拒绝降级已通过。迁移快照对外键排序规范化，保留列/索引/FK/行数断言。旧最小结构测试分别固定自身 19/20 迁移边界，不再用不完整 schema 冒充任意 head；原有数据与约束断言不变。
+- 阶段验证：发布/Adapter 37 passed；迁移/跨境成本 43 passed；新增回执接口/安全矩阵 7 passed。后端全量正反序均 731 passed / 2 xfailed / 1 xpassed，既有合规待定标记保持；最终前端 79 passed、构建通过，Ruff 通过，文档一致性 total=0，git diff --check 通过。无运行中的测试进程。
+
+未完成：Store Scope 全链、真实在售核验服务、店铺派生稿、完整副本迁移、Workflow runtime、业务服务、Launch Center 和 Playwright。不能将此批当作 P0 全部完成；主库与真实店铺仍未操作。

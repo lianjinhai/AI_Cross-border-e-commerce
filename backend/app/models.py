@@ -315,6 +315,10 @@ class Listing(Base):
     keywords: Mapped[list] = mapped_column(JSON, default=list)
     model: Mapped[str] = mapped_column(String(16), default="rule")  # llm/rule（文案生成方式）
     status: Mapped[str] = mapped_column(String(16), default="draft")  # draft/published/offline
+    # 旧 status 仅作兼容投影；平台在售必须有独立核验证据。
+    platform_status: Mapped[str] = mapped_column(String(24), default="UNKNOWN", server_default="UNKNOWN")
+    verification_status: Mapped[str] = mapped_column(String(24), default="UNKNOWN", server_default="UNKNOWN")
+    external_object_type: Mapped[str] = mapped_column(String(32), default="UNKNOWN", server_default="UNKNOWN")
     risk_level: Mapped[str] = mapped_column(String(16), default="unknown")  # low/mid/high/unknown
     external_id: Mapped[str] = mapped_column(String(64), default="")
     published_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
@@ -334,6 +338,12 @@ class PlatformPublishAttempt(Base):
     platform: Mapped[str] = mapped_column(String(32))
     idempotency_key: Mapped[str] = mapped_column(String(64), unique=True)
     status: Mapped[str] = mapped_column(String(24), default="processing")
+    platform_status: Mapped[str] = mapped_column(String(24), default="UNKNOWN", server_default="UNKNOWN")
+    verification_status: Mapped[str] = mapped_column(String(24), default="UNKNOWN", server_default="UNKNOWN")
+    external_object_type: Mapped[str] = mapped_column(String(32), default="UNKNOWN", server_default="UNKNOWN")
+    raw_status: Mapped[str] = mapped_column(String(256), default="", server_default="")
+    received_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    mapping_version: Mapped[str] = mapped_column(String(64), default="", server_default="")
     checkpoint: Mapped[dict] = mapped_column(JSON, default=dict)
     external_id: Mapped[str] = mapped_column(String(128), default="")
     error: Mapped[str] = mapped_column(Text, default="")

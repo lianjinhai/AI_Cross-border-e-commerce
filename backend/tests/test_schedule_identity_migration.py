@@ -29,7 +29,9 @@ def test_schedule_identity_upgrade_downgrade_preserves_legacy_data(tmp_path):
         """)
         before = db.execute("SELECT * FROM schedules").fetchall()
     env = {**os.environ, "ERP_DB_URL": "sqlite:///" + target.as_posix(), "PYTHONIOENCODING": "utf-8"}
-    for direction, revision in (("upgrade", "head"), ("downgrade", "20260930_18"), ("upgrade", "head")):
+    # 最小 schedules 夹具只验证身份迁移；不能假装包含后续发布表的历史全库。
+    for direction, revision in (("upgrade", "20261001_19"), ("downgrade", "20260930_18"),
+                                ("upgrade", "20261001_19")):
         result = subprocess.run([sys.executable, "-m", "alembic", direction, revision],
                                 cwd=BACKEND, env=env, capture_output=True, text=True, encoding="utf-8")
         assert result.returncode == 0, result.stderr

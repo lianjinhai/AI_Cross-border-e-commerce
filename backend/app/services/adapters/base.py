@@ -23,6 +23,7 @@ class BaseAdapter:
     can_publish = False
     can_refresh = False
     can_listing_readiness = False
+    can_submission_status = False
     can_advert = False                      # 广告 API 是否已接入（D60 骨架）
     advert_protocol_status = "planned"      # planned / protocol_ready_unverified / verified
     # 发布必需的外部资源（如类目映射）

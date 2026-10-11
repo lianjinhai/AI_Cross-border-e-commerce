@@ -97,6 +97,10 @@ regions.normalize_country("美国") / regions.region_code("DE")     # -> "US" / 
 
 #### 上架复核（D54，ListingReviewAgent）
 
+D61 发布回执增量（2026-10-11）：`GET /api/listings/{listing_id}/publication-attempts` 使用现有 page_num/page_size 分页，校验 Listing 与 Shop 的 tenant 归属并排除归档店铺。每条返回 shop_id/shop_name/external_id/external_object_type/platform_status/verification_status/received_at/can_query_submission，不返回凭证。UI 只查询用户选择的回执所属店铺，不按平台猜第一家店。
+
+发布 execute 的 outcome.result 增加 shop_id、attempt_id 和三类事实字段。`status=published` 是旧 API 的提交兼容投影，**不表示 ACTIVE**；真实提交得到 SUBMITTED/PENDING_VERIFICATION，演示为 SUBMITTED/UNKNOWN，本地模拟为 NOT_SUBMITTED/UNKNOWN。母稿三态保持 UNKNOWN；店铺事实读取 PlatformPublishAttempt。Walmart Feed 类型为 SUBMISSION，提交响应的原始 ACTIVE 也不得直接升级为 VERIFIED。已有历史记录默认 UNKNOWN，不自动补造可信回执。
+
 - `review(listing_id, rule_sync=None)`：Agent 只返回分析及内部 `_review_analysis`，无 ORM/规则同步写入。HTTP 经 `invoke_review` 及可信产物服务保存既有 ListingReviewDecision，返回真实 review_id/decision/reasons/rule_version/rule_source/evidence，自动来源元数据不暴露在该响应。
 - 普通复核需 listing:write；人工审批入口内部复核需 compliance:approve，合规员仍无发布权限。保存前重验身份、Workspace、租户/商品归属、内容、完整规则、最新报告和人工依据；批次原子保存，陈旧或伪造输出拒绝。
 - `review_batch(params, context)`：可信 Workflow 使用原请求者与 run/step 范围，最多 50 个正整数 Listing ID；显式空列表不扩张。返回 approved/blocked/business_status/context_patch；服务端步骤局部清单用于恢复，同范围清单或依据改变返回 409。合法人工确认可解除原人工阻断；明确违规/高风险不能强制覆盖。

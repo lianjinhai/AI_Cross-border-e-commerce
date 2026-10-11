@@ -11,6 +11,8 @@
 
 真实平台账号联调为 CONDITIONAL_EXTERNAL，不属于本地 Contract 成功证据。未授权时保持 RESTRICTED/UNVERIFIED，不用测试桩连接生产 URL。
 
+2026-10-11 后续：`backend/tests/test_publish_store_receipts.py` 通过 HTTP 审批/执行验证两店各自外部回执（demo 契约桩）、各自重放、分页和原始 ACTIVE 不直通核验；前端 `frontend/tests/publication-receipts.test.js` 验证只查询所选店铺。P0-1/P0-2 仍为 PARTIAL，未覆盖并发创建、真实回读核验或 Launch 完整状态迁移。Expand 1a 合成历史库 migration roundtrip、历史 UNKNOWN 和有事实拒绝降级已通过；完整副本与 PG 仍 NOT_RUN。
+
 ## 2. P0 独立回归
 
 | ID | 测试输入/动作 | 必须断言 |

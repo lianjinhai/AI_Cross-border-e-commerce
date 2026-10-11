@@ -1,13 +1,15 @@
 # Platform Workflow 迁移与安全计划 V2
 
-> 最后更新：2026-10-10。状态：FROZEN_FOR_IMPLEMENTATION / 未执行 DDL / 主库未修改。
+> 最后更新：2026-10-11。状态：FROZEN_FOR_IMPLEMENTATION / Expand 1a 合成历史库已演练 / 主库未修改。
 > 领域字段以 `docs/PLATFORM_COMMERCE_WORKFLOW_ARCHITECTURE.md` 为准；此处定义实施顺序与安全门禁。
 
 ## 1. 目标与绝对边界
 
-只增加模型能力，保留 Tenant 主键、商品/Listing/订单/财务数据和 legacy Workflow。迁移只新增 revision，不修改已执行迁移；不 import app.models。当前源码最新迁移为 20261001_21，本轮新 revision 从其后继开始，创建前重新检查唯一 head。主库当前 revision 未核实，不沿用历史文档数值。
+只增加模型能力，保留 Tenant 主键、商品/Listing/订单/财务数据和 legacy Workflow。迁移只新增 revision，不修改已执行迁移；不 import app.models。设计基点的最新迁移为 20261001_21，本轮新 revision 从其后继开始，创建前重新检查唯一 head。主库当前 revision 未核实，不沿用历史文档数值。
 
 设计阶段不执行主库预检/DDL。实际演练只使用已验证绝对路径的隔离副本或合成历史库；创建生成物前写入 .gitignore 和 .dockerignore。禁止服务默认启动后连回 backend/erp.db，禁止用 create_all 冒充旧库升级。
+
+2026-10-11 实施：唯一 head 已推进至 20261011_22，前驱为 20261001_21。为先修复发布语义，Expand 1 拆出 1a（Listing/PlatformPublishAttempt 三态及回执元数据），未改变冻结领域模型；Shop 上下文、派生外键与体验偏好仍待后继迁移。`backend/tests/test_launch_publication_migration.py` 在临时合成历史库先运行只读 preflight，再验证升级、历史状态 UNKNOWN、FK/integrity、无新事实降级、再次升级和有事实拒绝降级。该证据不代表完整主库副本或 PostgreSQL 演练完成。
 
 ## 2. 增量拆分
 

@@ -14,10 +14,11 @@ from ..auth import (
     require_write,
 )
 from ..db import get_db
-from ..models import Listing, ListingReviewDecision, Product, User
+from ..models import Listing, ListingReviewDecision, PlatformPublishAttempt, Product, Shop, User
 from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
 from ..services.ai_actions import ActionError
+from ..services.platform_adapters import ADAPTERS
 from ..services.review_outputs import approve_review_output
 from ..services.workspace_context import resolve_workspace_context
 
@@ -66,6 +67,32 @@ def list_listings(product_id: int | None = None, platform: str = "", status: str
         d = to_dict(r)
         d["product_title"] = titles.get(r.product_id, "")
         items.append(d)
+    return page(items, total, page_num, page_size)
+
+
+@router.get("/{listing_id}/publication-attempts")
+def publication_attempts(listing_id: int, user: User = Depends(get_current_user),
+                         db: Session = Depends(get_db), page_num: int = PageNum,
+                         page_size: int = PageSize):
+    _owned(db, user.tenant_id, listing_id)
+    query = (db.query(PlatformPublishAttempt, Shop)
+            .join(Shop, PlatformPublishAttempt.shop_id == Shop.id)
+            .filter(PlatformPublishAttempt.tenant_id == user.tenant_id,
+                    PlatformPublishAttempt.listing_id == listing_id,
+                    Shop.tenant_id == user.tenant_id, Shop.archived_at.is_(None)))
+    total = query.count()
+    rows = (query.order_by(PlatformPublishAttempt.id.desc())
+            .offset((page_num - 1) * page_size).limit(page_size).all())
+    items = [{"id": attempt.id, "shop_id": shop.id, "shop_name": shop.shop_name,
+                       "platform": attempt.platform, "external_id": attempt.external_id,
+                       "external_object_type": attempt.external_object_type,
+                       "platform_status": attempt.platform_status,
+                       "verification_status": attempt.verification_status,
+                       "received_at": attempt.received_at,
+                       "can_query_submission": attempt.external_object_type == "SUBMISSION"
+                       and shop.status == "authorized" and not shop.is_demo
+                       and getattr(ADAPTERS.get(shop.platform), "can_submission_status", False)}
+                      for attempt, shop in rows]
     return page(items, total, page_num, page_size)
 
 
