@@ -11,6 +11,8 @@
 
 真实平台账号联调为 CONDITIONAL_EXTERNAL，不属于本地 Contract 成功证据。未授权时保持 RESTRICTED/UNVERIFIED，不用测试桩连接生产 URL。
 
+Profile 局部证据：`backend/tests/test_profile_definition.py` 校验简单/复杂声明式 DAG、非法动作/依赖/状态映射及条件 UNKNOWN；`backend/tests/test_workflow_profiles.py` 校验已发布内容不可编辑、旧草稿摘要拒绝发布、版本唯一、匹配精度/歧义、来源店铺/缺市场阻断、全域 OWNER 和定义摘要保护；`backend/tests/test_workflow_profile_migration.py` 校验历史模板兼容和数据库版本唯一性。UX-H 的旧实例版本隔离仍待 Runtime 实现，两个样本尚不能视为完整 E2E 通过。
+
 2026-10-11 后续：`backend/tests/test_publish_store_receipts.py` 通过 HTTP 审批/执行验证两店各自外部回执（demo 契约桩）、各自重放、分页和原始 ACTIVE 不直通核验；前端 `frontend/tests/publication-receipts.test.js` 验证只查询所选店铺。P0-1/P0-2 仍为 PARTIAL，未覆盖并发创建、真实回读核验或 Launch 完整状态迁移。Expand 1a 合成历史库 migration roundtrip、历史 UNKNOWN 和有事实拒绝降级已通过；完整副本与 PG 仍 NOT_RUN。
 
 ## 2. P0 独立回归

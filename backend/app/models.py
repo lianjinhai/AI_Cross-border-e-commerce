@@ -1014,11 +1014,27 @@ class Schedule(Base):
 
 class WorkflowTemplate(Base):
     __tablename__ = "workflow_templates"
+    __table_args__ = (Index("uq_workflow_profile_version", "tenant_id", "profile_key", "version", unique=True),)
     id: Mapped[int] = mapped_column(primary_key=True)
     tenant_id: Mapped[int] = mapped_column(
         ForeignKey("tenants.id", name="fk_workflow_templates_tenant_id_tenants"), index=True)
     key: Mapped[str] = mapped_column(String(64))                  # auto_listing / reprice / restock
     flow_kind: Mapped[str] = mapped_column(String(32), default="LEGACY_AUTOMATION", server_default="LEGACY_AUTOMATION", index=True)
+    profile_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    definition_status: Mapped[str] = mapped_column(String(16), default="DRAFT", server_default="DRAFT")
+    environment: Mapped[str] = mapped_column(String(16), default="CONTRACT_TEST", server_default="CONTRACT_TEST")
+    verification_status: Mapped[str] = mapped_column(String(32), default="UNKNOWN", server_default="UNKNOWN")
+    platform: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    market: Mapped[str] = mapped_column(String(8), default="", server_default="")
+    store_type: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    account_type: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    business_mode: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    fulfillment_mode: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    category_scope: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    schema_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    definition_hash: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    status_mapping: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     name: Mapped[str] = mapped_column(String(128))
     description: Mapped[str] = mapped_column(String(512), default="")
     steps: Mapped[list] = mapped_column(JSON, default=list)       # [{agent, action, params}]

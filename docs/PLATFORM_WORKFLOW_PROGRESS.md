@@ -22,11 +22,11 @@
 | 六份一致设计 | DONE | 已生成架构、状态、产品、迁移、矩阵和本进度；检查记录见下节 |
 | 设计冻结与决策登记 | DONE | 已校对关系、状态、权限/API；D61 登记 V2 增量；实现验收未完成 |
 | A P0 修复 | IN_PROGRESS | 意图与店铺回执隔离已有 Contract 证据；可信在售及其余门禁待实现 |
-| B Profile/Runtime/Transition | NOT_STARTED | 复用三表和旧引擎机制 |
+| B Profile/Runtime/Transition | IN_PROGRESS | Profile 定义与持久化已实现；Run/Step/事件及 Transition 待实现 |
 | C 隔离迁移演练 | PARTIAL | Expand 1a/1b 合成历史库已演练；完整副本仍待验证，主库不动 |
 | D 领域服务 | NOT_STARTED | Costing/核价/备货/Artifact/Asset/Label |
 | E 前端 | NOT_STARTED | 同页双模式、渠道/深链、Factory 投影 |
-| F 本地 Profile | NOT_STARTED | SIMPLE_CONTRACT / COMPLEX_CONTRACT |
+| F 本地 Profile | PARTIAL | SIMPLE_CONTRACT / COMPLEX_CONTRACT 定义与校验；完整执行 E2E 未实现 |
 | G Playwright/故障恢复/全量门禁 | NOT_STARTED | 不用文档检查替代功能验收 |
 | H 真实平台联调 | CONDITIONAL_EXTERNAL | 未访问外部账号；Temu 保持受限/未核验 |
 
@@ -95,3 +95,13 @@
 新增 20261012_24 迁移（Expand 2a），只读预检和历史合成库 roundtrip 已通过；含平台流程时拒绝降级。4 项针对性测试通过，包括过期运行和排队运行均不能被旧引擎领取、恢复、执行，旧 API/调度/模板修补隔离。首次全量暴露旧预检用例固定 head 和行尾问题：统一 LF，预检计划读取唯一代码 head，具体迁移升级/回滚边界和数据断言不变；相关 65 项回归通过。
 
 最终后端正反序均 755 passed / 2 xfailed / 1 xpassed，前端 79 passed、构建通过，全仓 Ruff 和文档一致性 total=0，git diff --check 通过。全部验证进程已结束。主库没有执行迁移，完整 Runtime/Profile/事件关系和界面仍未交付，新恢复器的反向隔离仍需实施验证。下一步扩展不可变 Profile、店铺派生草稿及实例/步骤/事件持久化；素材与可信核价门禁完成前不开放真实 Launch。
+
+## 10. Profile 定义、版本与匹配（本批完成）
+
+复用 WorkflowTemplate 增加 Profile 维度、版本、状态、环境、摘要和映射，新增迁移 20261012_25。Draft 修改/发布使用摘要条件更新，发布后拒绝内容更新；退役只改选择状态，内容快照保留。数据库 tenant/profile_key/version 唯一，历史 profile_key=NULL 不影响同名旧模板。每次读取定义校验结构与 hash，异常拒绝；没有新增 Profile 同义表。
+
+定义 schema 包含通用步骤类型/执行模式/actor、人工证据、动作目录、超时和受限条件 DSL。校验环、缺失依赖、条件暗含依赖、required 节点到核验的路径、监控位置；UNKNOWN 不自动通过。匹配按可信 Shop/Product/Context，要求真实目标国家/履约模式、拒绝货源店铺，精确维度优先，同级多 Profile 明确歧义。写服务仅现有全域 OWNER，接口与 launch 权限目录尚待统一接入。
+
+新增 simple/complex CONTRACT_TEST 定义，不注册生产 Adapter 能力；复杂图允许资料后并行合规、核价，首单是平台备货任务，非伪造销售订单。样本完成条件引用服务端业务事实而非客户端完成标记；运行时事实构造和执行尚未实现。
+
+35 项定义/持久化/迁移/旧隔离针对性测试通过。最终后端正反序均 786 passed / 2 xfailed / 1 xpassed（既存待定样本），前端 79 passed、构建通过，全仓 Ruff 通过。合成历史库预检只读，升级/降级/再升级、有数据拒绝降级和版本唯一性已验证。主库、真实账号均未操作，完整 Launch/E2E 不作完成声明。所有测试与构建进程已结束；下一步为 Run/Step/Event 与店铺派生 Listing 的事务持久化，以及 launch 权限/API 接入。

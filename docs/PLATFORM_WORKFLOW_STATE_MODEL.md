@@ -24,6 +24,8 @@ execution_mode：SYSTEM_TASK、AI_ASSISTED、ADAPTER_TASK、MANUAL_TASK、EXTERN
 
 条件 DSL 只允许 all/any/not、eq/in/present、verified_artifact、asset_rights_allowed、cost_snapshot_current、capability_available、dependency_completed 等已注册谓词。输入来自服务端事实；客户端不能传任意条件代码或覆盖已发布 Profile。
 
+实现语法（schema_version=1）：条件为布尔常量或单操作符对象；all/any 接条件数组，not 接单条件；eq/in 接 `{field,value}`，present 接字段路径；业务谓词接事实标识。例如 `{verified_artifact: "MARKET_REQUIRED"}`。路径只遍历服务端字典，禁止 eval 和属性执行；UNKNOWN 用 None 表达，not UNKNOWN 仍是 UNKNOWN。业务谓词只接受服务端明确布尔事实，不接受字符串“已核验”。条件中的 dependency_completed 必须引用 DAG 上游。深度、节点、列表及整份定义大小均有界。样本完成条件引用业务事实，不设置通用用户完成标记。
+
 dependencies 是 step_code DAG，sequence 仅用于展示排序。可选步骤也有 applicability：条件 FALSE 才可 SKIPPED，条件 UNKNOWN 必须 BLOCKED；required 的适用步骤禁止手动跳过。并行节点各自求可执行性。已完成上游资料变更时，依赖该资料的确认应失效并留事件，不能静默保持旧批准。
 
 ## 3. Step 合法迁移
