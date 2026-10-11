@@ -543,13 +543,13 @@ def test_destination_gate_is_opt_in(case):
     product = _product(db, tenant_id, category="电子产品",
                        attrs={"destination_country": "DE"})
     listing = SimpleNamespace(keywords=["charger"])
-    adapter = BaseAdapter(db, SimpleNamespace(tenant_id=tenant_id))
+    adapter = BaseAdapter(db, SimpleNamespace(tenant_id=tenant_id, market="DE"))
     assert adapter.missing_publish_requirements(listing, product) == []
     settings_service.set_tenant_setting(db, tenant_id, "rules",
                                         {"destination_compliance_enforce": True})
     db.commit()
     issues = adapter.missing_publish_requirements(listing, product)
-    assert issues and all("目的国 EU" in item for item in issues), issues
+    assert issues and all("目的国 DE" in item for item in issues), issues
     for requirement in ("CE", "EPR"):
         db.add(ProductComplianceEvidence(tenant_id=tenant_id, product_id=product.id,
                                          destination_country="EU", requirement=requirement,

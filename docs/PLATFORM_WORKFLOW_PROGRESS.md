@@ -23,7 +23,7 @@
 | 设计冻结与决策登记 | DONE | 已校对关系、状态、权限/API；D61 登记 V2 增量；实现验收未完成 |
 | A P0 修复 | IN_PROGRESS | 意图与店铺回执隔离已有 Contract 证据；可信在售及其余门禁待实现 |
 | B Profile/Runtime/Transition | NOT_STARTED | 复用三表和旧引擎机制 |
-| C 隔离迁移演练 | PARTIAL | Expand 1a 合成历史库已演练；完整副本仍待验证，主库不动 |
+| C 隔离迁移演练 | PARTIAL | Expand 1a/1b 合成历史库已演练；完整副本仍待验证，主库不动 |
 | D 领域服务 | NOT_STARTED | Costing/核价/备货/Artifact/Asset/Label |
 | E 前端 | NOT_STARTED | 同页双模式、渠道/深链、Factory 投影 |
 | F 本地 Profile | NOT_STARTED | SIMPLE_CONTRACT / COMPLEX_CONTRACT |
@@ -69,3 +69,13 @@
 - 阶段验证：发布/Adapter 37 passed；迁移/跨境成本 43 passed；新增回执接口/安全矩阵 7 passed。后端全量正反序均 731 passed / 2 xfailed / 1 xpassed，既有合规待定标记保持；最终前端 79 passed、构建通过，Ruff 通过，文档一致性 total=0，git diff --check 通过。无运行中的测试进程。
 
 未完成：Store Scope 全链、真实在售核验服务、店铺派生稿、完整副本迁移、Workflow runtime、业务服务、Launch Center 和 Playwright。不能将此批当作 P0 全部完成；主库与真实店铺仍未操作。
+
+## 7. 店铺市场与经营上下文（本批完成）
+
+已增加 Shop 的市场/店铺类型/账户类型/经营模式/履约方式及只读能力元数据，复用原店铺创建/配置界面。迁移 20261011_23 不猜历史值，合成历史库已验证只读预检、upgrade/downgrade/upgrade、保留行/索引/FK 以及有配置拒绝降级。
+
+真实发布和 Adapter 共用 market 门禁；有 Shop 时不再读取 Product 的国家或平台首站点。缺配置、区域代替国家、未知代码、检查异常均阻断；Adapter 声明范围不匹配也拒绝。无 Shop 的只读预览仍允许读取 Product 明确声明，取消平台默认猜测。店铺上下文和当前准入结论纳入审批指纹，HTTP 验证批准后换市场执行 FAILED、没有产生 Attempt。
+
+测试前提修正：旧美国合规样本现在明确填写 Shop.market=US，保留 FCC 缺失/齐备双向断言；纯协议/类目补丁测试显式隔离合规依赖，真实数据库合规测试继续独立覆盖。第一次全量回归另遇前端构建清理 dist 与文档扫描并发的竞态，后续门禁改为串行，不放宽断言。阶段 63 项市场/合规/适配器测试、44 项迁移/上下文测试及独立批准后换市场测试通过；前端 79 passed、构建通过。最终正反序均 742 passed / 2 xfailed / 1 xpassed，Ruff 通过，文档一致性 total=0，git diff --check 通过；无运行中的验证进程。
+
+仍需继续：Store Scope 和撤权执行重验、Asset 权利门禁、可信核价快照、flow_kind 与版本化 runtime、完整 Launch Center/E2E。本阶段不会标记整体目标完成，主库与外部店铺未操作。

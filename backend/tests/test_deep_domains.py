@@ -487,6 +487,9 @@ class TestDataFinanceDomain:
             # 直接替换适配器的上架方法：本用例只验证「幂等重放」这一层，
             # 平台侧协议细节（图片上传/类目属性）不是被测对象。
             from app.services.platform_adapters import PublishResult
+            configured = client.put(f"/api/shops/{shop['id']}", headers=auth_headers,
+                                    json={"market": "SG"})
+            assert configured.status_code == 200, configured.text
             calls = {"n": 0}
 
             def _fake_publish(self, listing, product, *, resume=None, checkpoint=None):

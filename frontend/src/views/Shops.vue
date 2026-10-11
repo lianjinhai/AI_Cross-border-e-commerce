@@ -165,6 +165,7 @@
         <el-form-item label="店铺名">
           <el-input v-model="addForm.shop_name" placeholder="如：我的 Shopee 店" />
         </el-form-item>
+        <shop-commerce-fields :model="addForm" />
         <el-form-item label="店铺ID/登录ID">
           <el-input v-model="addForm.shop_id" placeholder="平台店铺 ID 或登录账号" />
         </el-form-item>
@@ -189,6 +190,7 @@
         <el-form-item label="店铺名">
           <el-input v-model="configForm.shop_name" />
         </el-form-item>
+        <shop-commerce-fields :model="configForm" />
         <el-form-item label="店铺ID/登录ID">
           <el-input v-model="configForm.shop_id" />
         </el-form-item>
@@ -246,6 +248,8 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from '../ui'
 import api from '../api'
 import { can } from '../permissions'
+import ShopCommerceFields from '../components/ShopCommerceFields.vue'
+import { shopCommerceFields } from '../composables/shopCommerce'
 
 const shops = ref([])
 const loading = ref(false)
@@ -395,7 +399,7 @@ async function load() {
 }
 
 function openAdd() {
-  Object.assign(addForm, { platform: '', role: '', shop_name: '', shop_id: '', app_key: '', app_secret: '' })
+  Object.assign(addForm, { ...shopCommerceFields(), platform: '', role: '', shop_name: '', shop_id: '', app_key: '', app_secret: '' })
   addDialog.value = true
 }
 
@@ -418,7 +422,7 @@ async function createShop() {
 function openConfig(s) {
   Object.assign(configForm, {
     id: s.id, platform: s.platform, shop_name: s.shop_name,
-    shop_id: s.shop_id, app_key: s.app_key, app_secret: '',
+    shop_id: s.shop_id, app_key: s.app_key, app_secret: '', ...shopCommerceFields(s),
   })
   configDialog.value = true
 }
@@ -426,7 +430,7 @@ function openConfig(s) {
 async function saveConfig() {
   const ok = await configFormRef.value.validate().catch(() => false)
   if (!ok) return
-  const body = { shop_name: configForm.shop_name, shop_id: configForm.shop_id, app_key: configForm.app_key }
+  const body = { ...shopCommerceFields(configForm), shop_name: configForm.shop_name, shop_id: configForm.shop_id, app_key: configForm.app_key }
   if (configForm.app_secret) body.app_secret = configForm.app_secret
   saving.value = true
   try {

@@ -22,19 +22,17 @@
       真实店铺 is_demo=0 时拦截；本地 shop=None 与 demo 店铺保留旁路）；
     - 各适配器 `publish_listing` 前的 `_enforce_publish_gate()`（阻断口径）。
 
-分层：只依赖 `compliance_registry`（准入规则）、`duty`（国家归一）与适配器注册表
-（站点声明），**不 import `routers/`**（L-1），也不使用函数体内延迟 import 掩盖
-循环依赖（L-6）——本模块位于依赖链末端，被 `action_publish` 引用而非反向引用。
+分层：只依赖准入规则和国家归一化；不引用 Adapter 注册表，供 Action 与 Adapter 共用。
 """
 import logging
 
 from . import compliance_registry
-from .adapters.registry import ADAPTERS
 from .duty import duty_country
+from .regions import store_market
 
 logger = logging.getLogger(__name__)
 
-# 闸门状态。本轮只用 pass / warn；block 为 mode="enforce" 预留（见模块 docstring）。
+# enforce 对缺失资料、未知市场及检查故障均返回 block。
 GATE_PASS = "pass"
 GATE_WARN = "warn"
 GATE_BLOCK = "block"
@@ -48,32 +46,12 @@ def _attr(product, key: str) -> str:
     return str((getattr(product, "attrs", None) or {}).get(key) or "").strip()
 
 
-def _country_from_market(market: str) -> str:
-    """把适配器声明的站点标识解析成国家码。
-
-    平台 markets 用的是站点 ID 而非 ISO 国家码（eBay 声明 ``EBAY_US``），
-    直接丢给 ``duty_country`` 会得到无法归一化的 ``EBAY_US``，进而查不到任何
-    规则——那又是一次「查不到即无要求」的假绿灯。故取末段站点国家再归一化。
-    """
-    value = (market or "").strip().upper()
-    if not value:
-        return ""
-    tail = value.rsplit("_", 1)[-1] if "_" in value else value
-    return duty_country(tail)
-
-
-def resolve_destination(db, product, platform: str = "") -> str:
-    """解析目的国：商品声明 → 适配器 markets[0] → 空串（不猜）。
-
-    顺序即优先级：运营显式声明的意图永远高于平台默认站点。
-    """
+def resolve_destination(db, product, platform: str = "", shop=None) -> str:
+    """店铺发布只采用店铺目标国家；无店铺的只读预览可读商品声明。"""
+    if shop is not None:
+        return store_market(getattr(shop, "market", "") or "")
     for key in ("destination_country", "target_country"):
         code = duty_country(_attr(product, key))
-        if code:
-            return code
-    adapter = ADAPTERS.get(platform or "")
-    for market in (adapter.markets if adapter else []):
-        code = _country_from_market(market)
         if code:
             return code
     return ""
@@ -89,11 +67,11 @@ def evaluate(db, tenant_id, *, product, platform: str = "", shop=None,
              mode: str = MODE_WARN) -> dict:
     """评估某商品能否发布到某平台，返回只读结论（不抛异常、不改数据）。
 
-    :param mode: ``warn``（默认，只提示）/ ``enforce``（阻断预留，本轮不实现）。
+    :param mode: ``warn``（只读预览）/ ``enforce``（真实发布，故障阻断）。
     :returns: 含 ``gate_status`` / ``destination_country`` / ``required`` /
         ``missing`` / ``expired`` / ``would_block`` / ``reasons`` / ``mode``。
     """
-    country = resolve_destination(db, product, platform)
+    country = resolve_destination(db, product, platform, shop)
     result = {
         "gate_status": GATE_PASS,
         "destination_country": country,
@@ -109,14 +87,14 @@ def evaluate(db, tenant_id, *, product, platform: str = "", shop=None,
     }
     if not country:
         # 目的国解析不出来 = 无法校验。绝不能因此判定为通过。
-        result["gate_status"] = GATE_WARN
-        result["reasons"].append("未声明目的国，无法校验目的国准入")
+        result["gate_status"] = GATE_BLOCK if mode == MODE_ENFORCE else GATE_WARN
+        result["reasons"].append("目标国家未配置或当前不支持，无法校验目的国准入")
         return result
     try:
         report = compliance_registry.check_evidence(db, tenant_id, product, country)
-    except Exception as exc:  # noqa: BLE001 —— 闸门只读且不得影响发布主流程
-        result["gate_status"] = GATE_WARN
-        result["reasons"].append(f"目的国 {country} 准入校验失败（{exc}），已跳过准入检查")
+    except Exception as exc:  # noqa: BLE001 —— 故障必须阻断真实发布
+        result["gate_status"] = GATE_BLOCK if mode == MODE_ENFORCE else GATE_WARN
+        result["reasons"].append(f"目的国 {country} 准入校验失败，请稍后重试")
         logger.warning("publish_gate_evaluate_failed tenant=%s product=%s country=%s err=%s",
                        tenant_id, result["product_id"], country, exc)
         return result
@@ -141,7 +119,7 @@ def evaluate(db, tenant_id, *, product, platform: str = "", shop=None,
 
 
 def log_warn(result: dict, *, channel: str) -> None:
-    """把 warn 结论写成结构化日志（调用方在发布前调用，本轮不阻断）。"""
+    """记录非通过结论，是否阻断由明确 mode 决定。"""
     logger.warning(
         "publish_compliance_warn channel=%s product_id=%s platform=%s shop_id=%s "
         "country=%s missing=%s expired=%s reasons=%s",

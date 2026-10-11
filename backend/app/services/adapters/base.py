@@ -6,6 +6,8 @@
 import logging
 import time
 
+from .. import publish_gate
+from ..regions import store_market
 from . import catmap
 from .contract import NormalizedOrder, PlatformError, PublishResult, TokenPair
 
@@ -162,6 +164,10 @@ class BaseAdapter:
         :returns: 恒为 ``[]``；保留返回值是为了调用方可在错误上下文里追加提示。
         """
         blocking = list(dict.fromkeys(self._destination_access_issues(product)))
+        supported = {store_market(value.rsplit("_", 1)[-1]) for value in self.markets}
+        target = store_market(getattr(self.shop, "market", "") or "")
+        if not target or target not in supported:
+            blocking.append("目标国家不在当前 Adapter 已声明的发布范围内")
         if blocking:
             logger.warning("publish_gate_blocked channel=%s platform=%s product_id=%s blocking=%s",
                            channel, self.platform, getattr(product, "id", None), blocking)
@@ -170,33 +176,11 @@ class BaseAdapter:
         return []
 
     def _destination_access_issues(self, product) -> list[str]:
-        """目的国准入问题清单（P1-4）：**无条件计算**，只读不阻断。
-
-        2026-10 移除了这里的开关判断。原实现「开关默认关闭 → 直接 return []」，
-        加上 ``product.attrs.destination_country`` 为空也直接返回，
-        等于这条合规检查在真实链路里几乎从不执行——上架美国站的充电器
-        因FCC 漏词返回 required=[]，系统给出「无缺失、可上架」的绿灯。
-        沉默的绿灯比红灯危险：运营只会照绿灯上架。
-
-        因此现在无条件解析目的国并核验证据；「是否阻断」由调用方
-        （``_destination_compliance_enforced``）决定，本批为 warn 语义。
-        """
-        from .. import compliance_registry
-
-        attrs = product.attrs or {}
-        country = (attrs.get("destination_country") or attrs.get("target_country") or "")
-        if not country:
-            return []
-        report = compliance_registry.check_evidence(self.db, self.shop.tenant_id,
-                                                   product, country)
-        issues = []
-        for item in report.get("blocking", []):
-            if "valid_until" in item:
-                issues.append(f"目的国 {report['country']} 准入认证已过期："
-                              f"{item['requirement']}（{item['valid_until']}）")
-            else:
-                issues.append(f"目的国 {report['country']} 缺少准入认证：{item['requirement']}")
-        return issues
+        """与 Action 共用店铺市场门禁；缺配置或检查故障同样阻断。"""
+        report = publish_gate.evaluate(self.db, self.shop.tenant_id, product=product,
+                                       platform=self.platform, shop=self.shop,
+                                       mode=publish_gate.MODE_ENFORCE)
+        return report["reasons"] if report["gate_status"] != publish_gate.GATE_PASS else []
 
     def publish_listing(self, listing, product, *, resume=None, checkpoint=None) -> PublishResult:
         raise PlatformError(f"{self.label} 上架协议待接入")

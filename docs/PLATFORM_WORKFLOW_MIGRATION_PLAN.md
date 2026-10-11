@@ -1,6 +1,6 @@
 # Platform Workflow 迁移与安全计划 V2
 
-> 最后更新：2026-10-11。状态：FROZEN_FOR_IMPLEMENTATION / Expand 1a 合成历史库已演练 / 主库未修改。
+> 最后更新：2026-10-11。状态：FROZEN_FOR_IMPLEMENTATION / Expand 1a、1b 合成历史库已演练 / 主库未修改。
 > 领域字段以 `docs/PLATFORM_COMMERCE_WORKFLOW_ARCHITECTURE.md` 为准；此处定义实施顺序与安全门禁。
 
 ## 1. 目标与绝对边界
@@ -10,6 +10,8 @@
 设计阶段不执行主库预检/DDL。实际演练只使用已验证绝对路径的隔离副本或合成历史库；创建生成物前写入 .gitignore 和 .dockerignore。禁止服务默认启动后连回 backend/erp.db，禁止用 create_all 冒充旧库升级。
 
 2026-10-11 实施：唯一 head 已推进至 20261011_22，前驱为 20261001_21。为先修复发布语义，Expand 1 拆出 1a（Listing/PlatformPublishAttempt 三态及回执元数据），未改变冻结领域模型；Shop 上下文、派生外键与体验偏好仍待后继迁移。`backend/tests/test_launch_publication_migration.py` 在临时合成历史库先运行只读 preflight，再验证升级、历史状态 UNKNOWN、FK/integrity、无新事实降级、再次升级和有事实拒绝降级。该证据不代表完整主库副本或 PostgreSQL 演练完成。
+
+后继 Expand 1b 为 20261011_23（当前 head），只扩展 Shop 上下文和能力元数据。历史市场/模式为空、capability_revision=0、evidence={}，不虚构能力来源。`backend/tests/test_shop_context_migration.py` 验证只读预检、升级、旧行/索引/FK 保留、无配置回滚、再次升级与有配置拒绝降级。派生外键与体验偏好仍未实施。之前的 1a 边界测试仍单独验证 22 的状态列，不将两批迁移混成已完成全部 Expand 1。
 
 ## 2. 增量拆分
 

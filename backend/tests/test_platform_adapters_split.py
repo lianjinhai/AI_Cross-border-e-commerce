@@ -94,6 +94,8 @@ def test_patching_category_mapping_changes_readiness_result(monkeypatch):
                            refresh_token="r", shop_id="10001", status="authorized",
                            token_expire_at=None, tenant_id=1)
     adapter = ShopeeAdapter(None, shop)
+    # 本测试无数据库，只验证补丁能到达类目映射调用点；合规另有真实 Session 回归。
+    monkeypatch.setattr(adapter, "_destination_access_issues", lambda product: [])
     listing = SimpleNamespace(keywords=["x"])
     product = SimpleNamespace(category="家居", images=["https://cdn.example.com/1.jpg"],
                               attrs={"sale_price": 9.9, "onhand": 5, "weight_kg": 0.5})

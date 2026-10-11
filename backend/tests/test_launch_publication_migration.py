@@ -39,7 +39,7 @@ def test_historical_publication_upgrade_and_guarded_downgrade(tmp_path):
     before_bytes = path.read_bytes()
     preflight = subprocess.run([
         sys.executable, "scripts/migration_preflight.py", "--db", str(path),
-        "--planned-upgrade", "20261011_22", "--json"], cwd=BACKEND,
+        "--planned-upgrade", "20261011_23", "--json"], cwd=BACKEND,
         capture_output=True, text=True, encoding="utf-8", errors="replace")
     assert preflight.returncode == 0, preflight.stdout + preflight.stderr
     assert path.read_bytes() == before_bytes, "预检必须只读"

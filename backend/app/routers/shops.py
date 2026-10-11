@@ -1,7 +1,9 @@
 """店铺授权路由：OAuth 授权链接 / 授权码交换 / 回调 / 真实拉单 / 演示数据清理。"""
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from ..auth import get_current_user, require_admin, require_platform_admin, require_write
@@ -9,11 +11,30 @@ from ..db import get_db
 from ..models import Listing, Product, Shop, User, utcnow
 from ..serialize import to_dict
 from ..services import platforms
+from ..services.regions import store_market
 
 router = APIRouter(prefix="/shops", tags=["shops"])
 
 
-class ShopIn(BaseModel):
+class ShopContextIn(BaseModel):
+    market: str | None = Field(default=None, max_length=64)
+    store_type: str | None = Field(default=None, max_length=64)
+    account_type: str | None = Field(default=None, max_length=64)
+    business_mode: str | None = Field(default=None, max_length=64)
+    fulfillment_mode: Literal["", "DROPSHIP", "PLATFORM_STOCK", "SELF_STOCK", "FACTORY_DIRECT"] | None = None
+
+    @field_validator("market")
+    @classmethod
+    def validate_market(cls, value):
+        if value is None or not value.strip():
+            return value if value is None else ""
+        normalized = store_market(value)
+        if not normalized:
+            raise ValueError("请选择当前支持的具体目标国家，不能使用 EU 区域或未知代码")
+        return normalized
+
+
+class ShopIn(ShopContextIn):
     platform: str
     role: str = ""                 # source=货源 / sales=销售；缺省按平台推导（1688=source 其余=sales）
     shop_name: str = ""
@@ -23,7 +44,7 @@ class ShopIn(BaseModel):
     is_demo: bool = False
 
 
-class ShopUpdate(BaseModel):
+class ShopUpdate(ShopContextIn):
     shop_name: str | None = None
     shop_id: str | None = None
     app_key: str | None = None
@@ -69,7 +90,7 @@ def create_shop(body: ShopIn, user: User = Depends(require_write), db: Session =
     role = body.role or ADAPTERS[body.platform].role
     if role not in ("source", "sales"):
         raise HTTPException(status_code=400, detail="role 必须是 source（货源）或 sales（销售）")
-    data = body.model_dump()
+    data = body.model_dump(exclude_none=True)
     data["role"] = role
     s = Shop(tenant_id=user.tenant_id, **data)
     if not body.shop_name:
@@ -97,6 +118,10 @@ def update_shop(shop_id: int, body: ShopUpdate,
         s.app_key = body.app_key
     if body.app_secret:  # 空串=不修改密钥
         s.app_secret = body.app_secret
+    for name in ("market", "store_type", "account_type", "business_mode", "fulfillment_mode"):
+        value = getattr(body, name)
+        if value is not None:
+            setattr(s, name, value)
     db.commit()
     return to_dict(s, exclude=["app_secret", "access_token", "refresh_token"])
 

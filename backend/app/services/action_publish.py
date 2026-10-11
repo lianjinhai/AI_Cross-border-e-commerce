@@ -93,7 +93,11 @@ def publish_facts(db, tenant_id, listing_id, shop_id=None):
                            ("title", "description", "bullets", "keywords", "platform")},
                "product": {key: getattr(product, key) for key in
                            ("title", "sku", "category", "brand", "attrs", "images")},
-               "rule_version": pack["version"], "shop_id": shop.id if shop else None}
+               "rule_version": pack["version"], "shop_id": shop.id if shop else None,
+               "shop_context": {key: getattr(shop, key, None) for key in
+                                ("market", "store_type", "account_type", "business_mode",
+                                 "fulfillment_mode", "capability_revision")},
+               "compliance_gate": compliance_gate}
     fingerprint = hashlib.sha256(json.dumps(
         payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
     return {"fingerprint": fingerprint, "rule_version": pack["version"],

@@ -512,6 +512,13 @@ class Shop(Base):
         ForeignKey("tenants.id", name="fk_shops_tenant_id_tenants"), index=True)
     platform: Mapped[str] = mapped_column(String(32))            # 1688/shopee/tiktok/amazon
     shop_name: Mapped[str] = mapped_column(String(128), default="")
+    market: Mapped[str] = mapped_column(String(8), default="", server_default="")
+    store_type: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    account_type: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    business_mode: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    fulfillment_mode: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    capability_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    capability_evidence: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     shop_id: Mapped[str] = mapped_column(String(128), default="")
     app_key: Mapped[str] = mapped_column(String(128), default="")
     app_secret: Mapped[str] = mapped_column(EncryptedString(1024), default="")

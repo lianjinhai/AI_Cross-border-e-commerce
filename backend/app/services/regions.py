@@ -44,3 +44,12 @@ def region_code(country: str) -> str:
     """业务判定单元：欧盟成员国统一归为 EU，其余为归一化 ISO 代码。"""
     code = normalize_country(country)
     return "EU" if code in EU_MEMBER_STATES else code
+
+
+# 当前应用明确支持的店铺目标国家；未知配置必须补充，不能解释为“无需合规”。
+STORE_MARKETS = (frozenset(COUNTRY_ALIASES.values()) | EU_MEMBER_STATES | {"TR"}) - {"EU"}
+
+
+def store_market(value: str) -> str:
+    code = normalize_country(value)
+    return code if code in STORE_MARKETS else ""

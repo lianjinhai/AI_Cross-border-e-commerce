@@ -15,6 +15,8 @@
 
 ## 2. P0 独立回归
 
+2026-10-11 P0-3/P0-8 局部证据：`backend/tests/test_publish_market_scope.py` 先复现 6 failed，再验证目标 Shop 覆盖商品国家、空/EU/ZZ/未知市场阻断、检查故障阻断和 Adapter 声明范围保护。`backend/tests/test_shop_commerce_context.py` 通过 HTTP 批准发布后换市场，断言执行 FAILED 且无 Attempt；不将这项局部重验推广为权限、成本、Profile 全部重验已完成。实际账号市场匹配仍需授权联调，未声称已核验。
+
 | ID | 测试输入/动作 | 必须断言 |
 |---|---|---|
 | P0-1 Store 发布意图 | 同稿两个 Store、同店重复/并发请求 | 两店意图/回执独立；同店幂等；不能全局拦第二店或复用第一店 external_id |

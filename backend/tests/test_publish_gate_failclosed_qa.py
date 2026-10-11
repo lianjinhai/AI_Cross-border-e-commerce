@@ -192,7 +192,7 @@ class TestVerifiedFix:
     def test_gate_reports_matching_cert_as_pass(self, env):
         """补齐 FCC 证据后闸门必须给 pass（否则修复过头变成一律拦）。"""
         db, tenant_id = env
-        product = _charger(db, tenant_id)
+        product = _charger(db, tenant_id, attrs={"destination_country": "US"})
         db.add(ProductComplianceEvidence(
             tenant_id=tenant_id, product_id=product.id, destination_country="US",
             requirement="FCC", evidence_ref="FCC-2026-001"))
@@ -208,7 +208,7 @@ class TestVerifiedFix:
         result = publish_gate.evaluate(db, tenant_id, product=product,
                                        platform="unknown_platform")
         assert result["gate_status"] == publish_gate.GATE_WARN
-        assert "未声明目的国" in " ".join(result["reasons"])
+        assert "目标国家未配置" in " ".join(result["reasons"])
 
 
 class TestBypassIntentionallyPreserved:
@@ -230,7 +230,7 @@ class TestBypassIntentionallyPreserved:
         db, tenant_id = env
         product = _charger(db, tenant_id, attrs={"destination_country": "US"})
         shop = Shop(tenant_id=tenant_id, platform="probe", role="sales",
-                    status="authorized", is_demo=True)
+                    market="US", status="authorized", is_demo=True)
         db.add(shop)
         db.commit()
         listing = _publishable(db, tenant_id, product)
@@ -330,7 +330,7 @@ class TestFailClosedRequired:
         db, tenant_id = env
         product = _charger(db, tenant_id, attrs={"destination_country": "US"})
         shop = Shop(tenant_id=tenant_id, platform="probe", role="sales",
-                    status="authorized", is_demo=False)
+                    market="US", status="authorized", is_demo=False)
         db.add(shop)
         db.commit()
         listing = _publishable(db, tenant_id, product)
@@ -350,7 +350,7 @@ class TestFailClosedRequired:
         product = _charger(db, tenant_id, attrs={"destination_country": "US"},
                            platform_attrs=_EBAY_ATTRS)
         shop = Shop(tenant_id=tenant_id, platform="ebay", role="sales",
-                    status="authorized", is_demo=False, app_key="k", app_secret="s",
+                    market="US", status="authorized", is_demo=False, app_key="k", app_secret="s",
                     shop_id="ru", access_token="t", refresh_token="r")
         db.add(shop)
         db.commit()
@@ -375,7 +375,7 @@ class TestFailClosedRequired:
         db, tenant_id = env
         product = _charger(db, tenant_id, attrs={"destination_country": "US"},
                            platform_attrs=_EBAY_ATTRS)
-        shop = SimpleNamespace(tenant_id=tenant_id, platform="ebay", status="authorized",
+        shop = SimpleNamespace(tenant_id=tenant_id, platform="ebay", market="US", status="authorized",
                                token_expire_at=None, app_key="k", app_secret="s",
                                shop_id="ru", access_token="t", refresh_token="r")
         from app.services.adapters.ebay import EbayAdapter
@@ -402,7 +402,7 @@ class TestFailClosedRequired:
         db.add(TenantSetting(tenant_id=tenant_id, key="rules",
                              value={"destination_compliance_enforce": True}))
         db.commit()
-        shop = SimpleNamespace(tenant_id=tenant_id, platform="ebay", status="authorized",
+        shop = SimpleNamespace(tenant_id=tenant_id, platform="ebay", market="US", status="authorized",
                                token_expire_at=None, app_key="k", app_secret="s",
                                shop_id="ru", access_token="t", refresh_token="r")
         from app.services.adapters.ebay import EbayAdapter
@@ -440,7 +440,7 @@ class TestFailClosedRequired:
             db, tenant_id = make_probe_env()
             product = _charger(db, tenant_id, attrs={"destination_country": "US"},
                                platform_attrs=_EBAY_ATTRS)
-            shop = SimpleNamespace(tenant_id=tenant_id, platform=name, status="authorized",
+            shop = SimpleNamespace(tenant_id=tenant_id, platform=name, market="US", status="authorized",
                                    token_expire_at=None, app_key="k", app_secret="s",
                                    shop_id="ru", access_token="t", refresh_token="r")
             adapter = adapter_cls(db, shop)

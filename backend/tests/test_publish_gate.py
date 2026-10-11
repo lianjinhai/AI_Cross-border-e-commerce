@@ -50,7 +50,7 @@ def env():
 
 def _charger(db, tenant_id, **kwargs) -> Product:
     """SKU-46048同款充电器：曾在美国站误报绿灯的那件商品。"""
-    attrs = kwargs.pop("attrs", {})
+    attrs = kwargs.pop("attrs", {"destination_country": "US"})
     attrs.setdefault("source_desc", "GaN charger 65W USB-C power adapter")
     product = Product(tenant_id=tenant_id, sku=kwargs.pop("sku", "SKU-46048"),
                       status="active", category=kwargs.pop("category", "3C配件"),
@@ -63,14 +63,14 @@ def _charger(db, tenant_id, **kwargs) -> Product:
 
 # ---------------------------------------------------------------- 目的国解析
 def test_destination_resolution_order_prefers_product_declaration(env):
-    """商品显式声明的目的国优先于适配器 markets 默认站点。"""
+    """无店铺预览读取商品声明，但不再猜测适配器默认站点。"""
     db, tenant_id = env
     product = _charger(db, tenant_id, attrs={"destination_country": "JP"})
     assert publish_gate.resolve_destination(db, product, "ebay") == "JP"
-    # 未声明时才回落到适配器 markets（eBay markets=["EBAY_US"] → US）
-    fallback = _charger(db, tenant_id)
-    assert publish_gate.resolve_destination(db, fallback, "ebay") == "US"
-    assert publish_gate.resolve_destination(db, fallback, "shopee") == "SG"
+    # 未声明目的地不能从平台名猜测国家。
+    fallback = _charger(db, tenant_id, attrs={})
+    assert publish_gate.resolve_destination(db, fallback, "ebay") == ""
+    assert publish_gate.resolve_destination(db, fallback, "shopee") == ""
 
 
 def test_target_country_used_when_destination_country_absent(env):
@@ -82,11 +82,11 @@ def test_target_country_used_when_destination_country_absent(env):
 def test_unresolvable_destination_is_never_reported_as_pass(env):
     """解析不出目的国时必须 warn，**不得** pass（沉默的绿灯最危险）。"""
     db, tenant_id = env
-    product = _charger(db, tenant_id)
+    product = _charger(db, tenant_id, attrs={})
     result = publish_gate.evaluate(db, tenant_id, product=product, platform="unknown_platform")
     assert result["gate_status"] == publish_gate.GATE_WARN
     assert result["destination_country"] == ""
-    assert "未声明目的国，无法校验目的国准入" in result["reasons"]
+    assert "目标国家未配置或当前不支持，无法校验目的国准入" in result["reasons"]
 
 
 # ---------------------------------------------------------------- warn 语义
@@ -258,7 +258,7 @@ def test_publish_facts_gate_warns_for_demo_shop_path(env, caplog):
     """demo 店铺路径同样留痕（不阻断，但可观测）。"""
     db, tenant_id = env
     product = _charger(db, tenant_id, attrs={"destination_country": "US"})
-    shop = Shop(tenant_id=tenant_id, platform=_PLATFORM, status="authorized", is_demo=True)
+    shop = Shop(tenant_id=tenant_id, platform=_PLATFORM, market="US", status="authorized", is_demo=True)
     db.add(shop)
     db.commit()
     listing = _publishable(db, tenant_id, product)
@@ -272,7 +272,7 @@ def test_publish_facts_gate_warns_for_demo_shop_path(env, caplog):
 def test_publish_facts_gate_does_not_block_unknown_destination(env, caplog):
     """未声明目的国时闸门给 warn，但**不得**阻断发布（不制造可用性事故）。"""
     db, tenant_id = env
-    product = _charger(db, tenant_id)
+    product = _charger(db, tenant_id, attrs={})
     listing = _publishable(db, tenant_id, product)
     with caplog.at_level(logging.WARNING, logger="app.services.publish_gate"):
         facts = publish_facts(db, tenant_id, listing.id)
@@ -292,7 +292,7 @@ def test_publish_facts_blocks_real_shop_missing_fcc(env):
     db, tenant_id = env
     product = _charger(db, tenant_id, attrs={"destination_country": "US"})
     shop = Shop(tenant_id=tenant_id, platform=_PLATFORM, role="sales",
-                status="authorized", is_demo=False)
+                market="US", status="authorized", is_demo=False)
     db.add(shop)
     db.commit()
     listing = _publishable(db, tenant_id, product)
@@ -309,7 +309,7 @@ def test_publish_facts_allows_real_shop_once_fcc_present(env):
                                      destination_country="US", requirement="FCC",
                                      evidence_ref="FCC-2026-001"))
     shop = Shop(tenant_id=tenant_id, platform=_PLATFORM, role="sales",
-                status="authorized", is_demo=False)
+                market="US", status="authorized", is_demo=False)
     db.add(shop)
     db.commit()
     listing = _publishable(db, tenant_id, product)
@@ -319,6 +319,21 @@ def test_publish_facts_allows_real_shop_once_fcc_present(env):
 
 
 # ---------------------------------------------------------------- 适配器接入
+def test_shop_market_change_invalidates_approved_fingerprint(env):
+    db, tenant_id = env
+    product = _charger(db, tenant_id, attrs={"destination_country": "US"})
+    listing = _publishable(db, tenant_id, product)
+    shop = Shop(tenant_id=tenant_id, platform=_PLATFORM, role="sales", market="US", is_demo=True)
+    db.add(shop)
+    db.commit()
+    before = publish_facts(db, tenant_id, listing.id, shop.id)
+    shop.market = "TR"
+    db.commit()
+    after = publish_facts(db, tenant_id, listing.id, shop.id)
+    assert before["fingerprint"] != after["fingerprint"]
+    assert after["compliance_gate"]["destination_country"] == "TR"
+
+
 def _record_hook(name, sink):
     """构造记录调用来源的桩（工厂函数：避免闭包 late-binding 绑错循环变量）。"""
     def _hook(*_args, **_kwargs):
@@ -339,7 +354,7 @@ def test_ebay_publish_blocks_when_fcc_missing(env, monkeypatch):
 
     db, tenant_id = env
     product = _charger(db, tenant_id, attrs={"destination_country": "US"})
-    shop = SimpleNamespace(tenant_id=tenant_id, platform="ebay", status="authorized",
+    shop = SimpleNamespace(tenant_id=tenant_id, platform="ebay", market="US", status="authorized",
                            token_expire_at=None, app_key="k", app_secret="s",
                            shop_id="ru", access_token="t", refresh_token="r")
     adapter = EbayAdapter(db, shop)
@@ -373,7 +388,7 @@ def test_ebay_publish_succeeds_once_fcc_evidence_present(env, monkeypatch):
     db.add(ProductComplianceEvidence(tenant_id=tenant_id, product_id=product.id,
                                      destination_country="US", requirement="FCC",
                                      evidence_ref="FCC-2026-001"))
-    shop = SimpleNamespace(tenant_id=tenant_id, platform="ebay", status="authorized",
+    shop = SimpleNamespace(tenant_id=tenant_id, platform="ebay", market="US", status="authorized",
                            token_expire_at=None, app_key="k", app_secret="s",
                            shop_id="ru", access_token="t", refresh_token="r")
     adapter = EbayAdapter(db, shop)
@@ -408,7 +423,7 @@ def test_every_can_publish_adapter_blocks_when_fcc_missing(env, monkeypatch, pla
 
     db, tenant_id = env
     product = _charger(db, tenant_id, attrs={"destination_country": "US"})
-    shop = SimpleNamespace(tenant_id=tenant_id, platform=platform, status="authorized",
+    shop = SimpleNamespace(tenant_id=tenant_id, platform=platform, market="US", status="authorized",
                            token_expire_at=None, app_key="k", app_secret="s",
                            shop_id="100", access_token="t", refresh_token="r")
     adapter = ADAPTERS[platform](db, shop)
@@ -450,7 +465,7 @@ def test_ebay_own_field_error_not_swallowed_by_gate(env, monkeypatch):
     db.add(ProductComplianceEvidence(tenant_id=tenant_id, product_id=product.id,
                                      destination_country="US", requirement="FCC",
                                      evidence_ref="FCC-2026-001"))
-    shop = SimpleNamespace(tenant_id=tenant_id, platform="ebay", status="authorized",
+    shop = SimpleNamespace(tenant_id=tenant_id, platform="ebay", market="US", status="authorized",
                            token_expire_at=None, app_key="k", app_secret="s",
                            shop_id="ru", access_token="t", refresh_token="r")
     adapter = EbayAdapter(db, shop)
