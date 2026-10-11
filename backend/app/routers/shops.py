@@ -6,12 +6,30 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
-from ..auth import get_current_user, require_admin, require_platform_admin, require_write
+from ..auth import (
+    get_current_user,
+    is_impersonating_user,
+    require_admin,
+    require_permission,
+    require_platform_admin,
+)
 from ..db import get_db
 from ..models import Listing, Product, Shop, User, utcnow
 from ..serialize import to_dict
 from ..services import platforms
 from ..services.regions import store_market
+from ..services.store_scope import StoreScopeError, resolve_store_scope
+from ..services.workspace_context import resolve_workspace_context
+
+require_write = require_permission("workspace:write", ("admin", "operator"))
+
+
+def _scope(db, user):
+    ctx = resolve_workspace_context(db, user, is_impersonating=is_impersonating_user(user))
+    try:
+        return resolve_store_scope(db, ctx)
+    except StoreScopeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 router = APIRouter(prefix="/shops", tags=["shops"])
 
@@ -59,7 +77,7 @@ class CodeIn(BaseModel):
 def list_shops(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     from ..services.platform_adapters import ADAPTERS
 
-    rows = (db.query(Shop).filter(Shop.tenant_id == user.tenant_id)
+    rows = (_scope(db, user).filter(db.query(Shop), Shop.id).filter(Shop.tenant_id == user.tenant_id)
             .filter(Shop.archived_at.is_(None))
             .order_by(Shop.id).all())
     items = []
@@ -82,6 +100,9 @@ def list_shops(user: User = Depends(get_current_user), db: Session = Depends(get
 @router.post("")
 def create_shop(body: ShopIn, user: User = Depends(require_write), db: Session = Depends(get_db)):
     from ..services.platform_adapters import ADAPTERS, get_adapter
+
+    if _scope(db, user).shop_ids is not None:
+        raise HTTPException(status_code=403, detail="受限店铺成员不能创建范围外的新店铺")
 
     if body.platform not in ADAPTERS:
         raise HTTPException(status_code=400,
@@ -109,7 +130,7 @@ def create_shop(body: ShopIn, user: User = Depends(require_write), db: Session =
 @router.put("/{shop_id}")
 def update_shop(shop_id: int, body: ShopUpdate,
                 user: User = Depends(require_write), db: Session = Depends(get_db)):
-    s = _owned(db, user.tenant_id, shop_id)
+    s = _owned(db, user, shop_id)
     if body.shop_name is not None and body.shop_name != "":
         s.shop_name = body.shop_name
     if body.shop_id is not None:
@@ -136,7 +157,7 @@ def delete_shop(shop_id: int, user: User = Depends(require_write), db: Session =
     采购单的店铺归属，破坏财务对账与审计留痕。归档后店铺从列表与所有可写入
     口隐藏，历史业务数据保持完整可追溯。
     """
-    s = _owned(db, user.tenant_id, shop_id)
+    s = _owned(db, user, shop_id)
     if s.archived_at is None:
         s.archived_at = utcnow()
     # 凭证即时失效：归档店铺不得再用于任何平台调用。
@@ -153,7 +174,7 @@ def delete_shop(shop_id: int, user: User = Depends(require_write), db: Session =
 def authorize_url(shop_id: int, user: User = Depends(require_write),
                   db: Session = Depends(get_db)):
     """生成平台官方授权页跳转地址（真实 URL，需先填 App Key）。"""
-    s = _owned(db, user.tenant_id, shop_id)
+    s = _owned(db, user, shop_id)
     try:
         return {"authorize_url": platforms.build_authorize_url(db, s),
                 "manual_hint": "浏览器打开授权链接 → 登录并确认授权 → 平台展示授权码(code)，"
@@ -188,7 +209,7 @@ def oauth_callback(platform: str, shop_id: int, code: str = "",
 def exchange_code(shop_id: int, body: CodeIn,
                   user: User = Depends(require_write), db: Session = Depends(get_db)):
     """手动粘贴授权码换 token（本地开发标准流程，与自动回调等价）。"""
-    s = _owned(db, user.tenant_id, shop_id)
+    s = _owned(db, user, shop_id)
     if not body.code.strip():
         raise HTTPException(status_code=400, detail="授权码不能为空")
     try:
@@ -201,7 +222,7 @@ def exchange_code(shop_id: int, body: CodeIn,
 
 @router.post("/{shop_id}/refresh")
 def refresh(shop_id: int, user: User = Depends(require_write), db: Session = Depends(get_db)):
-    s = _owned(db, user.tenant_id, shop_id)
+    s = _owned(db, user, shop_id)
     try:
         platforms.refresh_token(db, s)
     except platforms.PlatformError as e:
@@ -216,7 +237,7 @@ def sync_orders(shop_id: int, user: User = Depends(require_write), db: Session =
     Supply/Sales 守门：只有销售店铺（sales）可以拉销售订单，货源店铺（source，如 1688）
     的订单属于采购/代发链路，禁止作为销售订单导入。
     """
-    s = _owned(db, user.tenant_id, shop_id)
+    s = _owned(db, user, shop_id)
     if s.role != "sales":
         from ..services.platform_adapters import ADAPTERS
 
@@ -243,7 +264,7 @@ def sync_orders(shop_id: int, user: User = Depends(require_write), db: Session =
 def listing_readiness(shop_id: int, listing_id: int,
                       user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """真实平台只读预检；不创建草稿、不上传图片、不发布商品。"""
-    s = _owned(db, user.tenant_id, shop_id)
+    s = _owned(db, user, shop_id)
     listing = db.get(Listing, listing_id)
     if not listing or listing.tenant_id != user.tenant_id:
         raise HTTPException(status_code=404, detail="Listing 不存在")
@@ -260,7 +281,7 @@ def listing_readiness(shop_id: int, listing_id: int,
 def submission_status(shop_id: int, submission_id: str,
                       user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """查询 Walmart 等异步商品提交的处理状态；提交成功不等于上架成功。"""
-    s = _owned(db, user.tenant_id, shop_id)
+    s = _owned(db, user, shop_id)
     try:
         return platforms.submission_status(db, s, submission_id)
     except platforms.PlatformError as e:
@@ -339,6 +360,8 @@ def delete_mapping(mapping_id: int, user: User = Depends(require_write),
 @router.post("/purge_demo_data")
 def purge_demo_data(user: User = Depends(require_admin), db: Session = Depends(get_db)):
     """清空全部演示数据（种子/模拟），保留账号、设置与店铺授权配置。"""
+    if _scope(db, user).shop_ids is not None:
+        raise HTTPException(status_code=403, detail="店铺受限成员不能执行全 Workspace 数据清理")
     from ..services.tenant_data_purge import purge_tenant_demo_data
 
     counts = purge_tenant_demo_data(db, user.tenant_id)
@@ -346,8 +369,12 @@ def purge_demo_data(user: User = Depends(require_admin), db: Session = Depends(g
             "hint": "演示数据已清空。现在可以：URL 采集真实商品 / 授权店铺拉真实订单 / CSV 导入历史数据。"}
 
 
-def _owned(db: Session, tenant_id: int, shop_id: int) -> Shop:
+def _owned(db: Session, user: User, shop_id: int) -> Shop:
+    try:
+        _scope(db, user).require(shop_id)
+    except StoreScopeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     s = db.get(Shop, shop_id)
-    if not s or s.tenant_id != tenant_id or s.archived_at is not None:
+    if not s or s.tenant_id != user.tenant_id or s.archived_at is not None:
         raise HTTPException(status_code=404, detail="店铺不存在")
     return s

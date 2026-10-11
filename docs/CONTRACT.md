@@ -99,6 +99,8 @@ regions.normalize_country("美国") / regions.region_code("DE")     # -> "US" / 
 
 D61 发布回执增量（2026-10-11）：`GET /api/listings/{listing_id}/publication-attempts` 使用现有 page_num/page_size 分页，校验 Listing 与 Shop 的 tenant 归属并排除归档店铺。每条返回 shop_id/shop_name/external_id/external_object_type/platform_status/verification_status/received_at/can_query_submission，不返回凭证。UI 只查询用户选择的回执所属店铺，不按平台猜第一家店。
 
+D61 店铺范围增量：统一读取既有 membership_data_scopes 的 SHOP_SCOPED.shop_ids；多条受限记录取交集，WORKSPACE_ALL 不覆盖限制，未知类型、空集合或损坏配置拒绝访问。店铺列表和发布回执/Action 队列在分页前过滤；店铺详情操作及发布提案、审批、执行和成功重放校验当前范围。受限成员不能创建未授权的新店铺或执行全 Workspace 演示数据清理。Membership 停用不能回退旧角色，发布执行前同时复核原发起人和批准人的当前权限与范围。此增量不宣称尚未实现的 Launch/资产/同步全链 Scope 已验收。
+
 D61 店铺市场增量：`POST /api/shops` 与 `PUT /api/shops/{id}` 支持 market、store_type、account_type、business_mode、fulfillment_mode；能力证据和 capability_revision 不接受前端写入。market 归一为当前支持的具体国家，空值可保存但阻断真实发布，EU/未知代码返回 422。真实发布只用 Shop.market，不回退到商品国家或 Adapter 第一个市场；准入校验异常同样阻断。店铺上下文及准入结论参与发布审批指纹，修改后必须重新提案。Adapter 另验证目标市场在其声明发布范围内。DROPSHIP/PLATFORM_STOCK/SELF_STOCK/FACTORY_DIRECT 为履约枚举，历史空值不推测。
 
 发布 execute 的 outcome.result 增加 shop_id、attempt_id 和三类事实字段。`status=published` 是旧 API 的提交兼容投影，**不表示 ACTIVE**；真实提交得到 SUBMITTED/PENDING_VERIFICATION，演示为 SUBMITTED/UNKNOWN，本地模拟为 NOT_SUBMITTED/UNKNOWN。母稿三态保持 UNKNOWN；店铺事实读取 PlatformPublishAttempt。Walmart Feed 类型为 SUBMISSION，提交响应的原始 ACTIVE 也不得直接升级为 VERIFIED。已有历史记录默认 UNKNOWN，不自动补造可信回执。

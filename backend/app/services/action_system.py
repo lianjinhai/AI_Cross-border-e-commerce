@@ -10,7 +10,13 @@ from sqlalchemy.exc import IntegrityError
 
 from ..models import AdCampaign, AiAction, Listing, Product, Tenant
 from . import action_content
-from .action_identity import requester_context, require_action_permission
+from .action_identity import (
+    requester_context,
+    require_action_permission,
+    require_publish_action_scope,
+    require_publish_approver,
+    require_store_scope,
+)
 from .action_policy import POLICIES
 from .action_publish import publish_facts, publish_listing
 from .ai_actions import ActionError, _tenant_id, owned_action
@@ -139,6 +145,8 @@ def submit_action(db, ctx, agent_type, proposal, scope_key, *, scope_manifest=No
     payload = proposal.get("payload") or {}
     if not isinstance(payload, dict):
         raise ActionError(400, "Action 载荷必须是对象")
+    if action_type == "PUBLISH_LISTING":
+        require_store_scope(db, current, payload.get("shop_id"))
     _validate_target(db, tenant_id, policy, target_id, payload)
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, allow_nan=False)
     if len(encoded.encode("utf-8")) > 100_000:
@@ -195,7 +203,8 @@ def decide_action(db, ctx, action_id, approve, note):
     action = owned_action(db, ctx, action_id)
     policy = _policy(action.action_type)
     require_action_permission(db, ctx, policy.permission)
-    requester_context(db, action)
+    requester = requester_context(db, action)
+    require_publish_action_scope(db, ctx, action, requester)
     if not policy.approval or not action.approval_required:
         raise ActionError(409, "此 Action 不需要人工审批")
     if not note.strip():
@@ -204,7 +213,8 @@ def decide_action(db, ctx, action_id, approve, note):
     changed = db.execute(update(AiAction).where(
         AiAction.id == action.id, AiAction.status == "PENDING_APPROVAL").values(
         status=status, approved_by=ctx.user_id if approve else None,
-        outcome={"approval_note": note.strip()[:1000]}, updated_at=datetime.utcnow()))
+        outcome={"approval_note": note.strip()[:1000], "approval_impersonating": ctx.is_impersonating},
+        updated_at=datetime.utcnow()))
     if changed.rowcount != 1:
         db.rollback()
         raise ActionError(409, "Action 已离开待审批状态")
@@ -231,7 +241,8 @@ def execute_action(db, ctx, action_id, *, commit=True):
             or action.execution_mode != ("APPROVAL_REQUIRED" if policy.approval else "AUTO_SAFE")):
         raise ActionError(409, "Action 与服务端策略不一致，禁止执行")
     require_action_permission(db, ctx, policy.permission)
-    requester_context(db, action)
+    requester = requester_context(db, action)
+    require_publish_action_scope(db, ctx, action, requester)
     if action.status == "SUCCESS":
         if action.action_type == "REFRESH_BUILTIN_TRENDS":
             validate_refresh(db, action, _payload(action), replay=True)
@@ -242,6 +253,7 @@ def execute_action(db, ctx, action_id, *, commit=True):
         raise ActionError(409, "Action 尚未获批或已终止")
     if policy.approval and not action.approved_by:
         raise ActionError(409, "缺少人工审批记录")
+    require_publish_approver(db, action)
     changed = db.execute(update(AiAction).where(
         AiAction.id == action.id, AiAction.status == "APPROVED").values(
         status="EXECUTING", updated_at=datetime.utcnow()))

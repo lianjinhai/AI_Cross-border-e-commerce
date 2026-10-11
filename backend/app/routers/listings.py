@@ -20,6 +20,7 @@ from ..serialize import page, to_dict
 from ..services.ai_actions import ActionError
 from ..services.platform_adapters import ADAPTERS
 from ..services.review_outputs import approve_review_output
+from ..services.store_scope import StoreScopeError, resolve_store_scope
 from ..services.workspace_context import resolve_workspace_context
 
 
@@ -80,6 +81,11 @@ def publication_attempts(listing_id: int, user: User = Depends(get_current_user)
             .filter(PlatformPublishAttempt.tenant_id == user.tenant_id,
                     PlatformPublishAttempt.listing_id == listing_id,
                     Shop.tenant_id == user.tenant_id, Shop.archived_at.is_(None)))
+    ctx = resolve_workspace_context(db, user, is_impersonating=is_impersonating_user(user))
+    try:
+        query = resolve_store_scope(db, ctx).filter(query, Shop.id)
+    except StoreScopeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     total = query.count()
     rows = (query.order_by(PlatformPublishAttempt.id.desc())
             .offset((page_num - 1) * page_size).limit(page_size).all())

@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..auth import get_current_user, is_impersonating_user
@@ -14,6 +15,7 @@ from ..services.ai_actions import (
     ActionError,
     action_dict,
 )
+from ..services.store_scope import StoreScopeError, resolve_store_scope
 from ..services.workspace_context import resolve_workspace_context
 
 router = APIRouter(prefix="/actions", tags=["actions"])
@@ -57,11 +59,18 @@ def list_actions(status: str = "PENDING_APPROVAL", limit: int = 50,
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     if status not in {"PENDING_APPROVAL", "APPROVED", "EXECUTING", "SUCCESS", "FAILED", "REJECTED"}:
         raise HTTPException(status_code=400, detail="Action 状态无效")
-    rows = (db.query(AiAction).filter(AiAction.workspace_id == ctx.workspace_id,
+    query = db.query(AiAction).filter(AiAction.workspace_id == ctx.workspace_id,
                                      AiAction.tenant_id == ctx.legacy_tenant_id,
                                      AiAction.action_type == action_type,
                                      AiAction.status == status)
-            .order_by(AiAction.id.desc()).limit(max(1, min(limit, 200))).all())
+    if action_type == "PUBLISH_LISTING":
+        try:
+            shop_id = func.coalesce(AiAction.evidence["shop_id"].as_integer(),
+                                    AiAction.evidence["payload"]["shop_id"].as_integer())
+            query = resolve_store_scope(db, ctx).filter(query, shop_id)
+        except StoreScopeError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    rows = query.order_by(AiAction.id.desc()).limit(max(1, min(limit, 200))).all()
     return {"items": [action_dict(row) for row in rows]}
 
 

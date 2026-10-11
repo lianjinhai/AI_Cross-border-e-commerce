@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from .db import get_db
 from .models import Tenant, User, utcnow
 from .serialize import to_dict
+from .services.store_scope import StoreScopeError, require_membership_active
 
 _LEGACY_SALT = b"erp-static-salt-v1"
 _PBKDF2_ITERATIONS = 310_000
@@ -192,6 +193,10 @@ def get_current_user(
         raise HTTPException(status_code=403, detail="租户服务已停用，请联系平台服务商")
     if tenant and tenant.license_until and tenant.license_until < utcnow():
         raise HTTPException(status_code=403, detail="服务授权已到期，请联系平台服务商续期")
+    try:
+        require_membership_active(db, user.id, user.tenant_id)
+    except StoreScopeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     return user
 
 
