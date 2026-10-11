@@ -28,6 +28,7 @@ from ..models import User, WorkflowRun, WorkflowStep, WorkflowTemplate, utcnow
 from ..services.compliance_outputs import compliance_scope_items
 from ..services.schedule_identity import schedule_context
 from ..services.workspace_context import resolve_workspace_context
+from .kinds import LEGACY_AUTOMATION
 
 # (agent, action) 注册表： dispatch 时 lazy import，避免循环依赖
 _KNOWN = [
@@ -61,6 +62,7 @@ class _LeaseHeartbeat:
             try:
                 heartbeat_db.query(WorkflowRun).filter(
                     WorkflowRun.id == self.run_id,
+                    WorkflowRun.flow_kind == LEGACY_AUTOMATION,
                     WorkflowRun.status == "running",
                     WorkflowRun.worker_id == self.worker_id,
                 ).update({WorkflowRun.lease_until: datetime.utcnow() + timedelta(minutes=5)},
@@ -191,7 +193,7 @@ def start_run(tenant_id: int, template_key: str, context: dict | None = None,
     db = SessionLocal()
     try:
         tpl = (db.query(WorkflowTemplate)
-               .filter_by(tenant_id=tenant_id, key=template_key).first())
+               .filter_by(tenant_id=tenant_id, key=template_key, flow_kind=LEGACY_AUTOMATION).first())
         if not tpl:
             raise ValueError(f"工作流模板 {template_key} 不存在")
         run_context = {key: value for key, value in (context or {}).items()
@@ -204,7 +206,7 @@ def start_run(tenant_id: int, template_key: str, context: dict | None = None,
             run_context["_action_requested_by"] = requested_by
             run_context["_action_impersonating"] = is_impersonating
         run = WorkflowRun(tenant_id=tenant_id, template_key=template_key, name=tpl.name,
-                          status="queued", context=run_context)
+                          status="queued", context=run_context, flow_kind=LEGACY_AUTOMATION)
         db.add(run)
         db.flush()
         for i, s in enumerate(tpl.steps or [], start=1):
@@ -266,6 +268,7 @@ def _claim_run(db, run_id, worker_id):
     now = datetime.utcnow()
     claimed = (db.query(WorkflowRun).filter(
         WorkflowRun.id == run_id,
+        WorkflowRun.flow_kind == LEGACY_AUTOMATION,
         or_(WorkflowRun.status == "queued",
             (WorkflowRun.status == "running") & (WorkflowRun.lease_until < now)))
         .update({WorkflowRun.status: "running", WorkflowRun.worker_id: worker_id,
@@ -368,6 +371,7 @@ def recover_incomplete_runs() -> int:
     try:
         now = datetime.utcnow()
         ids = [r.id for r in db.query(WorkflowRun).filter(
+            WorkflowRun.flow_kind == LEGACY_AUTOMATION,
             or_(WorkflowRun.status == "queued",
                 (WorkflowRun.status == "running") & (WorkflowRun.lease_until < now))).all()]
         for run_id in ids:
@@ -382,7 +386,7 @@ def resume_run(run_id: int, tenant_id: int, requested_by: int | None = None,
     db = SessionLocal()
     try:
         run = db.get(WorkflowRun, run_id)
-        if not run or run.tenant_id != tenant_id:
+        if not run or run.tenant_id != tenant_id or run.flow_kind != LEGACY_AUTOMATION:
             raise ValueError("工作流运行不存在")
         if run.status not in ("failed", "blocked", "partial"):
             raise ValueError(f"当前状态 {run.status} 不允许恢复")

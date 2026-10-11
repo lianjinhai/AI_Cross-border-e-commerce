@@ -13,6 +13,7 @@ from ..services.ai_actions import ActionError
 from ..services.schedule_identity import bind_schedule
 from ..services.scheduler import run_task
 from ..services.workspace_context import resolve_workspace_context
+from ..workflows.kinds import LEGACY_AUTOMATION
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 schedule_write = require_permission("ai:write", ("admin", "operator"))
@@ -48,7 +49,8 @@ def create_schedule(body: ScheduleIn, user: User = Depends(schedule_write),
     if body.kind == "workflow":
         tpl = (db.query(WorkflowTemplate)
                .filter(WorkflowTemplate.tenant_id == user.tenant_id,
-                       WorkflowTemplate.key == body.workflow_key).first())
+                       WorkflowTemplate.key == body.workflow_key,
+                       WorkflowTemplate.flow_kind == LEGACY_AUTOMATION).first())
         if not tpl:
             raise HTTPException(status_code=404, detail=f"工作流模板 {body.workflow_key} 不存在")
     if not 5 <= body.interval_minutes <= 60 * 24 * 30:

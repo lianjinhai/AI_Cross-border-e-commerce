@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .migration_helpers import code_head
+
 BACKEND = Path(__file__).resolve().parents[1]
 
 
@@ -34,7 +36,7 @@ def test_shop_context_migration_preserves_legacy_and_refuses_data_loss(tmp_path)
         return result
 
     before = target.read_bytes()
-    command("scripts/migration_preflight.py", "--db", str(target), "--planned-upgrade", "20261011_23", "--json")
+    command("scripts/migration_preflight.py", "--db", str(target), "--planned-upgrade", code_head(), "--json")
     assert target.read_bytes() == before
     command("-m", "alembic", "upgrade", "20261011_23")
     with sqlite3.connect(target) as db:

@@ -11,6 +11,7 @@ from ..db import get_db
 from ..models import Conversation, Listing, Order, Product, User, WorkflowRun
 from ..serialize import to_dict
 from ..services.commercial_analytics import forecast_monitoring, metric_summary, quality_report
+from ..workflows.kinds import LEGACY_AUTOMATION
 
 router = APIRouter(prefix="/bi", tags=["bi"])
 
@@ -85,7 +86,8 @@ def dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_
         product_sales.append({"product_id": product.id, "title": product.title,
                               "units": int(units), "revenue": pm["net_revenue"]})
     product_sales.sort(key=lambda x: x["revenue"], reverse=True)
-    runs = (db.query(WorkflowRun).filter(WorkflowRun.tenant_id == tid)
+    runs = (db.query(WorkflowRun).filter(WorkflowRun.tenant_id == tid,
+                                               WorkflowRun.flow_kind == LEGACY_AUTOMATION)
             .order_by(WorkflowRun.created_at.desc()).limit(5).all())
 
     return {

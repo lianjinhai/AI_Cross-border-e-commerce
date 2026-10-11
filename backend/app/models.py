@@ -1018,6 +1018,7 @@ class WorkflowTemplate(Base):
     tenant_id: Mapped[int] = mapped_column(
         ForeignKey("tenants.id", name="fk_workflow_templates_tenant_id_tenants"), index=True)
     key: Mapped[str] = mapped_column(String(64))                  # auto_listing / reprice / restock
+    flow_kind: Mapped[str] = mapped_column(String(32), default="LEGACY_AUTOMATION", server_default="LEGACY_AUTOMATION", index=True)
     name: Mapped[str] = mapped_column(String(128))
     description: Mapped[str] = mapped_column(String(512), default="")
     steps: Mapped[list] = mapped_column(JSON, default=list)       # [{agent, action, params}]
@@ -1030,6 +1031,7 @@ class WorkflowRun(Base):
     tenant_id: Mapped[int] = mapped_column(
         ForeignKey("tenants.id", name="fk_workflow_runs_tenant_id_tenants"), index=True)
     template_key: Mapped[str] = mapped_column(String(64))
+    flow_kind: Mapped[str] = mapped_column(String(32), default="LEGACY_AUTOMATION", server_default="LEGACY_AUTOMATION", index=True)
     name: Mapped[str] = mapped_column(String(128), default="")
     status: Mapped[str] = mapped_column(String(16), default="queued")  # queued/running/success/partial/blocked/failed
     context: Mapped[dict] = mapped_column(JSON, default=dict)     # 步骤间共享上下文

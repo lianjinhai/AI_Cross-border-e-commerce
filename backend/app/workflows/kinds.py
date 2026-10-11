@@ -1,0 +1,4 @@
+"""持久化流程种类；旧自动化与平台生命周期分别领取和恢复。"""
+
+LEGACY_AUTOMATION = "LEGACY_AUTOMATION"
+PLATFORM_LAUNCH = "PLATFORM_LAUNCH"

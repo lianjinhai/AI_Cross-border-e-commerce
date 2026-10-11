@@ -15,6 +15,10 @@
 
 ## 2. P0 独立回归
 
+P0-6/P0-8 局部证据（e25b9b4）：`backend/tests/test_store_scope.py` 覆盖店铺读写限制、未知/损坏范围拒绝、停用 Membership、发布队列/回执分页前过滤和成功重放保护、发起人及批准人审批后范围变更。尚未覆盖未来 Launch/资产下载/同步入口，仍为 PARTIAL。
+
+P0-7 局部证据：`backend/tests/test_workflow_kind.py` 覆盖 queued/过期 running 的 Launch 不被旧领取/恢复/执行、旧模板修补不改 Launch、旧 API 与调度创建拒绝平台 Profile。`backend/tests/test_workflow_kind_migration.py` 验证类型列的合成历史库无损 roundtrip 及含新类型拒绝降级。新 Launch 恢复器尚未实施，双向恢复和完整 E2E 仍 NOT_RUN，不能将旧引擎隔离推广为全项完成。
+
 2026-10-11 P0-3/P0-8 局部证据：`backend/tests/test_publish_market_scope.py` 先复现 6 failed，再验证目标 Shop 覆盖商品国家、空/EU/ZZ/未知市场阻断、检查故障阻断和 Adapter 声明范围保护。`backend/tests/test_shop_commerce_context.py` 通过 HTTP 批准发布后换市场，断言执行 FAILED 且无 Attempt；不将这项局部重验推广为权限、成本、Profile 全部重验已完成。实际账号市场匹配仍需授权联调，未声称已核验。
 
 | ID | 测试输入/动作 | 必须断言 |

@@ -8,6 +8,7 @@ from ..db import get_db
 from ..models import User, WorkflowRun, WorkflowStep, WorkflowTemplate
 from ..serialize import to_dict
 from ..workflows.engine import resume_run, start_run
+from ..workflows.kinds import LEGACY_AUTOMATION
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
@@ -28,7 +29,8 @@ class RunIn(BaseModel):
 
 @router.get("/templates")
 def templates(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    rows = (db.query(WorkflowTemplate).filter(WorkflowTemplate.tenant_id == user.tenant_id)
+    rows = (db.query(WorkflowTemplate).filter(WorkflowTemplate.tenant_id == user.tenant_id,
+                                                    WorkflowTemplate.flow_kind == LEGACY_AUTOMATION)
             .order_by(WorkflowTemplate.id).all())
     return {"items": [to_dict(r) for r in rows]}
 
@@ -48,7 +50,8 @@ def run(body: RunIn, user: User = Depends(require_write), db: Session = Depends(
 
 @router.get("/runs")
 def runs(limit: int = 20, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    rows = (db.query(WorkflowRun).filter(WorkflowRun.tenant_id == user.tenant_id)
+    rows = (db.query(WorkflowRun).filter(WorkflowRun.tenant_id == user.tenant_id,
+                                               WorkflowRun.flow_kind == LEGACY_AUTOMATION)
             .order_by(WorkflowRun.created_at.desc()).limit(max(1, min(100, limit))).all())
     return {"items": [to_dict(r) for r in rows]}
 
@@ -57,7 +60,7 @@ def runs(limit: int = 20, user: User = Depends(get_current_user), db: Session = 
 def run_detail(run_id: int, user: User = Depends(get_current_user),
                db: Session = Depends(get_db)):
     r = db.get(WorkflowRun, run_id)
-    if not r or r.tenant_id != user.tenant_id:
+    if not r or r.tenant_id != user.tenant_id or r.flow_kind != LEGACY_AUTOMATION:
         raise HTTPException(status_code=404, detail="运行记录不存在")
     steps = (db.query(WorkflowStep).filter(WorkflowStep.run_id == run_id)
              .order_by(WorkflowStep.seq).all())

@@ -110,7 +110,8 @@ def _ensure_default_settings(db) -> int:
 
 def ensure_listing_review_workflow(db) -> None:
     """为存量自动铺货模板补齐私域供给扫描和复核步骤。"""
-    templates = db.query(WorkflowTemplate).filter(WorkflowTemplate.key == "auto_listing").all()
+    templates = db.query(WorkflowTemplate).filter(WorkflowTemplate.key == "auto_listing",
+                                                WorkflowTemplate.flow_kind == "LEGACY_AUTOMATION").all()
     changed = False
     for template in templates:
         steps = list(template.steps or [])
