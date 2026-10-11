@@ -66,6 +66,12 @@
 
 | 文档 | 状态 | 作用 | 实施后去向 |
 |---|---|---|---|
+| `docs/PLATFORM_COMMERCE_WORKFLOW_ARCHITECTURE.md` | FROZEN_FOR_IMPLEMENTATION | Launch 领域、实体、权限与 API 权威设计 | 实施后维护契约 |
+| `docs/PLATFORM_WORKFLOW_STATE_MODEL.md` | FROZEN_FOR_IMPLEMENTATION | 三类状态、DAG、动作和恢复 | 实施后维护契约 |
+| `docs/LAUNCH_CENTER_PRODUCT_DESIGN.md` | FROZEN_FOR_IMPLEMENTATION | 同页双模式、导航和专业页集成 | 实施后维护 |
+| `docs/PLATFORM_WORKFLOW_MIGRATION_PLAN.md` | FROZEN_FOR_IMPLEMENTATION，未执行 DDL | 增量迁移、安全和回滚 | 实施后保留演练依据 |
+| `docs/PLATFORM_WORKFLOW_E2E_MATRIX.md` | FROZEN_FOR_IMPLEMENTATION，P0_PARTIAL | P0/业务/权限/可靠性验收矩阵 | 实施后登记证据 |
+| `docs/PLATFORM_WORKFLOW_PROGRESS.md` | DESIGN_FROZEN / IMPLEMENTING_P0 | V2 持续实施进度与验收证据 | 持续维护 |
 | `docs/PLATFORM_COMMERCE_WORKFLOW_GAP_ANALYSIS.md` | AUDITED（2026-10-10，待下一阶段设计） | 多平台生命周期与 Launch Center 的代码差距、复用边界和实施前置条件 | 设计实施期间维护，完成后归档 |
 | `docs/页面操作权限对照表.md` | 实施依据 | 页面-操作-权限 key 对照（权威源为 `workspace_context.py` 的 `ROLE_PERMISSIONS`） | 保持（随权限矩阵同步） |
 | `docs/phase1_setting_scope_design.md` | DESIGNED（**未执行 DDL**） | P1-10 Setting 作用域隔离设计 | 实施后并入 `phase1_interfaces.md` 或归档 |

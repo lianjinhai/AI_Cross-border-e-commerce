@@ -3415,3 +3415,23 @@ de minimis、HS 最长前缀、生效期、未配置国家）、物流（体积�
 HS 归类需业务持续维护（代码内只给结构性与公开可核实的参考值）；`shipments` /
 `warehouses` 未建表，海外仓/FBA 费用以"路由计费"表达而非库存模型；主库迁移、
 PostgreSQL 与独立任务队列未动。
+
+## D61：Platform Commerce Workflow 与 Launch Center 增量架构（2026-10-11）
+
+**状态**：Accepted（设计冻结，实施与运行验收尚未完成）。
+
+**背景**：用户 V2 指令要求从功能菜单发布升级为 Product × Shop 的平台生命周期。审计提交为 47161d1。源码已有 D59（海外仓）和 D60（广告能力）引用，但本文件尚缺这两项记录；本次保留其编号，使用 D61，避免改变既有引用含义。
+
+**决策**：复用 WorkflowTemplate / WorkflowRun / WorkflowStep，以 flow_kind 隔离旧自动化与平台生命周期的调度、恢复和统计。已发布 Profile 不可变，实例固定版本及快照；确定性迁移计算合法动作，AI 只分析、解释、排序，执行仍通过现有 Action 的权限、风险和审批门禁。Pricing Agent 的只读分析边界不变。
+
+保留 Tenant、Workspace Context、Membership 和 Agent OS 冻结边界。Shop 是唯一店铺实体；现有 Listing 母稿保留，按 V2 增量支持独立店铺派生稿，不迁移历史发布为可信在售。一个销售对象只占一个活跃槽，ACTIVE/PAUSED 不释放；终止后允许带历史关联的新上线轮次。
+
+分离执行状态、平台状态、验证状态。HTTP 成功仅可证明相应请求结果；平台 ACTIVE 需适用的可信证据及完整门禁。人工确认和 AI 推断不能替代核验。外部状态接入统一处理错店、重复、乱序、未知状态和来源；状态变化与 Outbox 同事务写入。
+
+现有合规证据增量扩展；仅为独立领域事实新增 ProductAsset、PriceReview、StockPreparation、WorkflowEvent。Label Package 作为版本化素材与 Manifest；成本快照、核价轮次和素材权利必须可审计。无授权素材、虚构认证和不可信低价不得自动执行。
+
+**兼容及安全**：沿用 /api 前缀、现有专业页面和 Context 公共字段；Launch 使用独立业务 DTO，共用 Guided/Professional 页面与权限。Factory 仅开放本厂任务投影。所有结构变化走新增 Alembic revision，先在受保护副本演练，禁止本轮直接升级主库或访问真实店铺。Temu 样本仅为 CONTRACT_TEST/UNVERIFIED。
+
+**权威细节**：领域/API 见 PLATFORM_COMMERCE_WORKFLOW_ARCHITECTURE.md；状态见 PLATFORM_WORKFLOW_STATE_MODEL.md；产品、迁移、测试和进度分别见对应 Launch/Platform Workflow 文档。设计一致性检查不构成迁移或功能验收，实际证据持续登记进度与 E2E 矩阵。
+
+**替代方案**：不采用新建平行 ERP、Adapter 内编排、前端硬编码步骤或 AI 自行维护状态；这些方案会复制事实或绕开已有安全边界。

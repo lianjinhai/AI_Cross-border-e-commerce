@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import datetime
 
-from sqlalchemy import update
+from sqlalchemy import func, update
 from sqlalchemy.exc import IntegrityError
 
 from ..models import AdCampaign, AiAction, Listing, Product, Tenant
@@ -64,15 +64,24 @@ def _policy(action_type):
     return policy
 
 
+def _publish_store_scope(shop_id):
+    """按服务端保存的店铺隔离；兼容仅在 payload 保存店铺的历史提案。"""
+    stored_shop = func.coalesce(AiAction.evidence["shop_id"].as_integer(),
+                                AiAction.evidence["payload"]["shop_id"].as_integer())
+    return stored_shop.is_(None) if shop_id is None else stored_shop == shop_id
+
+
 def _existing_intent(db, tenant_id, workspace_id, action_type, target_id, evidence):
     if action_type not in {"PUBLISH_LISTING", "ADJUST_AD_BUDGET"}:
         return None
-    existing = (db.query(AiAction).filter(
+    query = db.query(AiAction).filter(
         AiAction.tenant_id == tenant_id, AiAction.workspace_id == workspace_id,
         AiAction.action_type == action_type, AiAction.target_id == target_id,
         AiAction.status.in_(("PENDING_APPROVAL", "APPROVED", "EXECUTING", "SUCCESS")
                            if action_type == "PUBLISH_LISTING" else ("PENDING_APPROVAL", "APPROVED")))
-        .order_by(AiAction.id.desc()).first())
+    if action_type == "PUBLISH_LISTING":
+        query = query.filter(_publish_store_scope(evidence.get("shop_id")))
+    existing = query.order_by(AiAction.id.desc()).first()
     if existing is not None:
         same = (existing.evidence.get("fingerprint") == evidence.get("fingerprint")
                 if action_type == "PUBLISH_LISTING" else
@@ -85,11 +94,14 @@ def _existing_intent(db, tenant_id, workspace_id, action_type, target_id, eviden
 
 
 def _scope_action(db, ctx, action_type, target_id, scope_key, payload):
-    action = db.query(AiAction).filter(
+    query = db.query(AiAction).filter(
         AiAction.tenant_id == ctx.legacy_tenant_id, AiAction.workspace_id == ctx.workspace_id,
         AiAction.requested_by == ctx.user_id, AiAction.action_type == action_type,
         AiAction.target_id == target_id,
-        AiAction.evidence["scope_key"].as_string() == str(scope_key)).first()
+        AiAction.evidence["scope_key"].as_string() == str(scope_key))
+    if action_type == "PUBLISH_LISTING":
+        query = query.filter(_publish_store_scope(payload.get("shop_id")))
+    action = query.first()
     if action is not None and action.evidence.get("payload") != payload:
         raise ActionError(409, "同一执行范围的提案内容已变化，禁止创建重复副作用")
     return action
@@ -101,6 +113,7 @@ def _intent_key(db, ctx, agent_type, action_type, target_id, scope_key, encoded,
         terminal = (db.query(AiAction.id).filter(
             AiAction.workspace_id == ctx.workspace_id, AiAction.tenant_id == ctx.legacy_tenant_id,
             AiAction.action_type == action_type, AiAction.target_id == target_id,
+            _publish_store_scope(evidence.get("shop_id")),
             AiAction.status.in_(("REJECTED", "FAILED"))).order_by(AiAction.id.desc()).first())
         raw = f"{ctx.workspace_id}:{action_type}:{target_id}:{evidence['fingerprint']}:{terminal[0] if terminal else 0}"
     else:
