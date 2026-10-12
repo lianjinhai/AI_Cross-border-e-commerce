@@ -1,10 +1,9 @@
 """Launch 就绪度持久化：固定定义、CAS、步骤和事件同一事务；不调用旧 Worker。"""
 
-from copy import deepcopy
-
 from sqlalchemy import update
 
-from ..models import WorkflowEvent, WorkflowRun, WorkflowStep, utcnow
+from ..models import WorkflowRun, WorkflowStep
+from . import launch_state
 from .kinds import PLATFORM_LAUNCH
 from .launch_access import LaunchError, launch_context, owned_launch
 from .launch_facts import load_launch_facts
@@ -73,35 +72,19 @@ def _definition_and_steps(db, run):
 
 
 def _snapshot(run, steps):
-    return {"revision": run.revision, "execution_status": run.execution_status,
-            "platform_status": run.platform_status, "verification_status": run.verification_status,
-            "current_step": run.current_step, "blocked_reason": deepcopy(run.blocked_reason),
-            "steps": {step.step_code: {"status": step.step_status, "blocking_reason": deepcopy(step.blocking_reason),
-                                       "input_revision": step.input_revision} for step in steps}}
+    """委托 launch_state.state_snapshot（T01 迁出共享内核，行为不变）。"""
+    return launch_state.state_snapshot(run, steps)
 
 
 def _changes(run, steps, plan):
-    values = {"execution_status": plan["execution_status"], "current_step": plan["current_step"],
-              "blocked_reason": {"items": plan["blockers"]} if plan["blockers"] else {}}
-    changed = {name: value for name, value in values.items() if getattr(run, name) != value}
-    step_changes = {}
-    for step in steps:
-        target = plan["steps"][step.step_code]
-        updates = {name: value for name, value in {"step_status": target["status"],
-                   "blocking_reason": target["blocking_reason"]}.items() if getattr(step, name) != value}
-        if target["invalidated"]:
-            updates["input_revision"] = step.input_revision + 1
-        if updates:
-            step_changes[step.step_code] = updates
-    if (changed or step_changes) and run.started_at is None:
-        changed["started_at"] = utcnow()
-    return {"run": changed, "steps": step_changes}
+    """委托 launch_state.plan_changes：纯计算 diff，含 completed_at 与回执投影入口。"""
+    return launch_state.plan_changes(run, steps, plan)
 
 
 def _record_event(db, ctx, run, before, after, changes):
     # 一次 CAS 对应一个递增 sequence；所有步骤差异都保存在不可变事件主体。
-    db.add(WorkflowEvent(tenant_id=run.tenant_id, workspace_id=run.workspace_id, run_id=run.id,
-                         actor_id=ctx.user_id, sequence=run.revision, event_type="LaunchReadinessChanged",
-                         idempotency_key=f"launch:{run.id}:revision:{run.revision}", source="SYSTEM",
-                         before=before, after=after, profile_version=run.workflow_version,
-                         payload={"changed_steps": list(changes["steps"]), "definition_hash": run.definition_hash}))
+    launch_state.append_event(db, run, event_type="LaunchReadinessChanged",
+                              idempotency_key=f"launch:{run.id}:revision:{run.revision}", source="SYSTEM",
+                              actor_id=ctx.user_id, before=before, after=after,
+                              payload={"changed_steps": list(changes["steps"]),
+                                       "definition_hash": run.definition_hash})

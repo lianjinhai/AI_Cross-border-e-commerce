@@ -1,0 +1,125 @@
+%% Launch Center P0 闭环关键序列（增量设计文档 docs/INCREMENT_DESIGN_LAUNCH_P0_CLOSURE.md 附图）
+
+%% 1) COMPLETE_DATA 动作执行（幂等 + revision CAS + 步骤状态机守卫 + 同事务事件）
+sequenceDiagram
+    autonumber
+    participant U as 运营(前端)
+    participant R as routers/launch.py
+    participant A as launch_actions
+    participant N as launch_nba
+    participant H as launch_handlers
+    participant S as launch_state
+    participant DB as SQLite
+    U->>R: POST /api/launch/{id}/actions/COMPLETE_DATA
+    Note over U,R: Header: Idempotency-Key; body {step_code, expected_revision, payload}
+    R->>A: execute_launch_action(db, ctx, run_id, action, body, key)
+    A->>A: launch_context(launch:read) + owned_launch(失败 404)
+    A->>DB: 按事件幂等键查询(重放判定)
+    alt 同键同载荷
+        A-->>R: 原回执(同 event_id/receipt, 不新建事件)
+    else 新执行
+        A->>A: expected_revision 校验(不一致 409 REVISION_CONFLICT)
+        A->>A: 动作目录 / 载荷 / 权限 / 生命周期校验
+        A->>A: launch_plan(服务端事实 + evaluate_readiness)
+        A->>N: compute_nba(plan, steps, permissions, role)
+        N-->>A: allowed_actions(确定性排序)
+        A->>A: NBA 门禁(不在集合 409 ACTION_PRECONDITION_FAILED)
+        A->>A: 步骤状态守卫(来源状态不符 409 STEP_STATE_CONFLICT)
+        A->>DB: BEGIN IMMEDIATE + SAVEPOINT
+        A->>H: complete_data(ctx)
+        H->>DB: 写 step.result 证据 + flush
+        A->>A: 重算计划(断言 COMPLETED 与计划一致)
+        A->>S: plan_changes(run, steps, plan, overrides)
+        A->>DB: UPDATE workflow_runs WHERE revision=expected(rowcount=1)
+        A->>DB: UPDATE workflow_steps WHERE step_status=来源状态(rowcount=1)
+        A->>S: append_event(LaunchActionExecuted)
+        A-->>R: {revision, status:EXECUTED, receipt, event_id}
+    end
+    R->>DB: commit
+    R-->>U: 200 ActionExecuteResponse(launch=LaunchDetail)
+
+%% 2) SUBMIT_PLATFORM 提交 → 既有审批队列 → 执行回执 → sync 落地
+sequenceDiagram
+    autonumber
+    participant U as 运营(前端)
+    participant LR as routers/launch.py
+    participant LA as launch_actions
+    participant LS as launch_submit
+    participant AP as action_publish(既有)
+    participant AS as action_system(既有)
+    participant AR as routers/actions.py(既有)
+    participant APV as 审批人
+    participant RT as launch_runtime
+    U->>LR: POST /api/launch/{id}/actions/SUBMIT_PLATFORM
+    LR->>LA: execute_launch_action
+    LA->>LS: submit_platform(ctx)
+    LS->>AP: publish_facts 预检(规则/合规/权利/复核/授权)
+    alt 预检失败
+        AP-->>LS: ActionError
+        LS-->>LR: 409 ACTION_PRECONDITION_FAILED(零状态变更)
+    else 预检通过
+        LS->>AS: submit_action(commit=False, scope_key=launch:{run}:{step}:{n}, extra_evidence)
+        AS-->>LS: AiAction(PENDING_APPROVAL, 复用非终态)
+        LS-->>LA: StepEffect(WAITING_APPROVAL, result.action_id)
+        LA->>LA: run CAS + 事件 LaunchActionExecuted(action_id)
+        LR-->>U: 200 status=PENDING_APPROVAL("已提交,等待平台")
+    end
+    APV->>AR: POST /api/actions/{id}/approve
+    APV->>AR: POST /api/actions/{id}/execute
+    AR->>AS: execute_action
+    AS->>AP: publish_listing → Attempt succeeded(external_id, SUBMITTED)
+    U->>LR: POST /api/launch/{id}/sync {mode:refresh, expected_revision}
+    LR->>RT: refresh_launch(CAS)
+    RT->>RT: action_step_projection + launch_plan(facts.submission_receipt)
+    RT->>RT: land_completed_waits → SUBMISSION COMPLETED(固定回执)
+    RT-->>LR: {refreshed, revision, launch}
+    LR-->>U: 200 步骤已完成 + 回执(attempt_id/external_id/platform_status=SUBMITTED)
+
+%% 3) 详情(manage 刷新 / 只读只算) 与 列表(先 Scope 后分页 + 单行降级)
+sequenceDiagram
+    autonumber
+    participant U as 前端
+    participant R as routers/launch.py
+    participant D as launch_dto
+    participant RT as launch_runtime
+    participant DB as SQLite
+    U->>R: GET /api/launch/{id}
+    R->>D: load_detail(db, ctx, run_id)
+    D->>D: launch_context(launch:read) + owned_launch
+    alt 持 launch:manage
+        D->>RT: refresh_launch(CAS 落库; 冲突重读重试一次)
+    else 只读身份
+        D->>RT: launch_plan(只计算不落库, revision 不变)
+    end
+    D-->>R: LaunchDetail(三态/profile/progress/NBA/steps/monitoring)
+    U->>R: GET /api/launch?page_num=1&page_size=20
+    R->>D: list_launches(先 Scope 过滤再排序分页)
+    D->>DB: SELECT runs(scope+筛选+count+分页)
+    D->>DB: 批预取 product/shop/listing/step/attempt(5 条 IN 查询)
+    loop 每一行
+        D->>D: launch_facts_from_rows + evaluate_readiness + compute_nba
+        alt 单行事实异常(LAUNCH_CONTEXT_CHANGED 等)
+            D-->>D: 降级阻断摘要(整页不失败)
+        end
+    end
+    D-->>R: {items, total, page_num, page_size}
+
+%% 4) CANCEL / ABANDON_PRODUCT(纯本地终止, 不调外部下架退款)
+sequenceDiagram
+    autonumber
+    participant U as Owner(前端)
+    participant R as routers/launch.py
+    participant A as launch_actions
+    participant H as launch_handlers
+    participant DB as SQLite
+    U->>R: POST /api/launch/{id}/actions/CANCEL
+    Note over U,R: body {step_code:"", expected_revision, payload:{note, confirm:true}}
+    R->>A: execute_launch_action
+    A->>A: 校验链(生命周期/目录/权限/NBA/状态)
+    A->>H: cancel_run(ctx)
+    H->>H: 已核验在售(ACTIVE+VERIFIED) → 409
+    H-->>A: StepEffect(cancelled=True, run_fields={ended_at, active_slot=None})
+    A->>A: 重算计划(cancelled=True → execution_status=CANCELLED)
+    A->>DB: run CAS(revision+1) + 事件 LaunchCancelled
+    A-->>R: {revision, status:EXECUTED, receipt:{ended_at, active_slot_released}}
+    R-->>U: 200(不调用任何外部下架/退款; 恢复=relaunch 新轮次)

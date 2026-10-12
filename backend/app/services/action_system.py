@@ -127,11 +127,12 @@ def _intent_key(db, ctx, agent_type, action_type, target_id, scope_key, encoded,
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def submit_action(db, ctx, agent_type, proposal, scope_key, *, scope_manifest=None, commit=True):
+def submit_action(db, ctx, agent_type, proposal, scope_key, *, scope_manifest=None, commit=True,
+                  extra_evidence=None):
     action_type = proposal["action_type"]
     policy = _policy(action_type)
-    if not commit and action_type != "UPDATE_LISTING_COMPLIANCE_RISK":
-        raise ActionError(400, "外部原子事务仅支持合规风险投影")
+    if not commit and action_type not in {"UPDATE_LISTING_COMPLIANCE_RISK", "PUBLISH_LISTING"}:
+        raise ActionError(400, "外部原子事务仅支持合规风险投影与发布提案")
     if agent_type not in policy.agents or agent_type == "pricing":
         raise ActionError(403, "该 Agent 无权提出此类 Action")
     if action_type == "UPDATE_PRODUCT_CONTENT":
@@ -156,6 +157,8 @@ def submit_action(db, ctx, agent_type, proposal, scope_key, *, scope_manifest=No
         return scoped
     evidence = {"payload": payload, "_impersonating": current.is_impersonating,
                 "scope_key": str(scope_key)}
+    if extra_evidence:
+        evidence.update(extra_evidence)
     if scope_manifest is not None:
         if action_type != "UPDATE_PRODUCT_CONTENT":
             raise ActionError(400, "范围清单仅用于商品标准化")

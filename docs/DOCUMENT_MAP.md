@@ -72,6 +72,8 @@
 | `docs/PLATFORM_WORKFLOW_MIGRATION_PLAN.md` | FROZEN_FOR_IMPLEMENTATION，Expand 1a/1b 合成库已演练 | 增量迁移、安全和回滚；主库未改 | 实施后保留演练依据 |
 | `docs/PLATFORM_WORKFLOW_E2E_MATRIX.md` | FROZEN_FOR_IMPLEMENTATION，P0_PARTIAL | P0/业务/权限/可靠性验收矩阵 | 实施后登记证据 |
 | `docs/PLATFORM_WORKFLOW_PROGRESS.md` | DESIGN_FROZEN / IMPLEMENTING_P0 | V2 持续实施进度与验收证据 | 持续维护 |
+| `docs/INCREMENT_PRD_LAUNCH_P0_CLOSURE.md` | 待实施（本轮增量） | Launch Center P0 闭环增量 PRD：范围、用户故事、验收标准、动作执行矩阵、NBA 规则、Launch API 契约草案（B01/B02/B10 + F01-F03） | 实施后并入 `PLATFORM_WORKFLOW_PROGRESS.md` 与 E2E 矩阵证据 |
+| `docs/INCREMENT_DESIGN_LAUNCH_P0_CLOSURE.md` | 待实施（本轮增量，依据上行 PRD 冻结范围） | Launch P0 闭环增量设计：文件清单与分层、关键决策（D1-D12）、接口契约（函数签名/九端点/事件类型）、任务分解（T01-T05）、零迁移决策与风险 | 实施后并入 `PLATFORM_WORKFLOW_PROGRESS.md`；附图 `docs/sequence-diagram.mermaid`、`docs/class-diagram.mermaid` |
 | `docs/PLATFORM_COMMERCE_WORKFLOW_GAP_ANALYSIS.md` | AUDITED（2026-10-10，待下一阶段设计） | 多平台生命周期与 Launch Center 的代码差距、复用边界和实施前置条件 | 设计实施期间维护，完成后归档 |
 | `docs/页面操作权限对照表.md` | 实施依据 | 页面-操作-权限 key 对照（权威源为 `workspace_context.py` 的 `ROLE_PERMISSIONS`） | 保持（随权限矩阵同步） |
 | `docs/phase1_setting_scope_design.md` | DESIGNED（**未执行 DDL**） | P1-10 Setting 作用域隔离设计 | 实施后并入 `phase1_interfaces.md` 或归档 |

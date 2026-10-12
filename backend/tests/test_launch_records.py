@@ -316,5 +316,12 @@ def test_only_matching_successful_receipt_becomes_submission_fact(launch_db):
     attempt.status = "succeeded"
     db.flush()
     facts, predicates = load_launch_facts(db, run)
-    assert facts["platform"] == {"status": "NOT_SUBMITTED", "submission_reference": "receipt-1"}
-    assert predicates["asset_rights_allowed"]["PUBLISHABLE"] is False and run.verification_status == "UNKNOWN"
+    assert facts["platform"] == {"status": "NOT_SUBMITTED", "submission_reference": "receipt-1",
+                                 "submission_receipt": {"attempt_id": attempt.id, "external_id": "receipt-1",
+                                                        "platform_status": "UNKNOWN",
+                                                        "verification_status": "UNKNOWN",
+                                                        "external_object_type": "UNKNOWN",
+                                                        "mapping_version": "", "received_at": None}}
+    assert facts["assets"]["reasons"] == ["缺少可发布图片"]
+    assert predicates["asset_rights_allowed"]["PUBLISHABLE"] is False
+    assert predicates["verified_artifact"]["ACTIVATION"] is False and run.verification_status == "UNKNOWN"

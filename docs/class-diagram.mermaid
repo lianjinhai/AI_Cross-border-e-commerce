@@ -1,0 +1,222 @@
+%% Launch Center P0 闭环类图（增量设计文档 docs/INCREMENT_DESIGN_LAUNCH_P0_CLOSURE.md 附图）
+%% 约定：模块级函数以 «module» 构造型类表示；标 (既有) 的为已提交代码, 本轮不新建。
+
+classDiagram
+    class LaunchError {
+        <<existing, extended>>
+        +code: str
+        +status_code: int
+        +existing_launch_id: int|None
+        +blockers: list|None
+        +current_revision: int|None
+    }
+
+    class ActionMeta {
+        +business_types: frozenset~str~
+        +permissions: tuple~str~
+        +source_states: frozenset~str~
+        +target: str
+        +risk: str
+        +approval_required: bool
+        +connected: bool
+        +disabled_reason: str
+        +required_payload: frozenset~str~
+        +optional_payload: frozenset~str~
+        +external_confirmer: bool
+    }
+
+    class ActionContext {
+        +db: Session
+        +run: WorkflowRun
+        +step: WorkflowStep|None
+        +current: WorkspaceContext
+        +payload: dict
+        +facts: dict
+        +plan: dict
+        +definition: StepDefinition|None
+    }
+
+    class StepEffect {
+        +status: str|None
+        +result: dict|None
+        +evidence_refs: list|None
+        +attempts_delta: int
+        +run_fields: dict|None
+        +cancelled: bool
+        +receipt: dict|None
+        +external: dict|None
+    }
+
+    class LaunchActionCatalog {
+        <<module, new>>
+        +BUSINESS_ACTION_META: dict
+        +PRICE_STOCK_ACTIONS: frozenset
+        +action_meta(action) ActionMeta
+        +validate_payload(action, payload) dict
+    }
+
+    class LaunchState {
+        <<module, new>>
+        +state_snapshot(run, steps) dict
+        +plan_changes(run, steps, plan, overrides, run_overrides, receipt, now) dict
+        +next_sequence(db, run_id) int
+        +append_event(db, run, event_type, idempotency_key, source, actor_id, before, after, payload, sequence) WorkflowEvent
+        +action_step_projection(db, run, steps) dict
+        +land_completed_waits(db, run, steps, plan, facts) dict
+        +facts_digest(facts, predicates) str
+        +platform_receipt(facts) dict|None
+    }
+
+    class LaunchHandlers {
+        <<module, new>>
+        +HANDLERS: dict
+        +complete_data(ctx) StepEffect
+        +retry_step(ctx) StepEffect
+        +cancel_run(ctx) StepEffect
+    }
+
+    class LaunchSubmit {
+        <<module, new>>
+        +submit_platform(ctx) StepEffect
+        +confirm_activation(ctx) StepEffect
+    }
+
+    class LaunchActions {
+        <<module, new>>
+        +execute_launch_action(db, ctx, run_id, action, body, idempotency_key) dict
+        +replay_receipt(event) dict
+    }
+
+    class LaunchNBA {
+        <<module, new>>
+        +compute_nba(plan, steps, definitions, permissions, role, revision, facts_digest, run) dict
+        +recommendations(nba, plan) list
+        +next_action_summary(nba) dict
+    }
+
+    class LaunchDTO {
+        <<module, new>>
+        +load_detail(db, ctx, run_id) dict
+        +launch_list_item(db, run, current, product, shop, attempt) dict
+        +launch_detail(db, run, current, plan, nba) dict
+        +step_dto(step, definition, role, revision) dict
+        +event_dto(event) dict
+        +context_dto(db, ctx, scope) dict
+        +channels_dto(db, ctx, product_id) dict
+        +verification_notice(run, definition) str|None
+    }
+
+    class LaunchList {
+        <<module, new>>
+        +list_launches(db, ctx, scope, page_num, page_size, filters, extra_params) dict
+    }
+
+    class LaunchRecovery {
+        <<module, new>>
+        +recover_launch_steps(db) int
+        +recover_run_steps(db, run) dict
+    }
+
+    class LaunchRuntime {
+        <<module, existing+extended>>
+        +refresh_launch(db, ctx, run_id, expected_revision) tuple
+        +launch_plan(db, run) tuple
+    }
+
+    class LaunchFacts {
+        <<module, existing+extended>>
+        +load_launch_facts(db, run) tuple
+        +launch_facts_from_rows(db, run, product, listing, shop, attempt) tuple
+    }
+
+    class LaunchAccess {
+        <<module, existing+extended>>
+        +launch_context(db, ctx, permission) tuple
+        +owned_launch(db, current, scope, run_id) WorkflowRun
+        +require_shop_scope(scope, shop_id) void
+    }
+
+    class ActionSystem {
+        <<module, existing+extended>>
+        +submit_action(db, ctx, agent_type, proposal, scope_key, scope_manifest, commit, extra_evidence) AiAction
+        +decide_action(db, ctx, action_id, approve, note) AiAction
+        +execute_action(db, ctx, action_id, commit) AiAction
+    }
+
+    class WorkflowRun {
+        <<model, existing>>
+        +id: int
+        +revision: int
+        +execution_status: str
+        +platform_status: str
+        +verification_status: str
+        +active_slot: int|None
+        +ended_at: datetime|None
+        +definition_snapshot: dict
+    }
+
+    class WorkflowStep {
+        <<model, existing>>
+        +step_code: str
+        +step_status: str
+        +result: dict
+        +evidence_refs: list
+        +attempts: int
+        +input_revision: int
+        +params: dict
+    }
+
+    class WorkflowEvent {
+        <<model, existing>>
+        +sequence: int
+        +event_type: str
+        +idempotency_key: str
+        +before: dict
+        +after: dict
+        +payload: dict
+    }
+
+    class AiAction {
+        <<model, existing>>
+        +action_type: str
+        +status: str
+        +evidence: dict
+        +target_id: int
+        +approval_required: bool
+    }
+
+    class PlatformPublishAttempt {
+        <<model, existing>>
+        +status: str
+        +external_id: str
+        +platform_status: str
+        +verification_status: str
+    }
+
+    LaunchActions ..> LaunchHandlers : HANDLERS 分发
+    LaunchActions ..> LaunchSubmit : HANDLERS 分发
+    LaunchActions ..> LaunchNBA : NBA 门禁
+    LaunchActions ..> LaunchState : CAS/事件/收敛
+    LaunchActions ..> LaunchFacts : 事实
+    LaunchActions ..> ActionSystem : submit_action 复用
+    LaunchHandlers ..> ActionContext
+    LaunchHandlers ..> StepEffect
+    LaunchSubmit ..> ActionContext
+    LaunchSubmit ..> StepEffect
+    LaunchSubmit ..> ActionSystem
+    LaunchNBA ..> LaunchActionCatalog : 元数据
+    LaunchHandlers ..> LaunchActionCatalog : 元数据
+    LaunchDTO ..> LaunchNBA
+    LaunchDTO ..> LaunchState
+    LaunchList ..> LaunchDTO
+    LaunchList ..> LaunchFacts
+    LaunchRuntime ..> LaunchState
+    LaunchRuntime ..> LaunchFacts
+    LaunchRecovery ..> LaunchState
+    LaunchRecovery ..> LaunchAccess
+    LaunchAccess ..> LaunchError
+    LaunchActions ..> WorkflowRun
+    LaunchActions ..> WorkflowStep
+    LaunchState ..> WorkflowEvent
+    LaunchState ..> AiAction
+    LaunchFacts ..> PlatformPublishAttempt

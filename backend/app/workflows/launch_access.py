@@ -4,17 +4,24 @@ from ..models import WorkflowRun
 from ..services.action_identity import fresh_context
 from ..services.ai_actions import ActionError
 from ..services.store_scope import StoreScopeError, resolve_store_scope
+from ..services.workspace_context import ROLE_FACTORY_COLLABORATOR, SOURCE_FACTORY
 from .kinds import PLATFORM_LAUNCH
 
 
 class LaunchError(ValueError):
-    def __init__(self, code, message, status_code=400, existing_launch_id=None):
+    def __init__(self, code, message, status_code=400, existing_launch_id=None,
+                 blockers=None, current_revision=None):
         super().__init__(message)
         self.code, self.status_code = code, status_code
         self.existing_launch_id = existing_launch_id
+        self.blockers = blockers
+        self.current_revision = current_revision
 
 
 def launch_context(db, ctx, permission="launch:read"):
+    # Factory 身份一律 404 LAUNCH_NOT_FOUND（AC-3.4，不泄露存在性），先于 Scope 解析。
+    if ctx.source == SOURCE_FACTORY or ctx.role == ROLE_FACTORY_COLLABORATOR:
+        raise LaunchError("LAUNCH_NOT_FOUND", "上线流程不存在", 404)
     try:
         current = fresh_context(db, ctx)
         scope = resolve_store_scope(db, current)
