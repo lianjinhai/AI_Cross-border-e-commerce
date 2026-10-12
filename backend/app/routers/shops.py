@@ -362,9 +362,12 @@ def purge_demo_data(user: User = Depends(require_admin), db: Session = Depends(g
     """清空全部演示数据（种子/模拟），保留账号、设置与店铺授权配置。"""
     if _scope(db, user).shop_ids is not None:
         raise HTTPException(status_code=403, detail="店铺受限成员不能执行全 Workspace 数据清理")
-    from ..services.tenant_data_purge import purge_tenant_demo_data
+    from ..services.tenant_data_purge import DemoPurgeBlocked, purge_tenant_demo_data
 
-    counts = purge_tenant_demo_data(db, user.tenant_id)
+    try:
+        counts = purge_tenant_demo_data(db, user.tenant_id)
+    except DemoPurgeBlocked as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"ok": True, "deleted": counts,
             "hint": "演示数据已清空。现在可以：URL 采集真实商品 / 授权店铺拉真实订单 / CSV 导入历史数据。"}
 

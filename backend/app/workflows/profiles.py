@@ -11,6 +11,7 @@ from ..services.regions import store_market
 from ..services.store_scope import StoreScopeError, resolve_store_scope
 from .kinds import PLATFORM_LAUNCH
 from .profile_schema import FULFILLMENT_MODES, ProfileDefinition
+from .transactions import ensure_write_transaction
 
 
 class ProfileError(ValueError):
@@ -45,6 +46,7 @@ def _values(definition):
 
 
 def create_profile(db, ctx, payload):
+    ensure_write_transaction(db)
     current, _ = _context(db, ctx, write=True)
     definition = ProfileDefinition.model_validate(payload)
     row = WorkflowTemplate(tenant_id=current.legacy_tenant_id, flow_kind=PLATFORM_LAUNCH,

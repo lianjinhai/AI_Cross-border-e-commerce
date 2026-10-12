@@ -4,6 +4,37 @@
 本模块不 import 其它测试模块，避免收集顺序依赖（规范 §8 T-2）。
 """
 
+from dataclasses import replace
+
+import pytest
+from sqlalchemy import text
+
+from app.db import SessionLocal
+from app.models import User
+from app.services.workspace_context import ROLE_PERMISSIONS, resolve_workspace_context
+from app.workflows.launch_access import LaunchError, launch_context
+
+
+def test_launch_permission_matrix_matches_catalog_without_expanding_factory(client):
+    all_launch = {"launch:read", "launch:create", "launch:manage", "launch:price_review", "launch:stock_prepare",
+                  "launch:compliance_manage", "launch:label_manage", "launch:submit"}
+    expected = {"OWNER": all_launch, "OPERATOR": all_launch, "READ_ONLY": {"launch:read"},
+                "COMPLIANCE": {"launch:read", "launch:compliance_manage"}, "PLATFORM_ADMIN": set(),
+                "FACTORY_COLLABORATOR": set()}
+    with SessionLocal() as db:
+        rows = db.execute(text("SELECT role_key,permission_key FROM role_permissions WHERE permission_key LIKE 'launch:%'")).all()
+        for role, allowed in expected.items():
+            assert {permission for key, permission in rows if key == role} == allowed
+            assert ROLE_PERMISSIONS[role] & all_launch == allowed
+        owner = resolve_workspace_context(db, db.query(User).filter_by(username="admin").one())
+        compliance = replace(owner, role="COMPLIANCE", permissions=ROLE_PERMISSIONS["COMPLIANCE"])
+        assert not compliance.can_write() and compliance.can_approve()
+        viewer = resolve_workspace_context(db, db.query(User).filter_by(username="viewer").one())
+        launch_context(db, viewer)
+        with pytest.raises(LaunchError) as denied:
+            launch_context(db, viewer, "launch:create")
+        assert denied.value.status_code == 403
+
 
 def _login_role(client, username, password):
     response = client.post("/api/auth/login", json={"username": username, "password": password})

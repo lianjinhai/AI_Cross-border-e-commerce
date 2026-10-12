@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -305,6 +306,8 @@ class Listing(Base):
     tenant_id: Mapped[int] = mapped_column(
         ForeignKey("tenants.id", name="fk_listings_tenant_id_tenants"), index=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    shop_id: Mapped[int | None] = mapped_column(ForeignKey("shops.id", name="fk_listings_shop_id_shops"), nullable=True, index=True)
+    parent_listing_id: Mapped[int | None] = mapped_column(ForeignKey("listings.id", name="fk_listings_parent_listing_id_listings"), nullable=True)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=True)
     last_edited_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=True)
     platform: Mapped[str] = mapped_column(String(32), default="shopee")
@@ -1043,11 +1046,44 @@ class WorkflowTemplate(Base):
 
 class WorkflowRun(Base):
     __tablename__ = "workflow_runs"
+    __table_args__ = (
+        Index("uq_launch_active_slot", "tenant_id", "product_id", "shop_id", "active_slot", unique=True),
+        Index("uq_launch_request_key", "tenant_id", "idempotency_key", unique=True),
+        Index("ix_launch_workspace_shop", "tenant_id", "workspace_id", "shop_id"),
+        CheckConstraint("active_slot IS NULL OR active_slot = 1", name="ck_workflow_runs_active_slot"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     tenant_id: Mapped[int] = mapped_column(
         ForeignKey("tenants.id", name="fk_workflow_runs_tenant_id_tenants"), index=True)
     template_key: Mapped[str] = mapped_column(String(64))
     flow_kind: Mapped[str] = mapped_column(String(32), default="LEGACY_AUTOMATION", server_default="LEGACY_AUTOMATION", index=True)
+    workspace_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id", name="fk_workflow_runs_product_id_products"), nullable=True)
+    shop_id: Mapped[int | None] = mapped_column(ForeignKey("shops.id", name="fk_workflow_runs_shop_id_shops"), nullable=True)
+    listing_id: Mapped[int | None] = mapped_column(ForeignKey("listings.id", name="fk_workflow_runs_listing_id_listings"), nullable=True)
+    definition_id: Mapped[int | None] = mapped_column(ForeignKey("workflow_templates.id", name="fk_workflow_runs_definition_id_workflow_templates"), nullable=True)
+    previous_run_id: Mapped[int | None] = mapped_column(ForeignKey("workflow_runs.id", name="fk_workflow_runs_previous_run_id_workflow_runs"), nullable=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", name="fk_workflow_runs_created_by_users"), nullable=True)
+    workflow_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    active_slot: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    definition_snapshot: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    definition_hash: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    environment: Mapped[str] = mapped_column(String(16), default="CONTRACT_TEST", server_default="CONTRACT_TEST")
+    platform: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    market: Mapped[str] = mapped_column(String(8), default="", server_default="")
+    fulfillment_mode: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    execution_status: Mapped[str] = mapped_column(String(24), default="NOT_STARTED", server_default="NOT_STARTED")
+    platform_status: Mapped[str] = mapped_column(String(24), default="UNKNOWN", server_default="UNKNOWN")
+    verification_status: Mapped[str] = mapped_column(String(24), default="UNKNOWN", server_default="UNKNOWN")
+    current_step: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    blocked_reason: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    next_action: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     name: Mapped[str] = mapped_column(String(128), default="")
     status: Mapped[str] = mapped_column(String(16), default="queued")  # queued/running/success/partial/blocked/failed
     context: Mapped[dict] = mapped_column(JSON, default=dict)     # 步骤间共享上下文
@@ -1060,11 +1096,29 @@ class WorkflowRun(Base):
 
 class WorkflowStep(Base):
     __tablename__ = "workflow_steps"
+    __table_args__ = (Index("uq_launch_step_code", "run_id", "step_code", unique=True),)
     id: Mapped[int] = mapped_column(primary_key=True)
     run_id: Mapped[int] = mapped_column(ForeignKey("workflow_runs.id"), index=True)
     tenant_id: Mapped[int] = mapped_column(
         ForeignKey("tenants.id", name="fk_workflow_steps_tenant_id_tenants"), index=True)
     seq: Mapped[int] = mapped_column(Integer, default=0)
+    step_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    business_type: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    execution_mode: Mapped[str] = mapped_column(String(24), default="", server_default="")
+    actor: Mapped[str] = mapped_column(String(16), default="", server_default="")
+    required: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    step_status: Mapped[str] = mapped_column(String(24), default="PENDING", server_default="PENDING")
+    assigned_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", name="fk_workflow_steps_assigned_user_id_users"), nullable=True)
+    assigned_supplier_id: Mapped[int | None] = mapped_column(ForeignKey("suppliers.id", name="fk_workflow_steps_assigned_supplier_id_suppliers"), nullable=True)
+    external_status: Mapped[str] = mapped_column(String(128), default="", server_default="")
+    external_reference: Mapped[str] = mapped_column(String(128), default="", server_default="")
+    external_type: Mapped[str] = mapped_column(String(32), default="UNKNOWN", server_default="UNKNOWN")
+    blocking_reason: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    data_snapshot: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    result: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    evidence_refs: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    input_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    deadline_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     agent: Mapped[str] = mapped_column(String(32))
     action: Mapped[str] = mapped_column(String(64))
     params: Mapped[dict] = mapped_column(JSON, default=dict)   # 模板步骤参数快照
@@ -1075,6 +1129,40 @@ class WorkflowStep(Base):
     max_attempts: Mapped[int] = mapped_column(Integer, default=3)
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+
+
+class WorkflowEvent(Base):
+    """不可变业务事件主体；投递状态由 Outbox worker 独立维护。"""
+    __tablename__ = "workflow_events"
+    __table_args__ = (
+        Index("uq_workflow_event_sequence", "run_id", "sequence", unique=True),
+        Index("uq_workflow_event_key", "tenant_id", "idempotency_key", unique=True),
+        Index("ix_workflow_event_delivery", "delivery_status", "next_attempt_at"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", name="fk_workflow_events_tenant_id_tenants"), index=True)
+    workspace_id: Mapped[int] = mapped_column(Integer)
+    run_id: Mapped[int] = mapped_column(ForeignKey("workflow_runs.id", name="fk_workflow_events_run_id_workflow_runs"))
+    step_id: Mapped[int | None] = mapped_column(ForeignKey("workflow_steps.id", name="fk_workflow_events_step_id_workflow_steps"), nullable=True)
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", name="fk_workflow_events_actor_id_users"), nullable=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    event_type: Mapped[str] = mapped_column(String(64))
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    source: Mapped[str] = mapped_column(String(32), default="SYSTEM")
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    received_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    before: Mapped[dict] = mapped_column(JSON, default=dict)
+    after: Mapped[dict] = mapped_column(JSON, default=dict)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    profile_version: Mapped[int] = mapped_column(Integer)
+    mapping_version: Mapped[str] = mapped_column(String(64), default="")
+    delivery_status: Mapped[str] = mapped_column(String(24), default="PENDING")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    lease_owner: Mapped[str] = mapped_column(String(64), default="")
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    consumer_receipts: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 # ---------------------------------------------------------------- 知识库 / AI 日志

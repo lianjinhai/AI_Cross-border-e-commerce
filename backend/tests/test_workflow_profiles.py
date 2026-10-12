@@ -134,3 +134,11 @@ def test_corrupt_published_definition_fails_integrity_check(profile_db):
     with pytest.raises(ProfileError) as error:
         select_profile(db, ctx, product.id, shop.id, "CONTRACT_TEST")
     assert error.value.code == "PROFILE_INTEGRITY_ERROR"
+
+
+def test_profile_create_respects_outer_transaction_rollback(profile_db):
+    db, ctx, _, _ = profile_db
+    row = create_profile(db, ctx, simple_contract())
+    profile_id = row.id
+    db.rollback()
+    assert db.get(WorkflowTemplate, profile_id) is None

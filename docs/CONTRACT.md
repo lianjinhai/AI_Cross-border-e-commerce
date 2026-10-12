@@ -280,3 +280,5 @@ D61 Profile 服务（尚未开放 HTTP）：`backend/app/workflows/profiles.py` 
 | C1 | frontend/ 全部（package.json、vite.config.js、index.html、src/{main.js,api.js,router.js,styles.css,App.vue,views/*}） |
 
 App.vue 只做 `<router-view/>`。
+
+D61 Launch 创建内部服务（尚未开放 HTTP）：`app/workflows/launch_records.py` 将店铺派生 Listing、固定版本 Run、步骤和 LaunchCreated 事件置于同一调用方事务；服务不提交，调用方回滚则全部消失。SQLite 显式开启外层写事务后才用保存点，避免 SAVEPOINT 提前提交。tenant/product/shop 活跃槽数据库唯一；相同幂等键同请求重放、不同请求拒绝；新鲜 Context/Store Scope 每次重验。派生稿清空历史审批/回执，发布目标只能是绑定店铺。八项 launch 权限按冻结角色矩阵增量授予，COMPLIANCE 不获得通用写入权限，工厂不获得通用 Launch 权限。已有 Launch 时演示数据清理返回 409，保留审计。此阶段仅创建 NOT_STARTED/PENDING，不提供动作执行、状态迁移或在售核验。

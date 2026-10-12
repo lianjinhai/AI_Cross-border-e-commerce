@@ -92,3 +92,7 @@ Legacy 回归包括原模板运行/失败/审批/恢复/调度、原 Listing 草
 ## 7. 结果登记
 
 当前所有 case 为 NOT_RUN，原因是本批只设计。具体命令、退出码与失败项在 `docs/PLATFORM_WORKFLOW_PROGRESS.md` 逐批追加。验收矩阵中的要求只有对应当前提交的权威证据才能改为 PASS；平台真实验收与本地 Contract 验收分别报告。
+
+## 创建持久化局部证据（2026-10-12）
+
+`test_launch_records.py` 验证同商品双店独立草稿与版本快照、相同键并发重放/不同键活跃冲突、外层回滚及事件故障无残留、活跃槽约束、绑定店铺发布拒绝、创建/读取/重放的新鲜 Store Scope，以及旧演示清理拒绝删除 Launch 审计。UX-C/UX-H 和 REL-2 仅创建阶段有证据，尚非运行状态迁移或界面 E2E。`test_launch_runtime_migration.py` 验证历史升级/回滚与实际事件 FK；权限矩阵和迁移往返分别见 security/dual_read 测试。HTTP Launch、完整生命周期、同步恢复、Playwright 仍 NOT_RUN。

@@ -78,20 +78,25 @@ _WRITE_PERMISSIONS = frozenset({
 # compliance:check = 检测报告与受限风险副本 Action；不授权内容编辑或发布
 _PERM_COMPLIANCE_CHECK = "compliance:check"
 
+# Launch 增量不放入通用 _WRITE_PERMISSIONS，避免改变 COMPLIANCE.can_write 的冻结语义。
+_LAUNCH_READ = frozenset({"launch:read"})
+_LAUNCH_WRITE = frozenset({"launch:create", "launch:manage", "launch:price_review", "launch:stock_prepare",
+                         "launch:compliance_manage", "launch:label_manage", "launch:submit"})
+
 ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
-    ROLE_OWNER: _READ_PERMISSIONS | _WRITE_PERMISSIONS | frozenset({
+    ROLE_OWNER: _READ_PERMISSIONS | _WRITE_PERMISSIONS | _LAUNCH_READ | _LAUNCH_WRITE | frozenset({
         "workspace:member:admin", "compliance:approve", _PERM_COMPLIANCE_CHECK}),
     # OPERATOR 额外持有 compliance:check：与 /api/compliance/check 的契约一致
     # （该端点的 legacy 兜底角色是 ("admin","operator","compliance_approver")，
     # 且其文档写明"OWNER/OPERATOR/COMPLIANCE 拥有"）。此前常量漏了 OPERATOR，
     # 导致 MEMBERSHIP 路径下运营发起合规检测被 403——注释/兜底/实现三者不一致。
-    ROLE_OPERATOR: _READ_PERMISSIONS | _WRITE_PERMISSIONS | frozenset({
+    ROLE_OPERATOR: _READ_PERMISSIONS | _WRITE_PERMISSIONS | _LAUNCH_READ | _LAUNCH_WRITE | frozenset({
         _PERM_COMPLIANCE_CHECK}),
-    ROLE_READ_ONLY: _READ_PERMISSIONS,
+    ROLE_READ_ONLY: _READ_PERMISSIONS | _LAUNCH_READ,
     # 合规员：可发起检测（check）与审批（approve），但仍不能改商品/发布 Listing
     ROLE_COMPLIANCE: frozenset({
         "compliance:read", "compliance:approve", _PERM_COMPLIANCE_CHECK,
-        "listing:read", "product:read"}),
+        "listing:read", "product:read", "launch:read", "launch:compliance_manage"}),
     ROLE_PLATFORM_ADMIN: frozenset({"platform:admin"}),
     ROLE_FACTORY_COLLABORATOR: frozenset({"supply:read", "supply:write"}),
 }

@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 
 def publish_targets(db, tenant_id, listing_id, shop_id=None):
     listing = owned(db, Listing, tenant_id, listing_id)
+    if listing.shop_id is not None and listing.shop_id != shop_id:
+        raise ActionError(409, "店铺专属草稿只能提交到绑定的目标店铺")
     product = owned(db, Product, tenant_id, listing.product_id)
     shop = None if shop_id is None else owned(db, Shop, tenant_id, shop_id)
     if shop is not None:

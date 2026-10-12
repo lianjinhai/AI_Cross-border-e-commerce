@@ -1,6 +1,6 @@
 # Platform Workflow 迁移与安全计划 V2
 
-> 最后更新：2026-10-12。状态：FROZEN_FOR_IMPLEMENTATION / Expand 1a、1b、2a、2b 合成历史库已演练 / 主库未修改。
+> 最后更新：2026-10-12。状态：FROZEN_FOR_IMPLEMENTATION / Expand 1a、1b、2a、2b、2c 合成历史库已演练 / 主库未修改。
 > 领域字段以 `docs/PLATFORM_COMMERCE_WORKFLOW_ARCHITECTURE.md` 为准；此处定义实施顺序与安全门禁。
 
 ## 1. 目标与绝对边界
@@ -15,7 +15,9 @@
 
 后继 Expand 2a 为 20261012_24，在 WorkflowTemplate/Run 增加有索引的 flow_kind，历史默认 LEGACY_AUTOMATION，不改变旧 status/context/steps。先隔离模板修补、调度、领取、续租、恢复、API 列表/详情和 BI 旧运行列表，再实施后续 Launch Runtime 字段。`backend/tests/test_workflow_kind_migration.py` 验证合成历史库只读预检、旧内容保留、无新类型 roundtrip 及存在新类型时在任何 DDL 前拒绝 downgrade。
 
-Expand 2b 为 20261012_25（最新 head），扩展 WorkflowTemplate 的适用维度、profile_key/version、发布状态、环境、schema、摘要与映射。历史 profile_key=NULL，新增唯一索引 tenant/profile_key/version 不合并历史同 key 模板。`backend/tests/test_workflow_profile_migration.py` 验证只读预检、旧内容保留、roundtrip、数据库版本唯一性和有 Profile 时拒绝降级。完整 Run/Step 关系、事件及主库副本演练仍未完成。
+Expand 2b 为 20261012_25（该批次 head），扩展 WorkflowTemplate 的适用维度、profile_key/version、发布状态、环境、schema、摘要与映射。历史 profile_key=NULL，新增唯一索引 tenant/profile_key/version 不合并历史同 key 模板。`backend/tests/test_workflow_profile_migration.py` 验证只读预检、旧内容保留、roundtrip、数据库版本唯一性和有 Profile 时拒绝降级。该批次未包含 Run/Step 关系和事件，后继实施见下文。
+
+Expand 2c 为 20261012_26，扩展 Run/Step、Listing.shop_id/parent_listing_id，新增 WorkflowEvent。显式关系、活跃槽唯一键、请求幂等键和步骤编号唯一键均落库；旧行保持 NULL/UNKNOWN，不推断历史归属。`test_launch_runtime_migration.py` 在合成历史库验证升级、外键、旧内容 roundtrip 及有新事实拒绝降级。权限迁移 20261012_27 为最新 head，增加八项 launch 权限及角色映射；缺权限目录时拒绝，存在 Launch 时拒绝撤销权限。`test_workspace_dual_read.py` 验证幂等升级、无运行往返、旧权限不变和有运行拒绝降级。主库副本与 PostgreSQL 演练仍未完成。
 
 ## 2. 增量拆分
 

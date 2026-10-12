@@ -44,10 +44,21 @@ from ..models import (
     PurchaseOrder,
     RefundOrder,
     SupplierOffer,
+    WorkflowEvent,
+    WorkflowRun,
+    WorkflowStep,
 )
+from ..workflows.kinds import PLATFORM_LAUNCH
+
+
+class DemoPurgeBlocked(ValueError):
+    """上线历史不能通过旧演示清理入口删除。"""
 
 # 删除顺序 = 外键拓扑序（被引用者必须后删）。每一项都含 tenant_id，按租户隔离。
 _PURGE_PLAN = (
+    (WorkflowEvent, "workflow_events"),                     # → workflow_steps / workflow_runs
+    (WorkflowStep, "workflow_steps"),                       # → workflow_runs
+    (WorkflowRun, "workflow_runs"),                         # → listings / products
     (Message, "messages"),                                   # → conversations
     (RefundOrder, "refunds"),                                # → orders
     (OrderFee, "order_fees"),                                # → orders
@@ -80,6 +91,8 @@ def purge_tenant_demo_data(db: Session, tenant_id: int) -> dict[str, int]:
 
     调用方负责事务语义：本函数只在末尾 commit 一次，异常时整体回滚。
     """
+    if db.query(WorkflowRun.id).filter_by(tenant_id=tenant_id, flow_kind=PLATFORM_LAUNCH).first():
+        raise DemoPurgeBlocked("已有上线流程与审计记录，不能执行演示数据清理")
     counts: dict[str, int] = {}
     for model, label in _PURGE_PLAN:
         counts[label] = int(

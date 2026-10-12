@@ -79,6 +79,8 @@ def migrated_db(tmp_path):
     # Revision 17：新增 support:read 权限（Conversation Tool 前置，D39）。
     # 同 Revision 15：权限读取优先走表，不跑该迁移则表缺 key，一致性断言会失败。
     _run_revision(path, "20260927_17_support_read_permission")
+    # Launch 增量权限必须真实迁移，继续与代码角色矩阵逐项比对。
+    _run_revision(path, "20261012_27_launch_permissions")
     return path
 
 
@@ -92,6 +94,30 @@ def migrated_session(migrated_db):
     with Session() as session:
         yield session
     engine.dispose()
+
+
+def test_launch_permission_migration_roundtrip_and_live_guard(migrated_db):
+    """重复升级不重复授权；空运行可回滚；有 Launch 时拒绝撤掉权限。"""
+    module = "20261012_27_launch_permissions"
+    with sqlite3.connect(migrated_db) as db:
+        db.execute("CREATE TABLE workflow_runs (id INTEGER PRIMARY KEY, flow_kind TEXT)")
+        expected = db.execute("SELECT role_key,permission_key FROM role_permissions ORDER BY 1,2").fetchall()
+        old_permissions = db.execute("SELECT key FROM permissions WHERE domain <> 'launch' ORDER BY key").fetchall()
+    _run_revision(migrated_db, module)
+    with _read(migrated_db) as db:
+        assert db.execute("SELECT role_key,permission_key FROM role_permissions ORDER BY 1,2").fetchall() == expected
+    _run_revision(migrated_db, module, "downgrade")
+    with _read(migrated_db) as db:
+        assert db.execute("SELECT count(*) FROM permissions WHERE domain='launch'").fetchone() == (0,)
+        assert db.execute("SELECT key FROM permissions ORDER BY key").fetchall() == old_permissions
+    _run_revision(migrated_db, module)
+    with sqlite3.connect(migrated_db) as db:
+        assert db.execute("SELECT role_key,permission_key FROM role_permissions ORDER BY 1,2").fetchall() == expected
+        db.execute("INSERT INTO workflow_runs VALUES(1,'PLATFORM_LAUNCH')")
+    with pytest.raises(RuntimeError, match="已有 Launch"):
+        _run_revision(migrated_db, module, "downgrade")
+    with _read(migrated_db) as db:
+        assert db.execute("SELECT role_key,permission_key FROM role_permissions ORDER BY 1,2").fetchall() == expected
 
 
 def _user(session, username: str):

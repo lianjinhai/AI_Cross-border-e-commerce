@@ -31,7 +31,8 @@ def test_ai_actions_migration_roundtrip(tmp_path):
         assert result.returncode == 0, result.stdout + result.stderr
 
     alembic("stamp", "20260927_17")
-    alembic("upgrade", "head")
+    # 最小夹具只覆盖 D47；不具备后续 Workspace 权限目录，固定真实迁移边界。
+    alembic("upgrade", "20260930_18")
     engine = create_engine(url)
     try:
         columns = {column["name"] for column in inspect(engine).get_columns("ai_actions")}
@@ -52,7 +53,7 @@ def test_ai_actions_migration_roundtrip(tmp_path):
     finally:
         engine.dispose()
 
-    alembic("upgrade", "head")
+    alembic("upgrade", "20260930_18")
     engine = create_engine(url)
     try:
         assert inspect(engine).has_table("ai_actions")
