@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from app.db import SessionLocal
 from app.models import (
     Listing,
+    PlatformPublishAttempt,
     Product,
     Shop,
     User,
@@ -22,10 +23,12 @@ from app.models import (
 from app.services.action_publish import publish_targets
 from app.services.ai_actions import ActionError
 from app.services.workspace_context import resolve_workspace_context
-from app.workflows import launch_records
+from app.workflows import launch_records, launch_runtime
 from app.workflows.contract_profiles import simple_contract
 from app.workflows.launch_access import LaunchError, get_launch
+from app.workflows.launch_facts import load_launch_facts
 from app.workflows.launch_records import create_launch
+from app.workflows.launch_runtime import refresh_launch
 from app.workflows.profiles import create_profile, publish_profile
 
 
@@ -53,6 +56,8 @@ def launch_db(client):
         db.query(WorkflowEvent).filter(WorkflowEvent.run_id.in_(ids)).delete(synchronize_session=False)
         db.query(WorkflowStep).filter(WorkflowStep.run_id.in_(ids)).delete(synchronize_session=False)
         db.query(WorkflowRun).filter(WorkflowRun.id.in_(ids)).delete(synchronize_session=False)
+        listing_ids = db.query(Listing.id).filter_by(product_id=product.id)
+        db.query(PlatformPublishAttempt).filter(PlatformPublishAttempt.listing_id.in_(listing_ids)).delete(synchronize_session=False)
         db.query(Listing).filter_by(product_id=product.id).delete(synchronize_session=False)
         db.delete(product)
         for shop in shops:
@@ -205,3 +210,111 @@ def test_demo_purge_cannot_delete_launch_audit(launch_db, client, auth_headers):
     assert get_launch(db, ctx, run.id).listing_id is not None
     assert db.query(WorkflowEvent).filter_by(run_id=run.id).count() == 1
     assert db.get(Product, product.id) is not None
+
+
+def test_readiness_refresh_persists_once_and_preserves_platform_facts(launch_db):
+    db, ctx, product, shops, _ = launch_db
+    run = create_launch(db, ctx, product.id, shops[0].id, "readiness")
+    db.commit()
+    run, plan = refresh_launch(db, ctx, run.id, 1)
+    db.commit()
+    assert run.revision == 2 and run.execution_status == "READY" and run.current_step == "INFORMATION"
+    assert plan["runnable_steps"] == ["INFORMATION"]
+    assert run.platform_status == "NOT_SUBMITTED" and run.verification_status == "UNKNOWN"
+    event = db.query(WorkflowEvent).filter_by(run_id=run.id, sequence=2).one()
+    assert event.before["execution_status"] == "NOT_STARTED" and event.after["execution_status"] == "READY"
+    assert event.payload["changed_steps"] == ["INFORMATION"]
+    replay, _ = refresh_launch(db, ctx, run.id, 2)
+    db.commit()
+    assert replay.revision == 2 and db.query(WorkflowEvent).filter_by(run_id=run.id).count() == 2
+    with pytest.raises(LaunchError) as stale:
+        refresh_launch(db, ctx, run.id, 1)
+    assert stale.value.code == "REVISION_CONFLICT"
+
+
+@pytest.mark.parametrize("event_failure", [False, True])
+def test_readiness_state_and_event_rollback_together(launch_db, monkeypatch, event_failure):
+    db, ctx, product, shops, _ = launch_db
+    run = create_launch(db, ctx, product.id, shops[0].id, "readiness-rollback")
+    db.commit()
+    run_id = run.id
+    if event_failure:
+        def fail(*args):
+            raise RuntimeError("outbox write failure")
+        monkeypatch.setattr(launch_runtime, "_record_event", fail)
+        with pytest.raises(RuntimeError, match="outbox"):
+            refresh_launch(db, ctx, run_id, 1)
+        db.commit()  # 即使调用方捕获错误后提交，保存点内也不得留下半步状态。
+    else:
+        refresh_launch(db, ctx, run_id, 1)
+        db.rollback()
+    db.expire_all()
+    assert db.get(WorkflowRun, run_id).revision == 1
+    assert db.get(WorkflowRun, run_id).execution_status == "NOT_STARTED"
+    assert {step.step_status for step in db.query(WorkflowStep).filter_by(run_id=run_id)} == {"PENDING"}
+    assert db.query(WorkflowEvent).filter_by(run_id=run_id).count() == 1
+
+
+def test_concurrent_readiness_refresh_rejects_stale_revision(launch_db):
+    db, ctx, product, shops, _ = launch_db
+    run = create_launch(db, ctx, product.id, shops[0].id, "readiness-concurrent")
+    db.commit()
+    run_id = run.id
+    barrier = Barrier(2)
+
+    def worker(_):
+        with SessionLocal() as session:
+            barrier.wait(timeout=10)
+            try:
+                changed, _ = refresh_launch(session, ctx, run_id, 1)
+                session.commit()
+                return changed.revision
+            except LaunchError as exc:
+                session.rollback()
+                return exc.code
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        results = list(workers.map(worker, (0, 1)))
+    assert sorted(map(str, results)) == ["2", "REVISION_CONFLICT"]
+    assert db.query(WorkflowEvent).filter_by(run_id=run_id).count() == 2
+
+
+@pytest.mark.parametrize("corruption", ["profile", "step", "shop"])
+def test_refresh_rejects_changed_definition_step_or_store(launch_db, corruption):
+    db, ctx, product, shops, _ = launch_db
+    run = create_launch(db, ctx, product.id, shops[0].id, "invalid-refresh")
+    db.commit()
+    if corruption == "profile":
+        run.definition_hash = "invalid"
+    elif corruption == "step":
+        step = db.query(WorkflowStep).filter_by(run_id=run.id, step_code="INFORMATION").one()
+        step.params = {**step.params, "completion_condition": True}
+    else:
+        shops[0].market = "MY"
+    db.flush()
+    with pytest.raises(LaunchError) as refused:
+        refresh_launch(db, ctx, run.id, 1)
+    assert refused.value.code == ("LAUNCH_CONTEXT_CHANGED" if corruption == "shop" else "LAUNCH_DEFINITION_CORRUPT")
+    assert db.query(WorkflowEvent).filter_by(run_id=run.id).count() == 1
+    db.rollback()
+
+
+def test_only_matching_successful_receipt_becomes_submission_fact(launch_db):
+    db, ctx, product, shops, _ = launch_db
+    run = create_launch(db, ctx, product.id, shops[0].id, "receipt-fact")
+    db.commit()
+    attempt = PlatformPublishAttempt(tenant_id=ctx.legacy_tenant_id, listing_id=run.listing_id,
+                                     shop_id=shops[1].id, platform="shopee", idempotency_key="fact-receipt",
+                                     status="succeeded", external_id="receipt-1", raw_status="ACTIVE")
+    db.add(attempt)
+    db.flush()
+    assert "submission_reference" not in load_launch_facts(db, run)[0]["platform"]
+    attempt.shop_id = shops[0].id
+    attempt.status = "uncertain"
+    db.flush()
+    assert "submission_reference" not in load_launch_facts(db, run)[0]["platform"]
+    attempt.status = "succeeded"
+    db.flush()
+    facts, predicates = load_launch_facts(db, run)
+    assert facts["platform"] == {"status": "NOT_SUBMITTED", "submission_reference": "receipt-1"}
+    assert not predicates and run.verification_status == "UNKNOWN"

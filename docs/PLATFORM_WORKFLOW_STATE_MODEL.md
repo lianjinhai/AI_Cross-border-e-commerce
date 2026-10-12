@@ -117,3 +117,7 @@ PRICE_DECISION + MARKET_COMPLIANCE + PHYSICAL_EVIDENCE → READY_FOR_SALE → AC
 ## 9. 故障与超时
 
 短任务租约到期可由同 flow_kind worker 领取；依据持久 checkpoint 先核查外部结果。等待步骤只有 deadline_at，无占用线程。timeout_policy 定义 notify_after、fail_after、max_attempts、retryable_errors；无明确 deadline 不凭空失败。通知事件按 run/step/deadline 去重。进程重启不得重发已成功的发布、采购或已拒绝审批。
+
+## 10. 当前实现边界（2026-10-12）
+
+`launch_rules.evaluate_readiness` 实现依赖图就绪计算、阻断聚合、进度分母和已完成依据失效处理；`launch_runtime.refresh_launch` 将结果以 revision CAS 与事件同事务写入。它不自动完成步骤，不重启 WAITING/FAILED 任务，不替代动作 handler。服务端事实未知时保持未知；上线后整改不更改平台状态。合法动作、依赖证据版本指纹、审批恢复和外部同步仍待后续领域服务与执行器接入。

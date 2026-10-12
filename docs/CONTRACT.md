@@ -282,3 +282,5 @@ D61 Profile 服务（尚未开放 HTTP）：`backend/app/workflows/profiles.py` 
 App.vue 只做 `<router-view/>`。
 
 D61 Launch 创建内部服务（尚未开放 HTTP）：`app/workflows/launch_records.py` 将店铺派生 Listing、固定版本 Run、步骤和 LaunchCreated 事件置于同一调用方事务；服务不提交，调用方回滚则全部消失。SQLite 显式开启外层写事务后才用保存点，避免 SAVEPOINT 提前提交。tenant/product/shop 活跃槽数据库唯一；相同幂等键同请求重放、不同请求拒绝；新鲜 Context/Store Scope 每次重验。派生稿清空历史审批/回执，发布目标只能是绑定店铺。八项 launch 权限按冻结角色矩阵增量授予，COMPLIANCE 不获得通用写入权限，工厂不获得通用 Launch 权限。已有 Launch 时演示数据清理返回 409，保留审计。此阶段仅创建 NOT_STARTED/PENDING，不提供动作执行、状态迁移或在售核验。
+
+D61 就绪刷新内部服务（未开放 HTTP）：`refresh_launch(db, ctx, run_id, expected_revision)` 要求 launch:manage、新鲜身份及店铺范围，校验固定定义/步骤和经营上下文；过期 revision 返回 REVISION_CONFLICT，定义损坏或上下文变化拒绝。刷新不执行发布、采购或核验，不提升平台/验证状态；相同结果不生成重复事件，状态与事件由调用方统一提交。动作与事实服务接入前不能将 READY 理解为已经完成或允许自动发布。

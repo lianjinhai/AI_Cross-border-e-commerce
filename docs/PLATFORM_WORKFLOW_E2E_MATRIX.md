@@ -96,3 +96,5 @@ Legacy 回归包括原模板运行/失败/审批/恢复/调度、原 Listing 草
 ## 创建持久化局部证据（2026-10-12）
 
 `test_launch_records.py` 验证同商品双店独立草稿与版本快照、相同键并发重放/不同键活跃冲突、外层回滚及事件故障无残留、活跃槽约束、绑定店铺发布拒绝、创建/读取/重放的新鲜 Store Scope，以及旧演示清理拒绝删除 Launch 审计。UX-C/UX-H 和 REL-2 仅创建阶段有证据，尚非运行状态迁移或界面 E2E。`test_launch_runtime_migration.py` 验证历史升级/回滚与实际事件 FK；权限矩阵和迁移往返分别见 security/dual_read 测试。HTTP Launch、完整生命周期、同步恢复、Playwright 仍 NOT_RUN。
+
+就绪度局部证据：`test_launch_rules.py` 覆盖并行依赖、未知/不适用、禁止按事实直接完成、证据撤销后的后继失效、完成历史与监控分离、等待与失败不被刷新重启。`test_launch_records.py` 增加 CAS 竞争、无变化不重复事件、外层/事件故障回滚、固定定义和店铺变更拒绝、精确店铺提交回执读取。REL-2 现覆盖创建和就绪刷新，不扩称外部动作/恢复闭环通过。
