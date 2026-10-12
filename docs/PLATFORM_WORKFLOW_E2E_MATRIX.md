@@ -98,3 +98,5 @@ Legacy 回归包括原模板运行/失败/审批/恢复/调度、原 Listing 草
 `test_launch_records.py` 验证同商品双店独立草稿与版本快照、相同键并发重放/不同键活跃冲突、外层回滚及事件故障无残留、活跃槽约束、绑定店铺发布拒绝、创建/读取/重放的新鲜 Store Scope，以及旧演示清理拒绝删除 Launch 审计。UX-C/UX-H 和 REL-2 仅创建阶段有证据，尚非运行状态迁移或界面 E2E。`test_launch_runtime_migration.py` 验证历史升级/回滚与实际事件 FK；权限矩阵和迁移往返分别见 security/dual_read 测试。HTTP Launch、完整生命周期、同步恢复、Playwright 仍 NOT_RUN。
 
 就绪度局部证据：`test_launch_rules.py` 覆盖并行依赖、未知/不适用、禁止按事实直接完成、证据撤销后的后继失效、完成历史与监控分离、等待与失败不被刷新重启。`test_launch_records.py` 增加 CAS 竞争、无变化不重复事件、外层/事件故障回滚、固定定义和店铺变更拒绝、精确店铺提交回执读取。REL-2 现覆盖创建和就绪刷新，不扩称外部动作/恢复闭环通过。
+
+P0-4/P0-8 素材局部证据：`test_product_assets.py` 覆盖登记/独立核验/撤销追加版本、未知与受限不放行、有效期/市场/图片匹配、事务回滚、URI/保留字段校验、Adapter 正反门禁与故障拒绝、HTTP 分页与身份注入拒绝、旧 Context 店铺范围重验、并发冲突及素材版本进入发布审批指纹。`test_product_asset_migration.py` 验证历史图片不被猜为有权及迁移保护。尚未包含不可变文件存储、真实外部图片字节验证、素材中心界面或完整上线 E2E，P0-4 保持 PARTIAL。

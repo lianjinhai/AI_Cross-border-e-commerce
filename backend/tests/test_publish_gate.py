@@ -24,9 +24,11 @@ from app.models import (
     ListingReviewDecision,
     PlatformRulePack,
     Product,
+    ProductAsset,
     ProductComplianceEvidence,
     Shop,
     Tenant,
+    User,
 )
 from app.services import publish_gate
 from app.services.action_publish import publish_facts
@@ -59,6 +61,19 @@ def _charger(db, tenant_id, **kwargs) -> Product:
     db.add(product)
     db.commit()
     return product
+
+
+def _verified_image_fixture(db, product, platform):
+    """合规正向用例显式具备已核验素材；不替代素材核验服务测试。"""
+    reviewer = User(tenant_id=product.tenant_id, username="rights-reviewer", password_hash="test", role="admin")
+    db.add(reviewer)
+    db.flush()
+    db.add(ProductAsset(tenant_id=product.tenant_id, workspace_id=product.tenant_id, product_id=product.id,
+                        asset_key="charger-main", version=1, asset_type="MAIN_IMAGE", uri=product.images[0],
+                        content_hash="a" * 64, rights_status="OWNED", source="isolated contract fixture",
+                        rights_evidence_ref="evidence://fixture/source", market="US", platform=platform,
+                        verification_status="VERIFIED", created_by=reviewer.id))
+    db.commit()
 
 
 # ---------------------------------------------------------------- 目的国解析
@@ -313,6 +328,7 @@ def test_publish_facts_allows_real_shop_once_fcc_present(env):
     db.add(shop)
     db.commit()
     listing = _publishable(db, tenant_id, product)
+    _verified_image_fixture(db, product, _PLATFORM)
     facts = publish_facts(db, tenant_id, listing.id, shop.id)
     assert facts["fingerprint"], "证据齐备的发布事实必须正常产出"
     assert facts["compliance_gate"]["gate_status"] == publish_gate.GATE_PASS
@@ -385,6 +401,7 @@ def test_ebay_publish_succeeds_once_fcc_evidence_present(env, monkeypatch):
 
     db, tenant_id = env
     product = _charger(db, tenant_id, attrs={"destination_country": "US"})
+    _verified_image_fixture(db, product, "ebay")
     db.add(ProductComplianceEvidence(tenant_id=tenant_id, product_id=product.id,
                                      destination_country="US", requirement="FCC",
                                      evidence_ref="FCC-2026-001"))
@@ -462,6 +479,7 @@ def test_ebay_own_field_error_not_swallowed_by_gate(env, monkeypatch):
 
     db, tenant_id = env
     product = _charger(db, tenant_id, attrs={"destination_country": "US"})
+    _verified_image_fixture(db, product, "ebay")
     db.add(ProductComplianceEvidence(tenant_id=tenant_id, product_id=product.id,
                                      destination_country="US", requirement="FCC",
                                      evidence_ref="FCC-2026-001"))

@@ -121,3 +121,15 @@
 刷新读取固定定义、校验摘要和步骤完整性，重新验证当前 Context/Store Scope 和商品/草稿/店铺关系，以 Run.revision 条件更新。步骤变化与 LaunchReadinessChanged 事件在一个保存点中写入，调用方回滚或事件故障均不留下半步状态。相同事实刷新不重复增版；并发旧 revision 拒绝。没有接入旧 Workflow Worker，也不从请求传入事实。
 
 事实读取目前只包含商品标题、草稿标题和精确店铺/草稿的 succeeded 提交回执；原始 ACTIVE 不变成在售，生产实例不采用 demo 回执。Asset/核价/合规等尚待领域服务接入，保持 UNKNOWN。31 项就绪度与创建持久化测试通过，另 3 项旧引擎隔离通过。尚无完整动作 handler、合法动作/NBA、HTTP Launch 或界面，不能作为生命周期闭环验收。最终后端正反序均 821 passed / 2 xfailed / 1 xpassed（既有合规待定标记）；前端 79 passed、构建通过，Ruff 与文档一致性 total=0，git diff --check 通过。所有验证进程已结束。本批无新迁移，主库和外部账号未操作；下一步接入领域事实与动作门禁。
+
+## 13. 素材版本、权利核验及发布门禁（实施中）
+
+新增 ProductAsset 和迁移 20261012_28（Expand 3a），按冻结字段保存适用市场/平台、版本、来源、权利证据、内容摘要、有效期与独立核验记录。只追加版本，登记为 MANUAL_REPORTED；独立核验是可用能力，选择核验时提交人不可自审；UNKNOWN/RESTRICTED 即使经过审核也不能发布。核验与撤销均保留历史版本，保存点服从调用方事务，版本唯一键防并发覆盖。旧 Product.images 原样保留，不自动生成有权素材。
+
+新增现有 /api/products/{id}/assets 的 GET/POST 与 /{asset_id}/verify；分页前校验可信 Context、Membership、Store Scope 和市场范围。调用方不能传 tenant/workspace/verification_status；角色矩阵已增加接口探针。Asset 服务接入 Launch 的 PUBLISHABLE 谓词，真实发布 facts 及 Adapter 两侧检查，审批指纹包含素材版本和权利依据，撤销/过期/换素材会阻断或改变指纹。本地与 demo 发布保持无外部副作用的兼容路径，但 Launch 不因此将无权素材判定为可用。
+
+23 项素材专项测试通过（含 HTTP、并发、scope、授权撤销、正反门禁与审批指纹）；合成历史库只读预检、roundtrip、实际 FK 和有记录拒绝降级通过。原合规正向测试显式补充有权素材样本，保留成功发布与必填字段断言；纯协议恢复测试隔离权利数据库依赖，真实门禁另测。
+
+限制：本批管理素材 URI/摘要和人工核验，不下载或托管文件，未证明远端可变 URI 的实际字节始终与摘要一致；不可将登记摘要称为自动文件真实性验证。完整素材中心前端、文件存储/上传及历史 UNKNOWN 回填仍待后续；合规 Artifact、Label Package、核价和完整 Launch 动作尚未交付。主库、外部账号均未操作。全量验证待记录。首次全量仅发布幂等样本缺少权利登记失败；该样本改为通过 ASGI TestClient 登记/核验，保留仅一次 Adapter 调用及回执重放断言，并定向清理测试素材，避免影响后续演示清理测试。
+
+边界校正：初稿错误地把所有权利声明升级为必须双人核验，超出冻结设计 §9 且阻碍个人用户；已改为 OWNED 明确来源、授权/许可明确 proof 和适用范围即可进入权利判断，仍保留 MANUAL_REPORTED 标签，不伪称独立审核。UNKNOWN/RESTRICTED、缺证明、驳回/失效始终阻断；认证 Artifact 的 VERIFIED 门槛不因此放宽。

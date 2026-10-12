@@ -109,7 +109,7 @@ def test_migration_table_list_matches_model_metadata(client):
     # warehouses 的 tenant_id → tenants.id 与 inventory_snapshots 的
     # tenant_id → tenants.id 由本文件首条元数据级契约与 test_warehouses_inventory 核对。
     # WorkflowEvent 由 Revision 26 新建；独立历史库迁移测试核对真实 FK。
-    expected -= {"users", "tenant_settings", "workspace_profiles", "ai_actions", "workflow_events",
+    expected -= {"users", "tenant_settings", "workspace_profiles", "ai_actions", "workflow_events", "product_assets",
                  "duty_rates", "logistics_routes", "platform_fee_schedules",
                  "destination_compliance_rules", "product_compliance_evidence",
                  "warehouses", "inventory_snapshots"}

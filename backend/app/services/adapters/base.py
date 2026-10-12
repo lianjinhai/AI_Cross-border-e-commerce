@@ -6,7 +6,7 @@
 import logging
 import time
 
-from .. import publish_gate
+from .. import asset_rights, publish_gate
 from ..regions import store_market
 from . import catmap
 from .contract import NormalizedOrder, PlatformError, PublishResult, TokenPair
@@ -168,12 +168,22 @@ class BaseAdapter:
         target = store_market(getattr(self.shop, "market", "") or "")
         if not target or target not in supported:
             blocking.append("目标国家不在当前 Adapter 已声明的发布范围内")
+        if not blocking:
+            blocking.extend(self._asset_rights_issues(product))
         if blocking:
             logger.warning("publish_gate_blocked channel=%s platform=%s product_id=%s blocking=%s",
                            channel, self.platform, getattr(product, "id", None), blocking)
             raise PlatformError(
                 f"{self.label} 发布前置校验未通过（合规闸门）：" + "；".join(blocking))
         return []
+
+    def _asset_rights_issues(self, product):
+        try:
+            report = asset_rights.evaluate_asset_rights(self.db, self.shop.tenant_id, product, self.shop)
+            return report["reasons"] if not report["allowed"] else []
+        except Exception:
+            logger.exception("asset_rights_check_failed platform=%s", self.platform)
+            return ["素材权利检查失败，禁止跳过"]
 
     def _destination_access_issues(self, product) -> list[str]:
         """与 Action 共用店铺市场门禁；缺配置或检查故障同样阻断。"""

@@ -55,6 +55,14 @@ def test_role_permission_matrix(client):
     # platform_admin = 平台级配置写入（仅 admin/superadmin）
     probes = [
         ("GET", "/api/products", None, "read"),
+        ("GET", "/api/products/999999/assets?shop_id=999999", None, "read"),
+        ("POST", "/api/products/999999/assets", {
+            "shop_id": 999999, "asset_key": "probe", "expected_version": 0, "asset_type": "MAIN_IMAGE",
+            "uri": "https://example.com/photo.jpg", "content_hash": "a" * 64,
+            "rights_status": "UNKNOWN", "source": "permission test", "market": "SG", "platform": "shopee"}, "write"),
+        ("POST", "/api/products/999999/assets/999999/verify", {
+            "shop_id": 999999, "expected_version": 1, "decision": "VERIFIED",
+            "evidence_ref": "evidence://test/probe", "reason": "permission test"}, "compliance_approve"),
         ("GET", "/api/shops", None, "read"),
         ("GET", "/api/listings/999999/publication-attempts", None, "read"),
         ("PUT", "/api/shops/999999", {"market": "TR", "fulfillment_mode": "DROPSHIP"}, "write"),

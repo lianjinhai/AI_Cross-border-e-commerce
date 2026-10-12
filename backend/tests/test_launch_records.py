@@ -317,4 +317,4 @@ def test_only_matching_successful_receipt_becomes_submission_fact(launch_db):
     db.flush()
     facts, predicates = load_launch_facts(db, run)
     assert facts["platform"] == {"status": "NOT_SUBMITTED", "submission_reference": "receipt-1"}
-    assert not predicates and run.verification_status == "UNKNOWN"
+    assert predicates["asset_rights_allowed"]["PUBLISHABLE"] is False and run.verification_status == "UNKNOWN"

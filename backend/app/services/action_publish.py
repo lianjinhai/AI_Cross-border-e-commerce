@@ -15,7 +15,7 @@ from ..models import (
     Shop,
 )
 from ..serialize import to_dict
-from . import platforms, publish_gate
+from . import asset_rights, platforms, publish_gate
 from .action_content import owned
 from .action_records import listing_fingerprint
 from .ai_actions import ActionError
@@ -91,6 +91,9 @@ def publish_facts(db, tenant_id, listing_id, shop_id=None):
         publish_gate.log_warn(compliance_gate, channel="publish_facts")
     if compliance_gate["gate_status"] == publish_gate.GATE_BLOCK:
         raise ActionError(400, "上架合规闸门未通过：" + "；".join(compliance_gate["reasons"]))
+    rights = asset_rights.evaluate_asset_rights(db, tenant_id, product, shop) if shop else None
+    if not bypass and not rights["allowed"]:
+        raise ActionError(400, "素材权利检查未通过：" + "；".join(rights["reasons"]))
     payload = {"listing": {key: getattr(listing, key) for key in
                            ("title", "description", "bullets", "keywords", "platform")},
                "product": {key: getattr(product, key) for key in
@@ -99,13 +102,13 @@ def publish_facts(db, tenant_id, listing_id, shop_id=None):
                "shop_context": {key: getattr(shop, key, None) for key in
                                 ("market", "store_type", "account_type", "business_mode",
                                  "fulfillment_mode", "capability_revision")},
-               "compliance_gate": compliance_gate}
+               "compliance_gate": compliance_gate, "asset_rights": rights}
     fingerprint = hashlib.sha256(json.dumps(
         payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
     return {"fingerprint": fingerprint, "rule_version": pack["version"],
             "review_id": review.id, "platform": listing.platform,
             "shop_id": shop.id if shop else None,
-            "compliance_gate": compliance_gate}
+            "compliance_gate": compliance_gate, "asset_rights": rights}
 
 
 def _attempt(db, action, listing, shop):

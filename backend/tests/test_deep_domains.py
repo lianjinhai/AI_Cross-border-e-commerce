@@ -17,6 +17,8 @@ from sqlalchemy.pool import StaticPool
 
 from app.models import Base
 
+from .asset_helpers import register_reviewed_image as register_reviewed_image
+
 # ============================================================ 域一：功能状态机
 
 class TestFunctionDomain:
@@ -451,7 +453,7 @@ class TestDataFinanceDomain:
         r = client.post(f"/api/listings/{lid}/publish", headers=auth_headers)
         assert r.status_code == 400 and "违禁" in r.json()["detail"], r.json()
 
-    def test_publish_is_idempotent_on_retry(self, client, auth_headers, monkeypatch):
+    def test_publish_is_idempotent_on_retry(self, client, auth_headers, monkeypatch, register_reviewed_image):
         """重复发布必须幂等：第二次返回 idempotent_replay，且不新建平台尝试记录。
 
         背景：客户端超时重试是常态，若每次都走一遍发布流程，会在平台侧
@@ -505,6 +507,7 @@ class TestDataFinanceDomain:
                 "title": "幂等发布探针商品", "category": "家居",
                 "attrs": {"sale_price": 20, "onhand": 5, "supplier_price": 5},
                 "images": ["https://example.com/a.jpg"]}).json()["id"]
+            register_reviewed_image(pid, shop["id"], uri="https://example.com/a.jpg")
             lid = client.post("/api/listings/generate", headers=auth_headers,
                               json={"product_id": pid, "platform": "shopee"}).json()["id"]
 

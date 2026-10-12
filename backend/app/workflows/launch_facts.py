@@ -1,6 +1,7 @@
 """Launch 服务端事实读取；未接入的领域事实保持 UNKNOWN，不能用请求载荷补齐。"""
 
 from ..models import Listing, PlatformPublishAttempt, Product, Shop
+from ..services.asset_rights import evaluate_asset_rights
 from .launch_access import LaunchError
 
 
@@ -23,5 +24,7 @@ def load_launch_facts(db, run):
             and (run.environment == "CONTRACT_TEST" or not shop.is_demo)):
         # 提交回执只支持 submission 条件，绝不据此设置 ACTIVE/VERIFIED。
         facts["platform"]["submission_reference"] = attempt.external_id
-    # Asset/PriceReview/StockPreparation 的领域服务接入前，不读取 UI 勾选或旧 risk_level 代替核验。
-    return facts, {}
+    rights = evaluate_asset_rights(db, run.tenant_id, product, shop)
+    facts["assets"] = {"rights_fingerprint": rights["fingerprint"], "versions": rights["versions"]}
+    # PriceReview/StockPreparation 等尚未接入的领域事实，不读取 UI 勾选或旧 risk_level 代替核验。
+    return facts, {"asset_rights_allowed": {"PUBLISHABLE": rights["allowed"]}}

@@ -17,7 +17,9 @@
 
 Expand 2b 为 20261012_25（该批次 head），扩展 WorkflowTemplate 的适用维度、profile_key/version、发布状态、环境、schema、摘要与映射。历史 profile_key=NULL，新增唯一索引 tenant/profile_key/version 不合并历史同 key 模板。`backend/tests/test_workflow_profile_migration.py` 验证只读预检、旧内容保留、roundtrip、数据库版本唯一性和有 Profile 时拒绝降级。该批次未包含 Run/Step 关系和事件，后继实施见下文。
 
-Expand 2c 为 20261012_26，扩展 Run/Step、Listing.shop_id/parent_listing_id，新增 WorkflowEvent。显式关系、活跃槽唯一键、请求幂等键和步骤编号唯一键均落库；旧行保持 NULL/UNKNOWN，不推断历史归属。`test_launch_runtime_migration.py` 在合成历史库验证升级、外键、旧内容 roundtrip 及有新事实拒绝降级。权限迁移 20261012_27 为最新 head，增加八项 launch 权限及角色映射；缺权限目录时拒绝，存在 Launch 时拒绝撤销权限。`test_workspace_dual_read.py` 验证幂等升级、无运行往返、旧权限不变和有运行拒绝降级。主库副本与 PostgreSQL 演练仍未完成。
+Expand 2c 为 20261012_26，扩展 Run/Step、Listing.shop_id/parent_listing_id，新增 WorkflowEvent。显式关系、活跃槽唯一键、请求幂等键和步骤编号唯一键均落库；旧行保持 NULL/UNKNOWN，不推断历史归属。`test_launch_runtime_migration.py` 在合成历史库验证升级、外键、旧内容 roundtrip 及有新事实拒绝降级。权限迁移 20261012_27 为该批次 head，增加八项 launch 权限及角色映射；缺权限目录时拒绝，存在 Launch 时拒绝撤销权限。`test_workspace_dual_read.py` 验证幂等升级、无运行往返、旧权限不变和有运行拒绝降级。主库副本与 PostgreSQL 演练仍未完成。
+
+Expand 3a 为最新 head 20261012_28，只创建 product_assets，不改写 Product.images。`test_product_asset_migration.py` 使用合成历史库验证只读预检、无自动权利回填、升级/回滚/再升级、真实外键及有素材记录时拒绝降级。审计历史存在时旧演示清理入口也拒绝执行。ProductComplianceEvidence 扩展、PriceReview/StockPreparation 和完整主库副本演练仍待完成。
 
 ## 2. 增量拆分
 

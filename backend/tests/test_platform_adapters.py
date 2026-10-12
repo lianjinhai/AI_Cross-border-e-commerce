@@ -241,6 +241,7 @@ def test_tiktok_partial_success_resumes_from_global_product(monkeypatch):
     adapter = TikTokAdapter(None, _shop(tenant_id=1))
     # 纯协议恢复测试不连接数据库；合规真实路径由 publish_gate 专项测试覆盖。
     monkeypatch.setattr(adapter, "_destination_access_issues", lambda product: [])
+    monkeypatch.setattr(adapter, "_asset_rights_issues", lambda product: [])
     listing = SimpleNamespace(title="Title", description="Desc")
     product = SimpleNamespace(id=1, sku="SKU1", images=["https://x/1.jpg"], attrs={
         "onhand": 1, "sale_price": 10, "weight_kg": 1,

@@ -300,6 +300,37 @@ class SupplierScore(Base):
 
 # ---------------------------------------------------------------- Listing / 合规
 
+class ProductAsset(Base):
+    """版本化商品素材和权利证据；新版本追加，既有版本不得原地重写。"""
+    __tablename__ = "product_assets"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "product_id", "asset_key", "version", name="uq_product_asset_version"),
+        CheckConstraint("version > 0", name="ck_product_asset_version"),
+        Index("ix_product_asset_usage", "tenant_id", "product_id", "market", "platform", "asset_type"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", name="fk_product_assets_tenant_id_tenants"), index=True)
+    workspace_id: Mapped[int] = mapped_column(Integer)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", name="fk_product_assets_product_id_products"))
+    parent_asset_id: Mapped[int | None] = mapped_column(ForeignKey("product_assets.id", name="fk_product_assets_parent_asset_id_product_assets"), nullable=True)
+    asset_key: Mapped[str] = mapped_column(String(128))
+    version: Mapped[int] = mapped_column(Integer)
+    asset_type: Mapped[str] = mapped_column(String(32))
+    uri: Mapped[str] = mapped_column(String(2048))
+    content_hash: Mapped[str] = mapped_column(String(64))
+    rights_status: Mapped[str] = mapped_column(String(32), default="UNKNOWN")
+    source: Mapped[str] = mapped_column(String(256))
+    rights_evidence_ref: Mapped[str] = mapped_column(String(2048), default="")
+    market: Mapped[str] = mapped_column(String(8))
+    platform: Mapped[str] = mapped_column(String(32))
+    verification_status: Mapped[str] = mapped_column(String(24), default="MANUAL_REPORTED")
+    valid_from: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    manifest: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id", name="fk_product_assets_created_by_users"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class Listing(Base):
     __tablename__ = "listings"
     id: Mapped[int] = mapped_column(primary_key=True)
