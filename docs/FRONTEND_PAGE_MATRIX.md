@@ -19,7 +19,7 @@
 | 2 | Layout | 路由父级（非独立路由） | 全体已登录 | 侧边菜单 + 顶栏 + 只读横幅 + 挂载 AI 助手 | 所有业务路由父级 | logout→`/login`；退出代客→`/platform-admin` | Context(role/menus)、代客状态 | `GET /me/workspace-context` |
 | 3 | RunStatus | 无路由（应移入 components/ 的 StatusTag） | 全体 | 状态 tag 原子组件 | 被 Dashboard/Compliance/Alerts/Workflows/Suppliers/Listings 引用 | — | status→文案/颜色 | 无 |
 | 4 | AiAssistant | 无路由（全局悬浮 FAB） | 全体租户用户（工厂隐藏） | 自然语言助手，调度 Agent | 右下角悬浮球（全局） | 回复文本 + actions tag（当前不可点击） | 对话消息 | `POST /ai/chat` |
-| 5 | Dashboard | /dashboard | OWNER/OPERATOR/READ_ONLY（+ COMPLIANCE 白名单） | 概览驾驶舱 | 菜单「概览/驾驶舱」；除合规/工厂/超管外默认落地 | 仅「去运行工作流」→`/workflows` | `/bi/dashboard` | `GET /bi/dashboard` |
+| 5 | Dashboard | /dashboard | OWNER/OPERATOR/READ_ONLY（+ COMPLIANCE 白名单） | **经营工作台**（回答 6 问 + 下一步；按画像差异化首屏，见 `FRONTEND_USER_JOURNEYS.md §五`） | 菜单「首页/经营工作台」；除合规/工厂/超管外默认落地 | 「去运行工作流」→`/workflows`；待办/异常项深链（`/launch/:id`、`/listings`、`/alerts`）；主 CTA=下一步 | `/bi/dashboard`、`/launch?mine=true`、`/alerts`、`/listings/review-queue`、`/workflows/runs`、`/me/workspace-context` | `GET /bi/dashboard`；`GET /launch`；`GET /alerts`；`GET /listings/review-queue`；`GET /workflows/runs` |
 | 6 | Discovery | /discovery | E/B | 趋势扫描 + 关键词扩展 + AI 选品 + 机会评分 | 菜单「商品/商品发现」 | 无（结果不落地到商品池） | trends / expanded / picked / scores / performance | `/discovery/trends`(+scan/import/source)、`/expand`、`/pick`、`/scores`、`/performance/{id}` |
 | 7 | Products | /products | E/B | 商品池 CRUD + 采集 + 标准化 + 一件代发 + 详情多 tab | 菜单「商品/商品池」 | 无（无去 Listing/上线中心按钮） | products / detail(attrs,offers,listings,pricing,compliance,scores) / performance | `/products`(+collect/collect_url/collect_html/{id}/standardize/{id}/assets)、`/purchases/dropship` |
 | 8 | Listings | /listings | E | Listing 生成/优化/编辑/复核/发布/回执 | 菜单「商品/Listing 工作台」 | 发布弹窗、回执弹窗（无去上线中心） | listings / reviewResult / pubShops / readiness / receipts | `/listings`、`/generate`、`/{id}/optimize`、`/{id}/review`(+approve)、`/{id}/publish`、`/listings/review-queue`、`/shops/{id}/listing_readiness/{listingId}` |
@@ -60,7 +60,7 @@
 | 2 | Layout | 退出登录 / 退出代客 | 无（菜单按 `roleKey` 过滤） | 挂载 AiAssistant | 现菜单 5 组 vs 冻结 11 域；「采购」组混入店铺授权/动态定价；无全局搜索/面包屑/收藏 | 无 | 重新归类（11 域重构分组） | 按 11 域改分组 + 加搜索/面包屑 | 否 | **P0** |
 | 3 | RunStatus | — | 无 | 无 | 状态字典与 `launchCenter.js` 双事实源（小写 vs 大写） | `composables/launchCenter.js` 状态表 | **合并**（统一一套状态字典） | 移入 `components/` 作 StatusTag | — | P1 |
 | 4 | AiAssistant | 发消息 | 无（无鉴权按钮） | 本体（调度全部 Agent） | actions 仅渲染为不可点击 `el-tag`（`AiAssistant.vue` 的 `m.actions` 块）；无历史会话；无「下一步」 | 与 BI 报告 / AiDecisions 建议重叠 | 保留（框架/原子） | action 可跳转；会话历史 | 否 | P1 |
-| 5 | Dashboard | 无（仅跳转按钮） | 无 | 仅工作流运行列表 | **不回答 6 问**（见审计 ④）；全角色共用一套指标 | BI 指标重叠 | 保留（一级域「首页」，改造为经营工作台） | 重做「今日经营」：待我处理/进展/异常/下一步 | 否 | **P0** |
+| 5 | Dashboard | 无（仅跳转按钮） | 无 | 仅工作流运行列表 | **不回答 6 问**（见审计 ④）；全角色共用一套指标、无画像差异化 | BI 指标重叠 | 保留（一级域「首页」，升级为经营工作台） | 按 `FRONTEND_USER_JOURNEYS.md §五「6 问 × 角色」`重构为「今日经营」：每问一信息块 + 单一主 CTA | 否 | **P0** |
 | 6 | Discovery | 扫描趋势/导入/扩展/选品/评分 | product:write | 趋势扫描 / 扩展 / 选品 / 评分 | 选品「已选出 X 个」无下一步跳转（`Discovery.vue` 的选品结果 `el-alert`）；评分表无商品标题；趋势靠 CSV 手导 | Products 评分、BI 品类 | 保留（一级域「市场机会」） | 选品→商品池/上线中心深链 | 否 | P1 |
 | 7 | Products | 新增/采集/URL/HTML/标准化/代发/导出 | product:write, purchase:write | 机会分（只读） | 详情抽屉缺 Launch 深链/销售渠道/上线进度/AI 建议（`LAUNCH_CENTER_PRODUCT_DESIGN §5` 要求）；代发入口仅商品行内、`product_id` 隐式取自当前行（`Products.vue` 一件代发弹窗 `openDropship`） | Discovery 评分、Suppliers 报价、Listings 列表 | 保留（一级域「商品经营」） | 补「上线进度/销售渠道」tab + 深链 | 否 | P1 |
 | 8 | Listings | 生成/优化/编辑/复核/审批/发布/回执 | listing:write, compliance:approve | AI 生成 / 优化 | 发布走审批队列异步，与 LaunchCenter 双入口；列表状态仅 draft/published，无平台三态；发布弹窗单选一店 | LaunchCenter 发布、ComplianceWorkbench 审批 | 保留（一级域「商品经营」） | 与 Launch 划清（Listing=内容编辑，Launch=执行） | 否 | **P0** |
@@ -102,6 +102,49 @@
 | 审批三套 → 统一「待我审批」 | #8/#17/#12 问题列 + G8 |
 | 状态字典一套 | #3「合并」 + G12 |
 | 双模式同源 | #12（同 DTO/状态/权限，仅密度不同） |
-| 首页 6 问 | #5 |
+| 首页 6 问 | #5（表一/表二）+ `FRONTEND_USER_JOURNEYS.md §五「6 问 × 角色」` |
 | B03–B09 未接入显式 | #12（`disabled_reason`，「未接入」，非 409-only；CONFIRM_ACTIVATION ∈ WAITING_EXTERNAL 不得称「已上线」） |
 | 页面 10 态 | `FRONTEND_UX_AUDIT.md` G25/G26 |
+
+---
+
+## 附二 · 状态覆盖补齐清单（抽查 Dashboard / Workflows / BI）〔UX-04 前置〕
+
+> 复用组件（UX-01/02，均已存在）：`StateWrapper`（`state ∈ loading/empty/error/nopermission/ready`，`empty`/`error` 支持具名插槽）、`EmptyState`（`reason ∈ NO_DATA/NO_PERMISSION/NOT_CONFIGURED/NO_MATCH/REQUEST_FAILED`）、`ErrorState`（`message`/`traceId`/`onRetry`）、`NoPermissionState`（`required`/`scope`）。
+> 统一要求：**错误用持久化内联 `ErrorState`，不用瞬时 toast 替代**；LOADING 用骨架屏；EMPTY 必须带「下一步」动作。
+
+### ① Dashboard（`/dashboard`）
+
+现状：仅 `v-loading`；`onMounted` 的 `try/finally` **无 `catch`** → 请求失败静默、页面空壳；无 EMPTY / ERROR / NO_PERMISSION / NOT_CONFIGURED。
+
+| 缺失态 | 触发条件 | 应显示（文案 + 动作） | 复用组件 |
+|---|---|---|---|
+| LOADING | `loading===true` | 骨架屏（4 行） | `StateWrapper state="loading"` |
+| EMPTY | `/bi/dashboard` 200 但 `gmv/orders/top_products` 皆空 | 「近 30 天暂无成交数据」+「去商品发现选品」 | `StateWrapper state="empty" empty-reason="NO_DATA"` + `#action` |
+| NOT_CONFIGURED | 无可用销售店铺（`/launch/context` 的 `can_create===false` 且 `blocked_reason.code==='NO_USABLE_SHOP'`） | 「先连接你的第一个店铺」+「去店铺授权」 | `EmptyState reason="NOT_CONFIGURED"` |
+| ERROR | 请求异常 | 「加载经营数据失败」+ trace_id + 重试 | `StateWrapper state="error"`（`ErrorState`） |
+| NO_PERMISSION | 角色不在白名单 | 「无访问权限」+ 需要 `ai:read` | `NoPermissionState required="ai:read"` |
+| PARTIAL_DATA | `/bi/data-quality.grade==='low'` 或存在 `excluded_orders_missing_fx` | 顶部告警条（沿用 BI 现有 error alert 文案） | 内联 `el-alert`（同 BI.vue） |
+
+### ② Workflows（`/workflows`）
+
+现状：仅运行历史表有 `v-loading`；`Promise.all`（`templates`/`runs`/`schedules`）**无 `catch`** → 失败整页空白；模板/调度区无加载与空态；无 NO_PERMISSION（写按钮用 `v-if` 隐藏，读区始终显示）。
+
+| 缺失态 | 触发条件 | 应显示 | 复用组件 |
+|---|---|---|---|
+| LOADING | 首屏三请求未回 | 骨架屏 | `StateWrapper state="loading"` |
+| EMPTY | `templates.items` 为空 / `runs.items` 为空 | 模板区「暂无可用工作流」；历史区「还没有运行记录」 | `EmptyState reason="NO_DATA"`（嵌入 run 表插槽） |
+| ERROR | 三请求任一失败 | 「工作流数据加载失败」+ 重试 | `StateWrapper state="error"` |
+| NO_PERMISSION | 无 `ai:read` | 「无访问权限」+ 需要 `ai:read` | `NoPermissionState required="ai:read"` |
+
+### ③ BI（`/bi`）
+
+现状：`loadProfit()` **无 loading 包装、无 `try/catch`**；`metrics.as_of` 为空时整块不渲染（无引导）；`excluded_orders_missing_fx` 已有内联 error alert（**可作其他页 PARTIAL_DATA 的范例**）。
+
+| 缺失态 | 触发条件 | 应显示 | 复用组件 |
+|---|---|---|---|
+| LOADING | 首屏 `/bi/metrics`+`/bi/data-quality`+`/bi/profit` 未回 | 骨架屏 | `StateWrapper state="loading"` |
+| EMPTY | `metrics.as_of` 为空（无成交） | 「当期暂无经营数据」+「去商品发现选品」 | `EmptyState reason="NO_DATA"` + `#action` |
+| ERROR | 任一请求异常 | 「经营指标加载失败」+ trace_id + 重试 | `ErrorState` |
+| NO_PERMISSION | 无 `ai:read` | 「无访问权限」+ 需要 `ai:read` | `NoPermissionState required="ai:read"` |
+| PARTIAL_DATA | 已实现（`excluded_orders_missing_fx`）✅ | 保持；补到 Dashboard | 内联 `el-alert` |

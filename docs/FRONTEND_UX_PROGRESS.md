@@ -118,6 +118,8 @@ Context 改为响应式 + 订阅；新增 `WorkspaceSwitcher`（复用已有封�
 | UX-D7 | 令牌本批**只收敛为与 Element Plus 默认逐字相同的取值**（视觉零变化），不顺手改配色 | 避免令牌化与视觉改版混在一起，冲突时无法归因 |
 | UX-D8 | 「返回上一步」内置在 `components/PageHeader.vue`（读 `route.query.return_to` 并做白名单校验），而非逐个改造专业页 | 一处实现即覆盖 Products/Listings/Shops 等所有深链落地页，符合「不逐页重做导航」原则 |
 | UX-D9 | 后端只读 BFF（`/workbench/todo`、`/workbench/overview`）与 Pricing 跨境的 `destination_country` 透传**后移到 UX-04**，与首页经营工作台同批 | 二者都服务于首页/待办聚合，同批落地可一次验收；UX-03 保持纯前端、零后端改动，风险最低 |
+| UX-D10 | 首页角色画像（A/B/C/D/F）走「**后端只读 `signals` + 前端 `resolvePersona()` 分类**」，后端不出 persona 标签、不改 Context 契约 | Context 尚未实现 `capability_profile`/`business_stage`；扩建 Context 契约风险高、周期长。signals 只读且来源既有 Service，分类规则留在展示层（前端）且信号不足回落 `GENERIC`，不冒充权威 |
+| UX-D11 | `overview` 契约**不设 `approvals[]`**（可由 `items` 按 `type` 派生），但保留 `due_at` 与顶层 `data_quality` | 避免同一语义双事实源；`due_at`/`data_quality` 是真实且不可派生的数据 |
 
 ---
 

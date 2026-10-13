@@ -262,3 +262,90 @@
 | 首页 6 问 | 旅程 H + 画像 F + 断点表（G6） |
 | B03–B09 显式未接入；CONFIRM_ACTIVATION ∈ WAITING_EXTERNAL 不称「已上线」 | 旅程 A 断点3、画像 E 断点、G3/G4 |
 | 页面 10 态 | G25/G26（映射到 UX-03/UX-04） |
+
+---
+
+## 五、首页经营工作台（6 问 × 角色）〔UX-04 前置设计〕
+
+> 目标：把 `/dashboard` 从「固定 Dashboard」升级为**经营工作台**——首屏回答「6 问 + 下一步」。
+> 现状（`Dashboard.vue`）：单个 `GET /bi/dashboard` → 6 张 KPI 卡 + 趋势 + 类目分布 + Top5 + 最近工作流；**不回答 6 问**、全角色同一套指标（见 `FRONTEND_PAGE_MATRIX.md` #5）。
+> 冻结口径：双模式（GUIDED/PROFESSIONAL）**同源**——同一 DTO / 状态 / 权限，仅展示密度不同；10 态模型；B03–B09 显式未接入。
+
+### 5.1 6 问 → 信息块 → 判定口径
+
+> 「排序/判定规则」= 取数与 Top-N 规则；「必须避免的混淆」= 用户明令的三类金额**不得混算**。
+
+| # | 问 | 信息块 | 数据来源（既有端点/字段） | 排序 / 判定规则 | 空态文案 | 必须避免的混淆 |
+|---|---|---|---|---|---|---|
+| Q1 | 在做什么 | 进行中的上线 / 工作流 | `/launch?mine=true` → `items[].{product.title,store,execution_status,progress{completed,total},market}`；`/workflows/runs` → `items[].{name,status}` | 仅取非终态（`execution_status ∉ {COMPLETED,CANCELLED}`）；按 `progress.total-progress.completed` 升序；取 Top 3 | 「当前没有进行中的经营动作」 | 上线进度只看 `/launch`；**勿**把 `/workflows/runs` 的 LEGACY 自动铺货当成同一流程（两条并行路径，见矩阵 #11/#22） |
+| Q2 | 进展如何 | 经营趋势 + 任务完成度 | `/bi/dashboard` → `gmv,orders,contribution_profit,net_revenue,refund_rate,sales_trend[]` | 固定「近 30 天」环比上一周期；GUIDED 只显 GMV/订单/毛利三项，PROFESSIONAL 全量 | 「近 30 天暂无成交数据」 | 销售侧口径**只用** `gmv/net_revenue/orders`（真实数据）；显式展示 `metric_scope` 标明范围 |
+| Q3 | 今天最重要 | 待办 Top-N | 合并：`/launch?mine=true`（`next_action.executable=true`）+ `/listings/review-queue?status=manual_required`（`total`）+ `/alerts?status=open&level=high`（`counts.high`）+ `/actions`（待审批） | 优先级：① 阻断（`BLOCKED/FAILED` 或 `alert.level=high`）② 待人工（可执行 `next_action` / 待审批）③ 时间敏感（`WAITING_EXTERNAL`）；同类按 `created_at desc`；**取 Top 5** | 「今天没有必须你处理的事」 | `ad_spend` 只在「广告」块出现，**不得**并入「今天最重要」的金额合计 |
+| Q4 | 哪些要人工 | 待人工清单 | `/launch?mine=true`（`execution_status ∈ {WAITING_USER,WAITING_APPROVAL}`）+ `/listings/review-queue`（`manual_required`）+ `/actions`（pending）+ `/alerts`（`open`） | 按「卡住时长」降序（有 `created_at` 者）；每条给「去处理」深链 | 「暂无待你处理的人工事项」 | 三类审批（Listing 复核 / Launch 动作 / Ads 动作）**合并为一处**，勿各显一次 |
+| Q5 | AI 完成了什么 | AI 产出回执 | `/workflows/runs`（`status=success`）+ `/bi/dashboard.recent_runs` + `/ai/decisions` | 近 24h 内 `success` 的运行；按 `finished_at desc`；取 Top 3；只读、无动作 | 「AI 还没有完成新任务」 | 「AI 完成」≠「已上线」：`CONFIRM_ACTIVATION ∈ WAITING_EXTERNAL` **不得**显示为「已上线」 |
+| Q6 | 哪些异常 | 风险/异常区 | `/alerts`（`open`，`level ∈ {high,mid}`）+ `/launch?blocked_only=true`（`BLOCKED/FAILED`）+ `/bi/data-quality`（`grade`、`freshness_hours`、`excluded_orders_missing_fx`） | 按 `level`（high→mid）+ `created_at desc`；数据质量异常单列 | 「暂未发现异常」 | 缺汇率 → `PARTIAL_DATA`，**不得**静默把金额混入统一指标（沿用 BI 现有 error alert） |
+| → | 下一步 | 单一主 CTA | 取 Q3 Top-1 的 `next_action`（或 A 类画像的「开始经营三步走」） | 全屏只允许**一个**主按钮 | 「先连接你的第一个店铺」 | 主 CTA 与「待办列表」不重复计数 |
+
+> **10 态映射**：LOADING=骨架屏；EMPTY=「无数据」文案；NOT_CONFIGURED=未连店→引导；NO_PERMISSION=角色不在白名单；WAITING_EXTERNAL=「等待平台/外部」不称完成；PARTIAL_DATA=缺汇率等（见 Q6）；ERROR=`ErrorState`+重试；SUCCESS=正常；UNKNOWN=兜底。
+
+### 5.2 角色 × 应见内容（signal → persona，前端判定）
+
+> 现状：**不区分角色**——`Dashboard.vue` 对 OWNER/OPERATOR/READ_ONLY 用同一套 6 卡指标（见矩阵 #5；`permissions.js` 的 `defaultLanding` 让多角色落 `/dashboard`）。
+> **判定模型（v1.2 裁决）**：后端**只出只读 `signals`（`overview.signals`，标 `derived:true, authoritative:false`），不出任何 persona 标签**；A/B/C/D/F 由**前端纯函数** `resolvePersona(signals)`（模块 `frontend/src/composables/workbenchTodo`，UX-04 待建）判定，信号缺失 → `'GENERIC'`。
+> **权威性红线**：本轮 `signals` 仅为**过渡**，**不得当权威**；权威画像未来应由用户自述的 `capability_profile`/`business_stage` 承载（AGENTS.md §8 Context 契约已声明、**未实现**，属首用引导缺口 **G1**）。
+
+`overview.signals` 7 个字段（**均可空**）：`has_sales_shop`、`sales_shop_count`、`has_factory`、`factory_match_count`、`has_1688_credential`（**仅存在性，绝不返回值**）、`member_count`、`order_count_30d`。
+
+#### 5.2.1 signal → persona 判定规则（保守：信号不足一律 `GENERIC`，不猜测）
+
+> 求值顺序 = 优先级（上 → 下，**首个命中即返回**）；每条规则**仅在其驱动信号非 `null` 时**才可命中；**任一必需信号为 `null` → 该规则不命中**；全部不命中 → `GENERIC`。
+
+| 优先级 | persona | 触发条件（全部基于 `overview.signals`） | 首页应见内容（首屏主视图） | 歧义 / 回落 |
+|---|---|---|---|---|
+| 1 | **F 团队管理员** | `member_count != null && member_count >= 2` | 成员与权限、授权到期、审计、待人工审批（`need_human`/`top_today` 偏审批） | 与 D/C/B 叠加时首屏主视图为「管理」，店铺/货源块降为次级 |
+| 2 | **C 自有工厂** | `has_factory != null && has_factory === true` | 工厂数据完整度（`signals.factory_match_count`）、机会匹配结果、待尽调 | 与 B/D 叠加时工厂优先 |
+| 3 | **B 有 1688 货源** | `has_1688_credential != null && has_1688_credential === true` | 货源机会（待采集）、待标准化、待匹配、待上线 | — |
+| 4 | **D 已有店铺卖家** | (`has_sales_shop != null && has_sales_shop === true`) `\|\|` (`sales_shop_count != null && sales_shop_count > 0`) | 店铺同步状态、待处理订单、店铺表现 | — |
+| 5 | **A 无经验个人** | `has_sales_shop === false && has_factory === false && has_1688_credential === false && (order_count_30d == null \|\| order_count_30d === 0)`（三个 bool **均须非 `null` 且 `false`**） | 「开始经营三步走」（选品→连店→上线）+ 学习入口 + 引导型 `next_actions` | 任一无资产信号为 `null` → **不判 A，回落 `GENERIC`**（不猜测） |
+| ∞ | **GENERIC 通用工作台** | 以上均不命中，或**任一驱动信号缺失** | 中性默认：6 问骨架 + `next_actions`；不偏专业指标、不偏引导 | 兜底（默认态） |
+
+> 说明：persona 决定**首屏主视图与信息块优先级**，信息块本身**可组合**（如 F∩D 时仍可见店铺块，仅降级）；GUIDED/PROFESSIONAL 仅控制密度（同源）。
+
+#### 5.2.2 画像 × 现状差距 × 补齐项
+
+| 画像 | 首屏必见信息块 | 差异化口径 | 现状差距 | 本次补齐项 |
+|---|---|---|---|---|
+| **A 无经验个人** | ①「开始经营三步走」（选品→连店→上线）②学习入口 ③引导型 `next_actions` | **首屏不甩 ROI/贡献利润等专业指标**；指标卡默认折叠 | 一上来就是 6 张专业 KPI 卡 | 新增 A 分支：三步走清单 + 学习入口；专业指标降级到二级 |
+| **B 有 1688 货源** | ①货源机会（待采集）②待标准化 ③待匹配（供应商↔商品）④待上线 | 入口指向 `市场机会`/`货源中心`/`商品经营` | 无货源相关块 | 新增「货源机会 / 待采集 / 待标准化 / 待匹配」四计数块（来源 `/suppliers`、`/products`、`/discovery`） |
+| **C 自有工厂** | ①工厂数据完整度 ②机会匹配结果 ③待尽调 | 指向 `货源中心`（工厂网络）/`/factory-portal` | 无工厂视角 | 用 `signals.has_factory`/`factory_match_count` 驱动呈现（**不新增独立 section**） |
+| **D 已有店铺卖家** | ①店铺同步状态 ②待处理订单 ③店铺表现 | 指向 `订单履约`/`销售渠道`/`数据分析` | 无店铺块 | 新增「店铺同步 / 待处理订单 / 店铺表现」（来源 `/shops`、`/orders`、`/bi/dashboard`） |
+| **F 团队管理员** | ①成员与权限 ②授权到期 ③审计 ④待人工审批 | 指向 `设置与管理`/`AI 运营` | 无管理视角 | 新增「成员与权限 / 授权到期 / 审计 / 待审批」（来源 `/auth/users`、`/me/workspaces`、`/access_logs`、`/workbench/todo`） |
+| **GENERIC 通用** | 6 问骨架 + `next_actions` | 中性；密度按 GUIDED/PROFESSIONAL | 无 | 兜底分支；信号补齐前所有用户先落此 |
+
+### 5.3 数据来源对齐（既有端点 ✓ / 工作台 BFF 契约 **v1.2 终稿**）
+
+> 「既有端点（✓）」= 现已存在可直接取数的端点/字段；「工作台 BFF（v1.2）」= team-lead 裁决终稿（`GET /api/workbench/overview`、`GET /api/workbench/todo`）。**禁止虚构字段**；未覆盖标「待确认」。
+
+**`GET /api/workbench/overview`**（段名严格对应 6 问）
+
+| 6 问 | section（v1.2） | 既有来源（✓） | 备注 |
+|---|---|---|---|
+| 在做什么 | `sections.doing` | `/launch?mine=true`（`items[]` = `launch_list_item` 投影） | `mine` 已实现（`launch_list` 的 `_MY_STATES`） |
+| 进展如何 | `sections.progress` | `/bi/dashboard` → `gmv,orders,contribution_profit,net_revenue,refund_rate,ad_spend,roi,metric_scope,currency,sales_trend[]` | 复用现有响应字段，不新建口径 |
+| 今天最重要 | `sections.top_today` | 合并 `/launch?mine=true` + `/workbench/todo.items` | Top-N 规则见 5.1；`next_actions` 取其 Top-1 |
+| 哪些要人工 | `sections.need_human` | `/listings/review-queue`、`/actions`、`/alerts`（open） | 三类审批合并为一处 |
+| AI 完成了什么 | `sections.ai_done` | `/workflows/runs`（近 24h `status=success`）、`/ai/decisions` | 只读 |
+| 哪些异常 | `sections.exceptions` | `/alerts`（open，high/mid）+ `/launch?blocked_only=true` | 承载异常类「阈值/降级/拦截」信息 |
+
+其它顶层字段：`next_actions[]`（全局「下一步」）、`signals{...}`（见 5.2，`derived:true, authoritative:false`）、`data_quality`（`{real_order_count, source_counts}`，取自既有 `/bi/data-quality`）、`generated_at`、`partial`、`sources{bi,todo,launch}`。
+
+**`GET /api/workbench/todo`**
+
+| 字段 | 说明 | 备注 |
+|---|---|---|
+| `items[]` | `{type:"launch\|action\|alert\|review", title, count, severity:"low\|mid\|high", route:{path,return_to}, ref, due_at?}` | `severity` 已归一优先级；`due_at` 可空 ISO8601 UTC |
+| `counts` | 各类计数 | — |
+| `generated_at` / `partial` / `sources{launch,action,alert,review}` | 元信息 | — |
+
+> **已删除项（v1.2）**：`approvals[]` **不再提供**（避免双事实源）——前端按 `items[].type==='action'` 过滤即可。
+> **深链红线**：`route.return_to` 必须过 `RETURN_WHITELIST`（`/launch,/listings,/products,/shops`）；前端取 `route.path` 跳转。
+> **状态**：v1.2 终稿冻结（`docs/FRONTEND_API_ALIGNMENT.md §3`）；门禁 `check_docs_consistency.py` total=0。`data_quality` 字段名（`real_order_count`+`source_counts`）经核验正确，采纳。

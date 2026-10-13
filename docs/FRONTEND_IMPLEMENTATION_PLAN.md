@@ -16,7 +16,7 @@
 | UX-01 | 设计系统与框架基座 | UX-00 | 未开始 |
 | UX-02 | 信息架构重构（菜单 + 路由归位 + 权限态可见） | UX-01 | 未开始 |
 | UX-03 | 商品经营与上线体验统一 | UX-01 | 未开始 |
-| UX-04 | 其它业务域页面状态覆盖补齐 | UX-01（组件就绪） | 未开始 |
+| UX-04 | 首页经营工作台 + 其它业务域页面状态覆盖（含只读 BFF） | UX-01（组件就绪）/ UX-03（BFF 动作源） | 未开始 |
 | UX-05 | 全旅程验收 | UX-02/03/04 | 未开始 |
 
 并行关系：UX-02 ∥ UX-03 可并行（文件集不重叠）；UX-04 与 UX-03 文件隔离。
@@ -67,10 +67,10 @@ Workspace 切换 6 项必达（冻结口径 v1.0）：菜单刷新 / 数据失�
 
 ## 4. UX-03 商品经营与上线体验统一
 
-- **目标**：Launch 为核心上线工作台；未接通动作显式化；cross-border 前端接通；消费 BFF 待办。
-- **新建文件**：frontend/src/composables/workbenchTodo.js、frontend/src/components/NextActionButton.vue、ApprovalActionBar.vue、NotConfiguredState.vue、WaitingExternalState.vue。
+- **目标**：Launch 为核心上线工作台；未接通动作显式化；cross-border 前端接通（Pricing 透传 `destination_country`）。
+- **新建文件**：frontend/src/components/NextActionButton.vue、ApprovalActionBar.vue、NotConfiguredState.vue、WaitingExternalState.vue。
 - **修改文件**：`frontend/src/views/LaunchCenter.vue`、`frontend/src/views/LaunchDetail.vue`、`frontend/src/components/LaunchStepPanel.vue`、`frontend/src/components/LaunchActionDialog.vue`、`frontend/src/views/Listings.vue`、`frontend/src/views/Pricing.vue`（透传 destination_country）、`frontend/src/components/PublishActions.vue`。
-- **后端（可选，需评审）**：新增只读 BFF，落 `backend/app/routers/`（workbench 模块）。
+- **后端**：只读 BFF（workbench 两端点）与 frontend/src/composables/workbenchTodo.js（消费 BFF）均归 UX-04，见 §5。
 - **单一所有权 Agent**：C。
 - **依赖**：UX-01。
 - **验收命令**：`cd backend && python -m pytest -q`（≥ 927）、`cd frontend && npm test`、`cd backend && python scripts/launch_e2e.py`。
@@ -78,15 +78,47 @@ Workspace 切换 6 项必达（冻结口径 v1.0）：菜单刷新 / 数据失�
 
 ---
 
-## 5. UX-04 其它业务域页面状态覆盖补齐
+## 5. UX-04 首页经营工作台 + 其它业务域页面状态覆盖
 
-- **目标**：给缺空态/错误态的页面补 LOADING/EMPTY/ERROR/NO_PERMISSION（10 态模型）。
-- **新建文件**：frontend/src/components/MetricCard.vue、DataTableToolbar.vue、ObjectPicker.vue、AiSuggestionCard.vue、RiskAlert.vue、PartialDataBanner.vue。
-- **修改文件**（分批，切勿与 C 同文件）：`frontend/src/views/Dashboard.vue`、`frontend/src/views/Workflows.vue`、`frontend/src/views/Ads.vue`、`frontend/src/views/Users.vue`、`frontend/src/views/Alerts.vue`、`frontend/src/views/AiDecisions.vue`、`frontend/src/views/Refunds.vue`、`frontend/src/views/Orders.vue`、`frontend/src/views/Finance.vue`、`frontend/src/views/BI.vue`、`frontend/src/views/Settings.vue`、`frontend/src/views/FactoryPortal.vue`、`frontend/src/views/ComplianceWorkbench.vue`、`frontend/src/views/Support.vue`、`frontend/src/views/Settlements.vue`、`frontend/src/views/Suppliers.vue`、`frontend/src/views/Shops.vue`。
-- **单一所有权 Agent**：D（分批）。
-- **依赖**：UX-01（状态组件就绪）。
-- **验收命令**：逐页 `cd frontend && npm run build` + 新增组件快照/交互测试；`cd frontend && npm test`。
-- **回滚点**：按批次 git 提交。
+- **目标**：Dashboard 改造为「经营工作台」（6 问 + 今天最重要，消费只读 BFF）；新增两个只读 BFF 端点；其余缺状态页补 10 态（LOADING/EMPTY/NO_PERMISSION/NOT_CONFIGURED/NO_DATA/WAITING_EXTERNAL/PARTIAL_DATA/ERROR/SUCCESS/UNKNOWN）。
+- **契约**：BFF 两端点冻结见 `docs/FRONTEND_API_ALIGNMENT.md` §3（**当前 v1.2**：`overview.signals` 只读派生、后端不出 persona、`todo` 无 `approvals[]`；实施不得改语义）。
+- **依赖**：UX-01（状态组件就绪）；后端 BFF 的「动作源」依赖 UX-03 收口（避免与 UX-03 并发改动）。
+- **单一所有权**：后端 BFF 归 D-后端；前端页面分批归 D-前端（不得与 UX-03 所有者 C 同文件）。
+
+### 5.1 后端（新建 / 修改）
+
+| 动作 | 路径 | 说明 |
+|---|---|---|
+| 新建 | backend/app/routers/workbench.py | `APIRouter(prefix="/workbench")`；`GET /todo`、`GET /overview` 两端点，薄编排 |
+| 新建 | backend/app/services/workbench.py | 只读聚合；**只组合既有 `services/`、`workflows/` 函数**（`launch_list.list_launches`、`alerting.list_alerts`、`action_identity.require_action_permission`、`store_scope.resolve_store_scope`、`ai_actions.action_dict`、`commercial_analytics.metric_summary`；`overview.signals` 另复用 `shop_scope`、`membership_service`、`open_1688`、`factory_network` 的既有查询），禁止重写 SQL；`signals` 契约见 `docs/FRONTEND_API_ALIGNMENT.md` §3.4 |
+| 新建 | backend/tests/test_workbench.py | 覆盖：单源失败→`partial=true` 且 200；COMPLIANCE 投影剥离价格/库存（复用 `launch_action_catalog.PRICE_STOCK_ACTIONS`）；FACTORY_COLLABORATOR 空待办；只读（无写库） |
+| 修改 | `backend/app/main.py` | import + 注册元组（`backend/app/main.py:16-46`、`backend/app/main.py:84-88`） |
+| 修改 | `docs/CONTRACT.md` | §5 路由层契约登记 workbench 端点（**契约新增需同步**） |
+
+- **最小重构点（消除内联查询重复，非新增 Service）**：`backend/app/routers/listings.py:156` 的复核队列查询（与待批 Action 查询）抽到对应 `services/` 模块作为单一实现，router 与 BFF 共用；**不得在 workbench 模块复制 SQL**。
+
+### 5.2 前端（新建）
+
+- frontend/src/composables/workbenchTodo.js —— 消费 `/workbench/todo` 与 `/workbench/overview`；`partial=true` → 触发 `PARTIAL_DATA` 态；含纯函数 `resolvePersona(signals)`（由 `overview.signals` 判定 A/B/C/D/F，可单测；信号不足回落「通用工作台」，**不得当权威**）。
+- 状态/展示组件（沿 UX-01 骨架，均在 `frontend/src/components/` 下）：MetricCard.vue、DataTableToolbar.vue、ObjectPicker.vue、AiSuggestionCard.vue、RiskAlert.vue、PartialDataBanner.vue。
+
+### 5.3 前端（修改，分批）
+
+- **改造**：`frontend/src/views/Dashboard.vue`（→ 经营工作台：6 问 + 今天最重要 + 下一步动作，空/错/部分/无权限态齐全）。
+- **10 态补齐**：`frontend/src/views/Workflows.vue`、`Ads.vue`、`Users.vue`、`Alerts.vue`、`AiDecisions.vue`、`Refunds.vue`、`Orders.vue`、`Finance.vue`、`BI.vue`、`Settings.vue`、`FactoryPortal.vue`、`ComplianceWorkbench.vue`、`Support.vue`、`Settlements.vue`、`Suppliers.vue`、`Shops.vue`。
+
+### 5.4 UX-04 与 UX-03 文件隔离（UX-04 不得触碰）
+
+- `frontend/src/views/LaunchCenter.vue`、`frontend/src/views/LaunchDetail.vue`
+- `frontend/src/components/Launch*.vue`（`LaunchStepPanel` / `LaunchTimeline` / `LaunchStatusSummary` / `LaunchActionDialog` 等）
+- `frontend/src/components/PublishActions.vue`
+- `frontend/src/views/Listings.vue`、`frontend/src/views/Pricing.vue`
+- `frontend/src/composables/launchCenter.js`、`frontend/src/composables/publishActionQueue.js`
+
+> 若 UX-04 确需改动上述文件，须移交 UX-03 所有者 C，或经 UX-05 集成裁决，不得并行修改。
+
+- **验收命令**：`cd backend && python -m pytest -q`（≥ 927）、`cd backend && python scripts/check_docs_consistency.py --json`（total=0）、`cd frontend && npm test`、`cd frontend && npm run build`。
+- **回滚点**：分批 git 提交——「backend: UX-04 workbench BFF」「frontend: UX-04 首页工作台与状态覆盖」。
 
 ---
 
