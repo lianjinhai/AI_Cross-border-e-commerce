@@ -179,3 +179,15 @@ AC 落地：AC-14.2 已核验——`WAITING_EXTERNAL` 文案「等待平台反�
 测试：新增 `frontend/tests/launch-center.test.js` 28 例 + `permissions.test.js` 仅新增 1 例（未改既有断言）；`npm test` 8 文件 **108 passed**（≥ 前端基线 77）；`npm run build` 通过（路由级代码分割生效）。
 
 未完成 / 边界：行点击导航到 `/launch/:id` 需 T05 注册详情路由（当前点击暂无匹配路由）；责任人筛选用 `owner_user_id` 数字输入（无用户列表端点，未新增后端）。下一步：F02/F03 详情双模式与 B12 全量门禁（T05）。
+
+## 18. 上线流程详情与双模式（本批完成）
+
+T05（提交信息 `launch: 实现上线流程详情与双模式`）交付 F02/F03：新增 `views/LaunchDetail.vue`（薄编排：加载详情、模式切换、同步刷新、动作流）与五个组件——`components/LaunchStatusSummary.vue`（执行/平台/验证三类状态分区，等待平台与失败文案区分，`monitoring` 恒 `UNAVAILABLE` 显示原因原文，COMPLETED 且存在阻断时显示「整改阻断」且不擦除历史）、`LaunchTimeline.vue`（按 `sequence` 并行分组 + `dependencies` 依赖标记 + 「可并行处理」READY 区，非固定线性进度条）、`LaunchStepPanel.vue`（说明/要求/缺项/证据/外部反馈/责任人/可执行动作，禁用按钮展示原因含「未接通/领域服务建设中」，PROFESSIONAL 展开 raw 字段且缺失项显示「未接入」）、`LaunchActionDialog.vue`（备注 + `material_ref`；高危/取消类二次确认；执行带 `expected_revision` + `Idempotency-Key`；409 保留未提交输入、刷新状态、重置二次确认且不自动重发；超时/不确定显示「结果待核查」）与 `LaunchExperienceToggle.vue`（GUIDED/PROFESSIONAL 同页切换，不持久化、不写 URL、不重新鉴权）。
+
+数据层（`composables/launchCenter.js`）补充详纯函数：`professionalFields`/`notConnected`（未接入占位，0 不被吞）、`evidenceText`、`needsDoubleConfirm`/`actionPayload`/`requiresMaterial`/`requiresNote`（按 per-action 载荷契约构造，避免未知键 422）、`isUncertainError`（断网/未知码判为结果待核查）、`groupStepsBySequence`/`parallelReadySteps`。配套修改：`router.js` 新增 `launch/:id` 详情路由；`Layout.vue` `activeMenu` 把 `/launch/:id` 归一到 `/launch` 以保证菜单高亮。
+
+双模式契约：两模式读**同一份 DTO**、状态一致（AC-16.5）；切换不改变数据与权限（AC-16.1）；刷新型初值来自 `context.effective_experience_mode` 兜底 `GUIDED` 并明示（AC-16.4）；PROFESSIONAL 展开 raw 状态、`external_reference/type`、`mapping_version`、Profile `hash`、`revision`、同步时间，DTO 缺失字段一律「未接入」不伪造（AC-16.3/17.3）。
+
+测试：`frontend/tests/launch-center.test.js` 增补至 39 例；`npm test` 8 文件 **119 passed**（≥ 前端基线 77）；`npm run build` 通过（`LaunchDetail` 独立 chunk 生效）。B12 全量门禁（后端 pytest 正反序 / Playwright E2E / 文档一致性与 ruff 汇总数字）**留空，由主理人后续补齐**。
+
+未完成 / 边界：专业页深联（`professional_links` 目标页深联处理）留 F04+，本批只出合规链接；责任人仍以 `assigned_user_id` 展示（无成员列表端点）；B12 全量门禁未在本批记录；Playwright E2E 未在本批交付。

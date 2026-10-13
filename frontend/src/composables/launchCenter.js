@@ -146,6 +146,89 @@ export function experienceMode(context) {
   return context?.effective_experience_mode || 'GUIDED'
 }
 
+// ── F02/F03 详情辅助（T05 纯函数，组件只消费） ──────────────────────────────
+
+/** 未接入领域的统一占位（AC-16.3/17.3）：绝不伪造数值。 */
+export const NOT_CONNECTED = '未接入'
+
+export function notConnected(value) {
+  return value === null || value === undefined || value === '' ? NOT_CONNECTED : value
+}
+
+/** PROFESSIONAL 展开字段（AC-16.3）：DTO 缺失的一律「未接入」。 */
+export function professionalFields(step = {}) {
+  const external = step.external || {}
+  return [
+    { label: '原始步骤状态', value: notConnected(step.step_status) },
+    { label: '执行模式', value: notConnected(step.execution_mode) },
+    { label: '外部状态', value: notConnected(external.status) },
+    { label: '外部引用', value: notConnected(external.reference) },
+    { label: '外部类型', value: notConnected(external.type) },
+    { label: '映射版本', value: notConnected(step.mapping_version) },
+    { label: '输入版本', value: notConnected(step.input_revision) },
+  ]
+}
+
+/** 列表文本化（要求/缺项/证据/依赖共用；空集合显示占位）。 */
+export function evidenceText(items = []) {
+  const list = Array.isArray(items) ? items.filter((item) => item !== null && item !== undefined && item !== '') : []
+  return list.length ? list.join('、') : '—'
+}
+
+/** 需二次确认的高危动作（AC-15.5）：确认核验/取消类，或后端标注高风险/需审批。 */
+const DOUBLE_CONFIRM_ACTIONS = new Set(['CONFIRM_ACTIVATION', 'CANCEL', 'ABANDON_PRODUCT'])
+
+export function needsDoubleConfirm(action, entry = {}) {
+  return DOUBLE_CONFIRM_ACTIONS.has(action) || entry.risk === 'HIGH' || entry.approval_required === true
+}
+
+/** 需人工确认（note + confirm）的 run 级动作；载荷必填 note/confirm（后端 422 契约）。 */
+const CONFIRM_PAYLOAD_ACTIONS = new Set(['CANCEL', 'ABANDON_PRODUCT'])
+
+export function requiresMaterial(action) {
+  return action === 'CONFIRM_ACTIVATION'
+}
+
+export function requiresNote(action) {
+  return CONFIRM_PAYLOAD_ACTIONS.has(action)
+}
+
+/** 按 per-action 载荷契约构造 payload（避免发送未知键触发 422）。 */
+export function actionPayload(action, form = {}) {
+  if (CONFIRM_PAYLOAD_ACTIONS.has(action)) {
+    return { note: String(form.note || '').trim(), confirm: true }
+  }
+  const payload = {}
+  if (requiresMaterial(action) && form.material_ref) payload.material_ref = String(form.material_ref).trim()
+  if (form.note) payload.note = String(form.note).trim()
+  return payload
+}
+
+/** 结果不确定（超时/断网/后端未给终态）：显示「结果待核查」，不诱导重发（AC-15.6）。 */
+const UNCERTAIN_CODES = new Set(['EXECUTION_UNCERTAIN', 'ACTION_UNCERTAIN', 'APPROVAL_UNKNOWN'])
+
+export function isUncertainError(error) {
+  if (!error || !error.response) return true  // 网络中断/超时：结果未知
+  return UNCERTAIN_CODES.has(error.response?.data?.detail?.code)
+}
+
+/** 时间线并行分组（AC-15.1）：按 sequence 升序分组，同组即并行。 */
+export function groupStepsBySequence(steps = []) {
+  const groups = new Map()
+  for (const step of steps) {
+    const key = Number(step.sequence ?? 0)
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(step)
+  }
+  return [...groups.entries()].sort((a, b) => a[0] - b[0])
+    .map(([sequence, items]) => ({ sequence, items }))
+}
+
+/** 其他可并行处理的 READY 节点（AC-15.2）：当前焦点不是唯一可操作步骤。 */
+export function parallelReadySteps(steps = []) {
+  return steps.filter((step) => step.step_status === 'READY')
+}
+
 export const EMPTY_REASONS = {
   REQUEST_FAILED: { text: '加载失败', hint: '请检查网络后重试', action: 'retry' },
   NO_PERMISSION: { text: '没有权限', hint: '当前账号没有查看上线流程的权限', action: 'none' },

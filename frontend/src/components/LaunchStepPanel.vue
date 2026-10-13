@@ -1,0 +1,95 @@
+<template>
+  <el-card shadow="never" class="panel">
+    <template v-if="step">
+      <div class="head">
+        <span class="name">{{ step.step_name || step.step_code }}</span>
+        <el-tag size="small" :type="executionStatusMeta(step.step_status).tag">
+          {{ executionStatusMeta(step.step_status).text }}
+        </el-tag>
+      </div>
+
+      <el-descriptions :column="1" border size="small" class="mt8">
+        <el-descriptions-item label="说明">
+          {{ step.business_type }} · {{ step.execution_mode }} · 执行者 {{ step.actor || '—' }}
+        </el-descriptions-item>
+        <el-descriptions-item label="要求（evidence_requirements）">
+          {{ evidenceText(step.evidence_requirements) }}
+        </el-descriptions-item>
+        <el-descriptions-item label="缺项（missing_evidence）">
+          <span :class="{ missing: step.missing_evidence?.length }">{{ evidenceText(step.missing_evidence) }}</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="证据（evidence_refs）">
+          {{ evidenceText(step.evidence_refs) }}
+        </el-descriptions-item>
+        <el-descriptions-item label="外部反馈">
+          状态 {{ notConnected(external.status) }} · 引用 {{ notConnected(external.reference) }} ·
+          类型 {{ notConnected(external.type) }}
+        </el-descriptions-item>
+        <el-descriptions-item label="责任人">
+          {{ step.assigned_user_id == null ? '未指派' : `用户 #${step.assigned_user_id}` }}
+        </el-descriptions-item>
+      </el-descriptions>
+
+      <div class="sub">执行结果（result）</div>
+      <pre class="result">{{ resultText }}</pre>
+
+      <template v-if="professional">
+        <div class="sub">专业字段（raw）</div>
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item v-for="field in fields" :key="field.label" :label="field.label">
+            {{ field.value }}
+          </el-descriptions-item>
+        </el-descriptions>
+      </template>
+
+      <div class="sub">可执行动作</div>
+      <div class="actions">
+        <div v-for="entry in actions" :key="entry.action" class="action">
+          <el-button size="small" :type="entry.executable ? 'primary' : 'info'" plain
+            :disabled="!entry.executable || !canManage" @click="$emit('run', entry)">
+            {{ entry.action }}
+          </el-button>
+          <span v-if="!entry.executable" class="reason">{{ entry.disabled_reason }}</span>
+        </div>
+        <span v-if="!actions.length" class="muted">该步骤无可执行动作</span>
+        <span v-if="!canManage" class="muted">只读账号：写操作已隐藏</span>
+      </div>
+    </template>
+    <el-empty v-else description="请选择时间线上的步骤" :image-size="70" />
+  </el-card>
+</template>
+
+<script setup>
+import { computed } from 'vue'
+import { evidenceText, executionStatusMeta, notConnected, professionalFields } from '../composables/launchCenter'
+
+const props = defineProps({
+  step: { type: Object, default: null },
+  professional: { type: Boolean, default: false },
+  canManage: { type: Boolean, default: false },
+})
+defineEmits(['run'])
+
+const external = computed(() => props.step?.external || {})
+const actions = computed(() => props.step?.available_actions || [])
+const fields = computed(() => professionalFields(props.step || {}))
+const resultText = computed(() => {
+  const result = props.step?.result
+  if (!result || !Object.keys(result).length) return '未接入'
+  return JSON.stringify(result, null, 2)
+})
+</script>
+
+<style scoped>
+.head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.name { font-weight: 600; }
+.mt8 { margin-top: 8px; }
+.sub { font-weight: 600; margin: 12px 0 6px; }
+.result { background: #f5f7fa; border-radius: 4px; padding: 8px; font-size: 12px;
+  max-height: 160px; overflow: auto; margin: 0; white-space: pre-wrap; word-break: break-all; }
+.actions { display: flex; flex-direction: column; gap: 6px; }
+.action { display: flex; align-items: center; gap: 8px; }
+.reason { color: #e6a23c; font-size: 12px; }
+.missing { color: #e6a23c; }
+.muted { color: #a8abb2; font-size: 12px; }
+</style>

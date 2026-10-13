@@ -157,9 +157,11 @@ const menus = computed(() => {
   return businessMenus
 })
 
-// 平台菜单高亮：/platform-admin 与 /platform-admin?tab=audit 用 query 区分，其余按路径
+// 平台菜单高亮：/platform-admin 与 /platform-admin?tab=audit 用 query 区分，其余按路径；
+// 详情页 /launch/:id 归一到 /launch，保证「上线中心」菜单持续高亮。
 const activeMenu = computed(() => {
   if (route.path === '/platform-admin' && route.query.tab === 'audit') return '/platform-admin?tab=audit'
+  if (route.path.startsWith('/launch/')) return '/launch'
   return route.path
 })
 
