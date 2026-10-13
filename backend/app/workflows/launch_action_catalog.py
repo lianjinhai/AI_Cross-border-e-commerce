@@ -3,10 +3,12 @@
 目录是纯数据（不碰 DB、不读时钟）：执行框架、NBA 与 DTO 角色投影共用同一份事实，
 新增业务动作只改本文件与 handlers，框架不动（设计 D1）。本轮接通的动作见
 ``BUSINESS_ACTION_META`` 的 ``connected`` 标记，其余领域动作（B03-B09）保持禁用并
-指向责任领域与后续批次。
+指向责任领域与后续批次。动作幂等键、载荷指纹与证据指纹（设计 D2/R10）同属动作契约，
+随本文件一起冻结。
 """
 
-from dataclasses import dataclass
+import hashlib
+from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session
 
@@ -14,6 +16,7 @@ from ..models import WorkflowRun, WorkflowStep
 from ..services.workspace_context import WorkspaceContext
 from .launch_access import LaunchError
 from .launch_rules import STEP_STATES
+from .launch_state import canonical_json
 from .profile_schema import BUSINESS_ACTIONS, StepDefinition
 
 # run 级动作（CANCEL/ABANDON_PRODUCT）不受单步骤来源状态约束。
@@ -53,6 +56,7 @@ class ActionMeta:
     required_payload: frozenset[str]
     optional_payload: frozenset[str]
     external_confirmer: bool         # 依赖外部确认者（NBA 安全依赖排序用）
+    framework: bool = False          # 框架级动作（RETRY）：不属于 Profile available_actions 词表
 
 
 @dataclass
@@ -67,6 +71,7 @@ class ActionContext:
     facts: dict
     plan: dict
     definition: StepDefinition | None
+    predicates: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -85,13 +90,14 @@ class StepEffect:
 
 def _meta(business_types, permissions, source_states, *, target="step", risk="MEDIUM",
           approval_required=False, connected=False, disabled_reason="", required=(),
-          optional=("note",), external_confirmer=False):
+          optional=("note",), external_confirmer=False, framework=False):
     """构造动作元数据；optional 默认只放备注类字段（AC-5.3）。"""
     return ActionMeta(business_types=frozenset(business_types), permissions=tuple(permissions),
                       source_states=frozenset(source_states), target=target, risk=risk,
                       approval_required=approval_required, connected=connected,
                       disabled_reason=disabled_reason, required_payload=frozenset(required),
-                      optional_payload=frozenset(optional), external_confirmer=external_confirmer)
+                      optional_payload=frozenset(optional), external_confirmer=external_confirmer,
+                      framework=framework)
 
 
 BUSINESS_ACTION_META: dict[str, ActionMeta] = {
@@ -101,10 +107,13 @@ BUSINESS_ACTION_META: dict[str, ActionMeta] = {
     "SUBMIT_PLATFORM": _meta({"PLATFORM_SUBMISSION"}, ("launch:submit", "listing:write"),
                              {"READY"}, risk="HIGH", approval_required=True, connected=True,
                              external_confirmer=True),
+    # 在售核验的 COMPLETED 来源状态支持误判更正（AC-7.5）：新事件 + history 追加，
+    # 不擦除历史核验记录；本轮回流只有 READY（首次核验）与 COMPLETED（更正）两种入口。
     "CONFIRM_ACTIVATION": _meta({"PLATFORM_ACTIVATION"}, ("launch:submit", "compliance:approve"),
-                                {"READY"}, risk="HIGH", connected=True, external_confirmer=True,
-                                required=(), optional=("material_ref", "note")),
-    "RETRY": _meta(ALL_BUSINESS_TYPES, ("launch:manage",), {"FAILED"}, connected=True),
+                                {"READY", "COMPLETED"}, risk="HIGH", connected=True,
+                                external_confirmer=True, required=(), optional=("material_ref", "note")),
+    # RETRY 是框架级动作（适用于任意失败步骤），不在 Profile available_actions 词表中。
+    "RETRY": _meta(ALL_BUSINESS_TYPES, ("launch:manage",), {"FAILED"}, connected=True, framework=True),
     "CANCEL": _meta(ALL_BUSINESS_TYPES, ("launch:manage",), ALL_STEP_STATES, target="run",
                     risk="HIGH", connected=True, required=("note", "confirm"), optional=()),
     "ABANDON_PRODUCT": _meta({"HUMAN_DECISION"}, ("launch:manage",), ALL_STEP_STATES, target="run",
@@ -167,3 +176,27 @@ def validate_payload(action: str, payload: dict) -> dict:
     if missing:
         raise LaunchError("ACTION_PAYLOAD_INVALID", "载荷缺少必填键：" + "、".join(missing), 422)
     return normalized
+
+
+# ---------------------------------------------------------------- 派生指纹（设计 D2/R10）
+
+def action_digest(*parts) -> str:
+    """复合哈希（sha256，冒号连接）：动作幂等键与载荷指纹的公共基底。"""
+    return hashlib.sha256(":".join(str(part) for part in parts).encode("utf-8")).hexdigest()
+
+
+def action_event_key(run_id: int, step_code: str, action: str, raw_key: str) -> str:
+    """动作事件幂等键（设计 D2）：前缀隔离 + 复合哈希，长度 78 命中 uq_workflow_event_key。"""
+    return "launch:action:" + action_digest(run_id, step_code, action, raw_key)
+
+
+def payload_hash(step_code: str, action: str, payload: dict) -> str:
+    """载荷指纹（设计 D2）：sha256(canonical_json({step_code, action, payload}))。"""
+    return action_digest(canonical_json({"step_code": step_code, "action": action, "payload": payload}))
+
+
+def evidence_fingerprint(run: WorkflowRun, step: WorkflowStep | None, action: str, digest: str) -> str:
+    """证据指纹（设计 R10）：sha256(step_code+action+input_revision+definition_hash+facts_digest)。"""
+    parts = [step.step_code if step is not None else "", action,
+             str(step.input_revision if step is not None else 0), run.definition_hash, digest]
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()

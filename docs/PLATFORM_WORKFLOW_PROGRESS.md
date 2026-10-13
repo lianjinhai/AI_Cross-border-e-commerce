@@ -1,6 +1,6 @@
 # Platform Workflow / Launch Center 进度
 
-> 最后更新：2026-10-11。状态：DESIGN_FROZEN / IMPLEMENTING_P0。目标：用户 V2 全量设计、实施和本地验收；真实平台联调取决于授权，不假装完成。
+> 最后更新：2026-10-13。状态：DESIGN_FROZEN / IMPLEMENTING_P0。目标：用户 V2 全量设计、实施和本地验收；真实平台联调取决于授权，不假装完成。
 
 ## 1. 当前基点和授权
 
@@ -133,3 +133,15 @@
 限制：本批管理素材 URI/摘要和人工核验，不下载或托管文件，未证明远端可变 URI 的实际字节始终与摘要一致；不可将登记摘要称为自动文件真实性验证。完整素材中心前端、文件存储/上传及历史 UNKNOWN 回填仍待后续；合规 Artifact、Label Package、核价和完整 Launch 动作尚未交付。主库、外部账号均未操作。全量验证待记录。首次全量仅发布幂等样本缺少权利登记失败；该样本改为通过 ASGI TestClient 登记/核验，保留仅一次 Adapter 调用及回执重放断言，并定向清理测试素材，避免影响后续演示清理测试。
 
 边界校正：初稿错误地把所有权利声明升级为必须双人核验，超出冻结设计 §9 且阻碍个人用户；已改为 OWNED 明确来源、授权/许可明确 proof 和适用范围即可进入权利判断，仍保留 MANUAL_REPORTED 标签，不伪称独立审核。UNKNOWN/RESTRICTED、缺证明、驳回/失效始终阻断；认证 Artifact 的 VERIFIED 门槛不因此放宽。
+
+## 14. 动作执行框架与业务处理器（本批完成）
+
+T01（提交 `56a6760`）从既有 runtime 抽出共享内核：`launch_action_catalog`（动作元数据目录与载荷契约，17 个动作、完成标记键拒绝、note 截断）、`launch_state`（快照/纯函数 diff/事件/序号/AiAction 投影/回执落地/事实指纹），并把 `submit_action` 扩展出 `commit`/`extra_evidence`（净增 3 行，不新建第二套审批体系）。
+
+T02 实现动作执行框架与处理器：`launch_actions.execute_launch_action` 按十步校验链（幂等重放 → 生命周期 → revision CAS → 目录 → 载荷 → 权限 → 就绪度门禁 → 状态机守卫 → handler → 收敛落库+事件），步骤条件更新与 run CAS 双保险，幂等重放仍复核当前权限且不重发外部意图；`launch_handlers` 接通 COMPLETE_DATA / RETRY / CANCEL / ABANDON_PRODUCT；`launch_submit` 接通 SUBMIT_PLATFORM（复用 PUBLISH_LISTING 审批队列，scope_key 带提交序号避免终态 Action 复用死锁）与 CONFIRM_ACTIVATION（双权限 + 核验人独立，核验记录入步骤证据与不可变事件，`source=MANUAL`）；`launch_plan` 抽出只读计算段并新增进程级恢复扫描（无意图 RUNNING → READY，有意图只重读不重发）；`launch_runtime.refresh_launch` 改为委托 `launch_plan` + `launch_state.converge`。
+
+行为边界：未接通领域动作（B03-B09）一律 409 `ACTION_NOT_ALLOWED` 并给出禁用原因；提交只产生 `SUBMITTED`，原始响应 ACTIVE 也不自动置 `ACTIVE`/`VERIFIED`；取消为纯本地终态（写 `ended_at`、释放 `active_slot`），不调用外部下架/退款；已核验在售不可取消；`CANCELLED` 后重新上线必须走新轮次。
+
+测试：新增 `tests/test_launch_actions.py` 22 项（覆盖 AC-4~8）。后端全量正序与反序均 **897 passed / 2 xfailed / 1 xpassed**（既有合规待定样本保持，同时补齐 §13 素材批次的全量结果）；`ruff check` 全绿；文档一致性 `total=0`，`test_docs_consistency` 43 passed。
+
+未完成 / 边界：本轮闭环的是流程机制与可执行性——本地契约样本中仅「商品资料」步骤可被确定性完成，合规/核价/备货/标签/实拍等步骤仍保持就绪度规则给出的真实状态并给出原因与负责人，不得宣传为业务全链路已上线；Launch HTTP（B10/T03）与上线中心前端（F01-F03）尚未交付；主库与外部平台未操作。下一步：B02 确定性 NBA + B10 Launch API 与角色投影。

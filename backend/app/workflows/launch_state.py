@@ -12,7 +12,8 @@ from sqlalchemy import func
 
 from ..models import AiAction, WorkflowEvent, utcnow
 from ..services.pii_redact import redact
-from .launch_rules import WAITING
+from .launch_plan import recover_running_steps
+from .launch_rules import WAITING, evaluate_readiness
 
 # 可落地的等待态：规则对 WAITING 是粘滞的（设计 R1），回执/核验事实在此显式落地。
 _LANDABLE_WAITS = frozenset(WAITING - {"FAILED"})
@@ -206,3 +207,80 @@ def platform_receipt(facts: dict) -> dict | None:
     platform = facts.get("platform") if isinstance(facts, dict) else None
     receipt = platform.get("submission_receipt") if isinstance(platform, dict) else None
     return receipt or None
+
+
+def asserted_world(effect_run_fields, effect_result, step, facts, predicates):
+    """handler 断言后的新世界事实（收敛重算基底）：run 字段镜像进 facts，核验记录派生谓词。
+
+    plan_changes 仍以旧持久状态为基准，两者分工保证「断言 -> 重算 -> diff」不丢变更；
+    当前只镜像 platform_status（facts.platform.status 的唯一来源）与 ACTIVATION 核验谓词。
+    """
+    world_facts, world_predicates = deepcopy(facts), deepcopy(predicates)
+    for name, value in (effect_run_fields or {}).items():
+        if name == "platform_status":
+            world_facts.setdefault("platform", {})["status"] = value
+    if step is not None and step.business_type == "PLATFORM_ACTIVATION":
+        if ((effect_result or {}).get("activation_verification") or {}).get("current"):
+            world_predicates.setdefault("verified_artifact", {})["ACTIVATION"] = True
+    return world_facts, world_predicates
+
+
+def merge_migration(base: dict | None, extra: dict) -> dict:
+    """合并两步迁移：标量后者覆盖，result 浅合并，evidence_refs 去重追加，attempts_delta 求和。
+
+    动作事务内「AiAction 投影 + 回执落地 + handler 断言」可能同时作用于同一步骤
+    （如外部失败投影与重试断言），合并语义与 plan_changes._step_override 保持一致。
+    """
+    if not base:
+        return dict(extra)
+    merged = dict(base)
+    for name, value in extra.items():
+        if name == "result":
+            merged[name] = {**(base.get(name) or {}), **value}
+        elif name == "evidence_refs":
+            existing = list(base.get(name) or [])
+            merged[name] = existing + [ref for ref in value if ref not in existing]
+        elif name == "attempts_delta":
+            merged[name] = base.get(name, 0) + value
+        else:
+            merged[name] = value
+    return merged
+
+
+def converge(db, run, steps, plan, facts, predicates, definition, *, activated=False,
+             cancelled=False, assertions=None):
+    """状态收敛（设计 D10 第 2 步）：AiAction 投影 + 回执落地迭代至不动点。
+
+    - assertions：handler 断言的迁移（{step_code: migration}），先于投影/落地进入状态；
+    - 返回 (plan, overrides)：plan 为收敛后就绪度计划，overrides 为合并迁移字典，
+      直接供 launch_state.plan_changes 消费；
+    - 迭代上界为步骤数（DAG 无环必收敛），cancelled 时只按终态重算、不做落地。
+    """
+    overrides = {code: dict(migration) for code, migration in (assertions or {}).items()}
+    states = {step.step_code: step.step_status for step in steps}
+    for code, migration in overrides.items():
+        if "step_status" in migration:
+            states[code] = migration["step_status"]
+    if overrides or cancelled:
+        plan = evaluate_readiness(definition.model_dump(), states, facts, predicates,
+                                  activated=activated, cancelled=cancelled)
+    for _ in range(len(steps) + 1):
+        if cancelled:
+            break
+        migrations = dict(action_step_projection(db, run, steps))
+        migrations.update(land_completed_waits(db, run, steps, plan, facts))
+        migrations.update(recover_running_steps(db, run, steps))
+        settled = False
+        for code, migration in migrations.items():
+            merged = merge_migration(overrides.get(code), migration)
+            if merged == overrides.get(code):
+                continue
+            overrides[code] = merged
+            if "step_status" in migration:
+                states[code] = migration["step_status"]
+            settled = True
+        if not settled:
+            break
+        plan = evaluate_readiness(definition.model_dump(), states, facts, predicates,
+                                  activated=activated)
+    return plan, overrides

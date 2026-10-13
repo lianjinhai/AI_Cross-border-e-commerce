@@ -2,13 +2,11 @@
 
 from sqlalchemy import update
 
-from ..models import WorkflowRun, WorkflowStep
+from ..models import WorkflowRun
 from . import launch_state
 from .kinds import PLATFORM_LAUNCH
 from .launch_access import LaunchError, launch_context, owned_launch
-from .launch_facts import load_launch_facts
-from .launch_rules import STEP_STATES, evaluate_readiness
-from .profile_schema import ProfileDefinition
+from .launch_plan import activated_flag, launch_plan
 from .transactions import ensure_write_transaction
 
 
@@ -23,13 +21,12 @@ def refresh_launch(db, ctx, run_id, expected_revision):
         raise LaunchError("REVISION_CONFLICT", "流程已更新，请刷新后重试", 409)
     if run.ended_at is not None or run.execution_status == "CANCELLED":
         raise LaunchError("LAUNCH_ENDED", "已结束的流程不能重新推进", 409)
-    definition, steps = _definition_and_steps(db, run)
-    facts, predicates = load_launch_facts(db, run)
-    plan = evaluate_readiness(definition.model_dump(), {step.step_code: step.step_status for step in steps},
-                              facts, predicates, activated=run.platform_status in {"ACTIVE", "PAUSED", "OFFLINE"}
-                              and run.completed_at is not None)
+    definition, steps, facts, predicates, plan = launch_plan(db, run)
+    # 刷新前收敛（设计 D4/D10）：AiAction 状态投影 + 回执落地，只读判定后统一落库。
+    plan, converged = launch_state.converge(db, run, steps, plan, facts, predicates, definition,
+                                            activated=activated_flag(run))
     before = _snapshot(run, steps)
-    changes = _changes(run, steps, plan)
+    changes = _changes(run, steps, plan, overrides=converged)
     if not changes["run"] and not changes["steps"]:
         return run, plan
     with db.begin_nested():
@@ -49,36 +46,14 @@ def refresh_launch(db, ctx, run_id, expected_revision):
     return run, plan
 
 
-def _definition_and_steps(db, run):
-    try:
-        definition = ProfileDefinition.model_validate(run.definition_snapshot)
-        if definition.fingerprint() != run.definition_hash or definition.version != run.workflow_version:
-            raise ValueError("实例定义摘要或版本不一致")
-        if definition.environment != run.environment or definition.platform != run.platform:
-            raise ValueError("实例环境或平台不一致")
-        steps = db.query(WorkflowStep).filter_by(run_id=run.id).populate_existing().all()
-        definitions = {step.step_code: step.model_dump() for step in definition.steps}
-        if len(steps) != len(definitions) or {step.step_code for step in steps} != set(definitions):
-            raise ValueError("实例步骤集合不一致")
-        for step in steps:
-            expected = definitions[step.step_code]
-            if (step.tenant_id != run.tenant_id or step.params != expected or step.step_status not in STEP_STATES
-                    or any(getattr(step, field) != expected[field] for field in
-                           ("business_type", "execution_mode", "actor", "required"))):
-                raise ValueError("实例步骤归属或固定参数不一致")
-        return definition, steps
-    except ValueError as exc:
-        raise LaunchError("LAUNCH_DEFINITION_CORRUPT", "流程定义或步骤完整性校验失败", 409) from exc
-
-
 def _snapshot(run, steps):
     """委托 launch_state.state_snapshot（T01 迁出共享内核，行为不变）。"""
     return launch_state.state_snapshot(run, steps)
 
 
-def _changes(run, steps, plan):
+def _changes(run, steps, plan, *, overrides=None):
     """委托 launch_state.plan_changes：纯计算 diff，含 completed_at 与回执投影入口。"""
-    return launch_state.plan_changes(run, steps, plan)
+    return launch_state.plan_changes(run, steps, plan, overrides=overrides)
 
 
 def _record_event(db, ctx, run, before, after, changes):
