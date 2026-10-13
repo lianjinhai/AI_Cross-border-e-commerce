@@ -60,6 +60,45 @@ def _row_count(path: pathlib.Path) -> int:
         con.close()
 
 
+def _table_counts(path: pathlib.Path) -> dict[str, int]:
+    """只读采集每张业务表的行数（{table: count}），供迁移前后逐表比对。
+
+    只认 sqlite_master 中 name NOT LIKE 'sqlite_%' 的表——与 `_row_count` 同源，
+    保证两张口径完全一致（同一批表、同一遍历顺序）。
+    """
+    con = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+    try:
+        counts: dict[str, int] = {}
+        for (name,) in con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name NOT LIKE 'sqlite_%'"):
+            counts[name] = con.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
+        return counts
+    finally:
+        con.close()
+
+
+def _assert_no_data_loss(before: dict[str, int], after: dict[str, int]) -> None:
+    """迁移健壮性不变量：不允许丢表、不允许丢行（可新增表、可增加行）。
+
+    为什么**不能**用「总行数相等」（原实现的错误不变量）：本项目采用 Expand 迁移
+    实践，迁移会**显式播种**数据。例如 D61（20261012_27：Launch 权限目录与既有
+    角色增量）会向 `permissions`、`role_permissions` 追加目录行，任何落后于 27 的
+    库一旦升级，总行数必然增加。把「相等」当作不变量会与合法迁移直接冲突，导致该
+    门禁在迁移 27 落地后长期误红——这是修正一个错误的不变量，不是为过测放宽断言。
+
+    真正要守的数据安全方向是**单调不减**：升级前存在的每张表升级后仍须存在，且
+    每张表行数 >= 升级前；只有丢表或丢行才代表数据丢失，必须硬失败。
+    """
+    missing = sorted(set(before) - set(after))
+    if missing:
+        raise RuntimeError("副本迁移后表丢失：" + ", ".join(missing))
+    shrunk = sorted(t for t in before if after[t] < before[t])
+    if shrunk:
+        detail = ", ".join(f"{t}({before[t]}→{after[t]})" for t in shrunk)
+        raise RuntimeError("副本迁移后数据行数减少（疑似数据丢失）：" + detail)
+
+
 def _port_free(port: int) -> bool:
     with socket.socket() as s:
         return s.connect_ex(("127.0.0.1", port)) != 0
@@ -171,7 +210,7 @@ def _upgrade_isolated_db(copy_db, env):
     head = lines[0].split()[0]
     with sqlite3.connect(f"file:{copy_db.as_posix()}?mode=ro", uri=True) as source:
         current = source.execute("SELECT version_num FROM alembic_version").fetchall()
-    before_rows = _row_count(copy_db)
+    before_counts = _table_counts(copy_db)
     command = [sys.executable, "scripts/migration_preflight.py", "--db", str(copy_db)]
     if current != [(head,)]:
         # 显式声明目标 head；预检要求当前版本位于 head 的线性祖先链上（落后多版亦可）。
@@ -184,8 +223,11 @@ def _upgrade_isolated_db(copy_db, env):
         if upgrade.returncode:
             raise RuntimeError("副本迁移失败：" + upgrade.stderr[-1500:])
     after = subprocess.run([sys.executable, "scripts/migration_preflight.py", "--db", str(copy_db)], **common)
-    if after.returncode or _row_count(copy_db) != before_rows:
-        raise RuntimeError("副本迁移后预检或数据行数校验失败")
+    if after.returncode:
+        raise RuntimeError("副本迁移后预检失败：" + after.stdout[-1500:])
+    # 逐表校验「不许丢表 / 不许丢行」，而非「总行数相等」——Expand 迁移
+    # （如 D61 20261012_27 播种权限目录）会合法地新增行，相等断言会误报。
+    _assert_no_data_loss(before_counts, _table_counts(copy_db))
 
 
 def _prepare_copy(args, prod_db, copy_db):
