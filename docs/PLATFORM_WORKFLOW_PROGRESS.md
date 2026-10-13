@@ -188,6 +188,24 @@ T05（提交信息 `launch: 实现上线流程详情与双模式`）交付 F02/F
 
 双模式契约：两模式读**同一份 DTO**、状态一致（AC-16.5）；切换不改变数据与权限（AC-16.1）；刷新型初值来自 `context.effective_experience_mode` 兜底 `GUIDED` 并明示（AC-16.4）；PROFESSIONAL 展开 raw 状态、`external_reference/type`、`mapping_version`、Profile `hash`、`revision`、同步时间，DTO 缺失字段一律「未接入」不伪造（AC-16.3/17.3）。
 
-测试：`frontend/tests/launch-center.test.js` 增补至 39 例；`npm test` 8 文件 **119 passed**（≥ 前端基线 77）；`npm run build` 通过（`LaunchDetail` 独立 chunk 生效）。B12 全量门禁（后端 pytest 正反序 / Playwright E2E / 文档一致性与 ruff 汇总数字）**留空，由主理人后续补齐**。
+测试：`frontend/tests/launch-center.test.js` 增补至 39 例；`npm test` 8 文件 **119 passed**（≥ 前端基线 77）；`npm run build` 通过（`LaunchDetail` 独立 chunk 生效）。B12 全量门禁结果见 §19。
 
-未完成 / 边界：专业页深联（`professional_links` 目标页深联处理）留 F04+，本批只出合规链接；责任人仍以 `assigned_user_id` 展示（无成员列表端点）；B12 全量门禁未在本批记录；Playwright E2E 未在本批交付。
+未完成 / 边界：专业页深联（`professional_links` 目标页深联处理）留 F04+，本批只出合规链接；责任人仍以 `assigned_user_id` 展示（无成员列表端点）。
+
+## 19. B12 全量门禁（本批完成）
+
+本轮 P0 闭环（T01–T05）的 B12 门禁由主理人独立执行，全部通过。
+
+**静态与回归门禁**
+- 后端 `pytest -q -p no:randomly` 正序：**927 passed / 2 xfailed / 1 xpassed**；反序（测试文件倒序）：**927 passed / 2 xfailed / 1 xpassed**（≥ §12 基线 821；本轮新增动作/状态/恢复/NBA/API 用例后基线提升到 927）。
+- `ruff check .` 全绿；`check_docs_consistency.py --json` → `total=0`；`git diff --check` 干净。
+- 前端 `npm test` 8 文件 **119 passed**（≥ 前端基线 77）；`npm run build` 通过。
+
+**真机门禁（真实 uvicorn + 隔离副本库，不碰主库）**
+- `scripts/e2e_feasibility.py` → **exit 0**：7 项业务闭环 7/7 PASS（采购→收货→结算、订单→发货→退款、采集→选品→Listing→发布、AI 工作流、调度、知识库、AI 助手），静态前端托管 PASS，§7 主库隔离性 PASS。
+- `scripts/launch_e2e.py`（本轮新增，提交 `02a1007`）→ **exit 0**：14 步全 PASS——context/NBA 前置、`POST /launch` 幂等（同键重放同一 run）、列表 `page_num`、未知查询参数 422 `FILTER_INVALID`、详情递归断言无 `price/cost/margin/stock` 违禁键、steps、`COMPLETE_DATA`（revision 2→3）、`sync`（`last_synced_at` 落库）、事件升序含 `LaunchActionExecuted`；并以 sqlite 只读副本库断言 `workflow_runs.revision` 与 HTTP 终值一致、`INFO` 步骤 `COMPLETED` 且 `result` 含完成证据、事件行存在；主库 SHA256 与行数升级前后不变。
+- **浏览器真机走查 F01–F03**（`agent-browser`，真实后端 + 隔离副本库 + 生产构建产物；环境无 Playwright 依赖，故用内置浏览器能力而非向项目引入依赖）：登录 → 上线中心列表（列齐全、筛选控件、分页「共 1 条」、`待执行` 中性 tag、`未提交`、核验标注）→ 详情业务视图（三区摘要、GUIDED 摘要「你的商品已完成 1/3；待执行」、监控未接入原因为原文、`professional_links` INFO → /listings）→ 切换专业视图（Profile `ACTION_PROBE v1`、Profile hash、`revision 3`、环境 `CONTRACT_TEST`、验证状态 `UNKNOWN`、同步时间；时间线按 sequence 分组带依赖标记；可并行处理区；步骤面板 raw 字段缺失项显示「未接入」）。走查全程后主库 SHA256 仍为 `4fadccfc…`、行数 5951，隔离成立。
+
+**门禁缺陷修复（既有，非本轮引入）**：`e2e_feasibility.py` 原以「迁移前后总行数相等」为不变量，与 Expand 迁移实践冲突（D61 迁移 `20261012_27` 合法播种权限目录使副本 5951→5978），导致 T-13 门禁长期误红；已改为逐表「不许丢表 / 不许丢行」的单调不减断言（提交 `214bdcc`），并以探针验证仍能捕获丢行/丢表。
+
+**未完成 / 边界**：本轮仍是零迁移；未接通领域动作（B03-B09）与真实平台联调不变；浏览器走查为主理人手工人机协同执行（非 CI 内自动化），后续如需纳入 CI 可按 `agent-browser` 或 Playwright 补充；主库、真实店铺、外部账号全程未操作。
