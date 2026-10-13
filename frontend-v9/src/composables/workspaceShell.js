@@ -2,6 +2,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { buildDomains } from '../shared/navigation/filter'
 import { defaultLanding } from '../permissions/permissions'
 import {
+  clearWorkspaceContext,
   getContext,
   getWorkspaceEpoch,
   loadWorkspaces,
@@ -9,6 +10,7 @@ import {
   switchWorkspace,
   workspaceId,
 } from '../shared/workspace'
+import { restoreImpersonation } from './impersonation'
 import { fetchShops } from '../api/domains/shops'
 
 /**
@@ -47,7 +49,9 @@ export function useWorkspaceShell() {
   }
 
   function exitImpersonate() {
-    localStorage.removeItem('erp_impersonating')
+    // 退出代客：还原平台 token/user 快照（impersonation 模块），Context 清缓存后重拉。
+    restoreImpersonation()
+    clearWorkspaceContext()
     window.location.assign('/console/overview')
   }
 

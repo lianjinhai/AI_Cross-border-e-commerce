@@ -70,3 +70,18 @@ export async function removeCategoryMapping(id) {
 export async function fetchListingReadiness(shopId, listingId) {
   return (await api.get(`/shops/${shopId}/listing_readiness/${listingId}`)).data
 }
+
+/** 平台规则包列表：GET /shops/platform_rules → {items[]}（维护页用）。 */
+export async function fetchPlatformRules() {
+  return (await api.get('/shops/platform_rules')).data
+}
+
+/** 检查规则更新：POST /shops/platform_rules/{platform}/check_updates → {updated, hint?}。 */
+export async function checkPlatformRuleUpdates(platform) {
+  return (await api.post(`/shops/platform_rules/${platform}/check_updates`)).data
+}
+
+/** 清空演示数据：POST /shops/purge_demo_data → {deleted: {...}}（不可恢复）。 */
+export async function purgeDemoData() {
+  return (await api.post('/shops/purge_demo_data')).data
+}
