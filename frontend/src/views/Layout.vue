@@ -2,21 +2,16 @@
   <el-container style="height:100vh">
     <el-aside width="220px" style="background:#1f2d3d">
       <div class="logo">🤖 AI 电商ERP</div>
-      <el-menu :default-active="activeMenu" router background-color="#1f2d3d"
-        text-color="#bfcbd9" active-text-color="#409EFF" style="border-right:none">
-        <template v-for="group in menus" :key="group.label">
-          <div class="menu-group">{{ group.label }}</div>
-          <el-menu-item v-for="m in group.items" :key="m.path" :index="m.path">
-            <el-icon><component :is="m.icon" /></el-icon>
-            <span>{{ m.label }}</span>
-          </el-menu-item>
-        </template>
-      </el-menu>
+      <SidebarNav :domains="menus" :active-path="activeMenu" />
     </el-aside>
     <el-container>
       <el-header class="header">
         <div style="display:flex;align-items:center">
-          <span style="font-size:16px;font-weight:600">{{ $route.meta.title }}</span>
+          <PageHeader :title="$route.meta.title">
+            <template #breadcrumb>
+              <Breadcrumb :items="breadcrumbItems" />
+            </template>
+          </PageHeader>
           <el-tag v-if="isSuper" type="danger" size="small" effect="dark" style="margin-left:10px">平台控制台</el-tag>
         </div>
         <div style="display:flex;align-items:center;gap:12px">
@@ -52,6 +47,10 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AiAssistant from './AiAssistant.vue'
 import WorkspaceSwitcher from '../components/WorkspaceSwitcher.vue'
+import SidebarNav from '../components/SidebarNav.vue'
+import PageHeader from '../components/PageHeader.vue'
+import Breadcrumb from '../components/Breadcrumb.vue'
+import { buildDomains } from '../composables/navigation'
 import { canAdmin, roleKey } from '../permissions'
 import { clearWorkspaceContext, isMembershipContext, workspaceName } from '../workspace'
 
@@ -88,77 +87,27 @@ const ROLE_LABELS = {
 const roleLabel = computed(() => ROLE_LABELS[roleKey()] || roleKey() || '未知')
 const isSuper = computed(() => roleKey() === 'PLATFORM_ADMIN' && !isImpersonating)
 const isSupplier = computed(() => roleKey() === 'FACTORY_COLLABORATOR')
-const isOwner = computed(() => roleKey() === 'OWNER')
-const isCompliance = computed(() => roleKey() === 'COMPLIANCE')
 const isReadOnly = computed(() => roleKey() === 'READ_ONLY')
 const canManageMembers = computed(() => canAdmin())
 
-// 超级管理员：只显示平台控制台菜单，与业务菜单完全隔离（各分区由 /platform-admin 页内 el-tabs 承载）
-const platformMenus = [
-  { label: '平台管理', items: [
-    { path: '/platform-admin', label: '平台控制台', icon: 'Platform' },
-    { path: '/platform-admin?tab=audit', label: '访问审计', icon: 'Document' },
-  ]},
-]
+/**
+ * 11 域一级导航（UX-02）：菜单结构与角色过滤抽到 `composables/navigation.js`。
+ * roleKey() 读 Workspace Context（响应式，UX-01 已修），切换 Workspace 后菜单自动重算。
+ */
+const menus = computed(() => buildDomains({
+  roleKey: roleKey(),
+  canManageMembers: canManageMembers.value,
+}))
 
-const supplierMenus = [
-  { label: '工厂门户', items: [
-    { path: '/factory-portal', label: '产品与产能', icon: 'OfficeBuilding' },
-  ]},
-]
-
-// 租户侧业务菜单（保持不变）
-const businessMenus = [
-  { label: '概览', items: [
-    { path: '/dashboard', label: '驾驶舱', icon: 'Odometer' },
-    { path: '/bi', label: 'BI 经营分析', icon: 'TrendCharts' },
-    { path: '/alerts', label: '风险巡检', icon: 'Warning' },
-  ]},
-  { label: '商品', items: [
-    { path: '/discovery', label: '商品发现', icon: 'Search' },
-    { path: '/products', label: '商品池', icon: 'Goods' },
-    { path: '/listings', label: 'Listing 工作台', icon: 'Document' },
-    { path: '/launch', label: '上线中心', icon: 'Position' },
-    { path: '/compliance-workbench', label: '合规工作台', icon: 'Finished' },
-    { path: '/compliance', label: '合规检测', icon: 'CircleCheck' },
-  ]},
-  { label: '采购', items: [
-    { path: '/shops', label: '店铺授权', icon: 'Link' },
-    { path: '/suppliers', label: '供应商', icon: 'OfficeBuilding' },
-    { path: '/pricing', label: '动态定价', icon: 'Coin' },
-  ]},
-  { label: '运营', items: [
-    { path: '/ads', label: '广告增长', icon: 'Promotion' },
-    { path: '/orders', label: '订单管理', icon: 'List' },
-    { path: '/refunds', label: '售后管理', icon: 'RefreshLeft' },
-    { path: '/settlements', label: '账期结算', icon: 'Wallet' },
-    { path: '/finance', label: '财务工作台', icon: 'Money' },
-    { path: '/support', label: '智能客服', icon: 'ChatDotRound' },
-  ]},
-  { label: '系统', items: [
-    { path: '/workflows', label: 'AI 工作流', icon: 'MagicStick' },
-    { path: '/knowledge', label: '知识库', icon: 'Reading' },
-    { path: '/ai-decisions', label: 'AI 决策依据', icon: 'DocumentChecked' },
-    { path: '/settings', label: 'AI 设置', icon: 'Setting' },
-    ...(canManageMembers.value ? [{ path: '/users', label: '用户与角色', icon: 'UserFilled' }] : []),
-  ]},
-]
-
-const menus = computed(() => {
-  if (isSuper.value) return platformMenus
-  if (isSupplier.value) return supplierMenus
-  if (isCompliance.value) {
-    // 合规员菜单：工作台放首位（其职责是审批+监控，不是逛商品池）；上线中心属只读可看
-    const allowed = new Set(['/compliance-workbench', '/dashboard', '/bi', '/listings', '/compliance', '/launch'])
-    return businessMenus.map(g => ({ ...g, items: g.items.filter(x => allowed.has(x.path)) })).filter(g => g.items.length)
-  }
-  if (!isOwner.value) {
-    // 非 OWNER（含 OPERATOR/READ_ONLY）：隐藏管理入口 + 合规工作台
-    // （工作台是合规员的专属作业界面，其他人看到会混淆职责边界）
-    const hidden = ['/settings', '/users', '/compliance-workbench']
-    return businessMenus.map(g => ({ ...g, items: g.items.filter(x => !hidden.includes(x.path)) })).filter(g => g.items.length)
-  }
-  return businessMenus
+/**
+ * 面包屑：一级域（路由 meta.domain）→ 当前页（meta.title）。
+ * meta.domain 取中文域名标签，与 navigation.js 的 domain.label 同源，全站统一。
+ */
+const breadcrumbItems = computed(() => {
+  const items = []
+  if (route.meta.domain) items.push({ label: route.meta.domain })
+  if (route.meta.title) items.push({ label: route.meta.title })
+  return items
 })
 
 // 平台菜单高亮：/platform-admin 与 /platform-admin?tab=audit 用 query 区分，其余按路径；
@@ -191,7 +140,6 @@ function onCommand(cmd) {
 
 <style scoped>
 .logo { color: #fff; font-size: 18px; font-weight: 700; padding: 20px 16px; }
-.menu-group { color: #5a6d82; font-size: 12px; padding: 12px 20px 4px; }
 .header { display: flex; align-items: center; justify-content: space-between;
   background: #fff; border-bottom: 1px solid #e6e6e6; }
 .user-chip { cursor: pointer; display: inline-flex; align-items: center; color: #303133; }

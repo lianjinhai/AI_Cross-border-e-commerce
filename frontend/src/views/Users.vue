@@ -11,12 +11,15 @@
         type="info"
         :closable="false"
         class="mb16"
-        title="管理员维护租户成员；合规审批员只负责上架人工审批，viewer 仅可查看。"
+        title="管理员维护租户成员；合规审批（COMPLIANCE）只负责上架人工审批，只读（READ_ONLY）仅可查看。"
       />
       <el-table :data="items" v-loading="loading">
         <el-table-column prop="username" label="用户名" />
         <el-table-column prop="display_name" label="姓名" />
-        <el-table-column prop="role" label="角色" />
+        <el-table-column label="角色">
+          <!-- 展示 Context 权威的大写枚举，与 workspace_context 下发口径一致 -->
+          <template #default="{ row }">{{ roleEnumLabel(row.role) }}</template>
+        </el-table-column>
         <el-table-column prop="status" label="状态" />
         <el-table-column label="操作">
           <template #default="{ row }">
@@ -36,6 +39,7 @@
           <el-input v-model="form.display_name" />
         </el-form-item>
         <el-form-item label="角色">
+          <!-- el-option 的 value 保持 legacy 小写（后端唯一接受的取值），label 展示大写枚举 -->
           <el-select v-model="form.role">
             <el-option v-for="x in roles" :key="x.value" :label="x.label" :value="x.value" />
           </el-select>
@@ -79,12 +83,32 @@ const items = ref([])
 const loading = ref(false)
 const dialog = ref(false)
 const saving = ref(false)
+
+/**
+ * UX-B8 角色枚举统一：UI 展示与 Context 权威大写枚举一致。
+ *
+ * 为什么不直接把提交值改成大写：后端 `POST/PUT /auth/users` 只接受 legacy 小写
+ * （`admin/compliance_approver/operator/viewer`，见 backend/app/routers/auth.py 第 96、
+ * 119 行校验），而 Context（backend/app/services/workspace_context.py 的
+ * `_LEGACY_ROLE_MAP`）把 legacy 归一为大写枚举下发。因此做「展示大写 ↔ 提交原值」
+ * 映射即可对齐 UI，无需改后端。若后端将来直接接受大写，再切 value 为本枚举。
+ */
+const ROLE_ENUM = {
+  admin: 'OWNER',
+  compliance_approver: 'COMPLIANCE',
+  operator: 'OPERATOR',
+  viewer: 'READ_ONLY',
+}
 const roles = [
-  { value: 'admin', label: '管理员' },
-  { value: 'compliance_approver', label: '合规审批员' },
-  { value: 'operator', label: '运营' },
-  { value: 'viewer', label: '只读' },
+  { value: 'admin', label: 'OWNER（管理员）' },
+  { value: 'compliance_approver', label: 'COMPLIANCE（合规审批员）' },
+  { value: 'operator', label: 'OPERATOR（运营）' },
+  { value: 'viewer', label: 'READ_ONLY（只读）' },
 ]
+function roleEnumLabel(value) {
+  return ROLE_ENUM[value] || value
+}
+
 const blank = () => ({
   id: null, username: '', display_name: '', role: 'operator', password: '', status: 'active',
 })
