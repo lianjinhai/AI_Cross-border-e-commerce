@@ -17,9 +17,10 @@
 |---|---|---|---|
 | UX-A 设计冻结 | ✅ 完成 | 7 文档（矩阵/旅程/总设计/导航/设计系统/API映射/实施计划）+ 契约 1 份（aed39e8） | f690fea, aed39e8 |
 | UX-B 工程基座 | ✅ 完成（QA: PASS with notes，无 P0/P1；P2 已清零） | frontend-v9/ 95 文件：脚手架+tokens+三薄壳+路由302+29域(11完整)+12组件+186 测试 | 1dd1526, 2128b60 |
-| UX-C 核心业务页 | ✅ 代码完成（7dd4f69：186+36 用例；QA 合并验收中） | 工作台/市场/商品/Listing/上线/店铺 + 第 2 批组件（含 SectionState 五态） | 7dd4f69 |
-| UX-D 经营闭环页 | ✅ 代码完成（c142577：+25 用例；QA 合并验收中） | 供应链拆分/履约/售后/优化/BI/财务/到岸成本 + 第 3 批组件 | c142577 |
+| UX-C 核心业务页 | ✅ QA 合并验收 PASS with notes（无 P0/P1） | 工作台/市场/商品/Listing/上线/店铺 + 第 2 批组件（含 SectionState 五态） | 7dd4f69 |
+| UX-D 经营闭环页 | ✅ QA 合并验收 PASS with notes（无 P0/P1） | 供应链拆分/履约/售后/优化/BI/财务/到岸成本 + 第 3 批组件 | c142577 |
 | 路由合并 | ✅ 完成（2e0ecd8：UXD_ROUTES 12 条挂接替换 StubPage，整仓 build 过） | router/index.js 引入 routes-uxd.js | 2e0ecd8 |
+| UX-E AI 及管理页 | 🔄 两线并行实施中（A 线：Console 4 页/Factory/登录；B 线：AI 域/设置/副驾驶） | 见 §4 实施计划 | — |
 | UX-E AI 及管理页 | ⏳ 排队（前半可并行） | AI 运营/登录初始化/Console 4 页/Factory Portal | — |
 | UX-F 验证切换 | ⏳ 排队 | 覆盖矩阵/E2E/权限/性能/切换回退 | — |
 
@@ -41,6 +42,9 @@
 | V9-B3 | P2 | ConsoleShell.vue:27 'PLATFORM_ADMIN' 字面量兜底 | ✅ 已修复（2128b60：permissions.js 导出 ROLES 枚举，ConsoleShell 引用） |
 | V9-B4 | P2 | 契约 §3.3.2 与 §3.3.3 对 COMPLIANCE 白名单外行为表述冲突 | ✅ 已修复（统一为 §3.3.2 重定向唯一权威规则，/403 仅防御性挂接，e18bd58） |
 | V9-B5 | P2 | ShellSidebar el-menu props 与 .menu-group 深色字面量 | 接受（沿现网写法，UX-C 接入 eslint 规则时一并治理） |
+| V9-C1 | P2 | LaunchCenter 保存视图「应用筛选」链路断裂（@apply-filters 无消费方） | 修复中（A 线 engineer-2） |
+| V9-D1 | P2 | Orders.vue 利润列文案未复用 biCaliber 常量 | 修复中（B 线 engineer-3） |
+| V9-D2 | P2 | UX-D 页面直接用 EmptyState/LoadingState 未走 SectionState 包装（风格分叉，行为等价） | 接受存量，UX-E 新页面起统一用 SectionState |
 
 ## §4 验证基线
 
