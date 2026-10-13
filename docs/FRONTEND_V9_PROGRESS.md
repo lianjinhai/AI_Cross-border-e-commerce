@@ -20,7 +20,7 @@
 | UX-C 核心业务页 | ✅ QA 合并验收 PASS with notes（无 P0/P1） | 工作台/市场/商品/Listing/上线/店铺 + 第 2 批组件（含 SectionState 五态） | 7dd4f69 |
 | UX-D 经营闭环页 | ✅ QA 合并验收 PASS with notes（无 P0/P1） | 供应链拆分/履约/售后/优化/BI/财务/到岸成本 + 第 3 批组件 | c142577 |
 | 路由合并 | ✅ 完成（2e0ecd8：UXD_ROUTES 12 条挂接替换 StubPage，整仓 build 过） | router/index.js 引入 routes-uxd.js | 2e0ecd8 |
-| UX-E AI 及管理页 | 🔄 两线并行实施中（A 线：Console 4 页/Factory/登录；B 线：AI 域/设置/副驾驶） | 见 §4 实施计划 | — |
+| UX-E AI 及管理页 | ✅ 代码完成（A 线 3c8c655 + B 线 9f4eb68，295/295 全绿；路由合并中，QA 验收待合并后） | Console 4 页/工厂门户/登录分流 + 工作流/知识库/决策审计/AI 设置/团队/AI 副驾驶 | 3c8c655, 9f4eb68 |
 | UX-E AI 及管理页 | ⏳ 排队（前半可并行） | AI 运营/登录初始化/Console 4 页/Factory Portal | — |
 | UX-F 验证切换 | ⏳ 排队 | 覆盖矩阵/E2E/权限/性能/切换回退 | — |
 
@@ -46,6 +46,7 @@
 | V9-D1 | P2 | Orders.vue 利润列文案未复用 biCaliber 常量 | ✅ 已修复（6a67b17：import biCaliber 常量） |
 | V9-D2 | P2 | UX-D 页面直接用 EmptyState/LoadingState 未走 SectionState 包装（风格分叉，行为等价） | 接受存量，UX-E 新页面起统一用 SectionState |
 | V9-B6 | P1→已修 | 旧 frontend exitImpersonate 只清标记不还原平台 token（平台管理员钉死租户身份） | ✅ UX-E 前半顺手根治（3c8c655：impersonation.js 快照/还原纯函数） |
+| V9-E1 | 备注 | AI 会话持久化、定价/广告/客服「查看依据」深链发送端、Support→Knowledge 反向互跳、最后 OWNER 降级后端约束——均后端能力未就绪或跨批接入项 | UX-F 覆盖核对时统一处置（不放假入口） |
 
 ## §4 验证基线
 
