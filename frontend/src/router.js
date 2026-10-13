@@ -15,6 +15,7 @@ const routes = [
       { path: 'listings', component: () => import('./views/Listings.vue'), meta: { title: 'Listing 工作台' } },
       { path: 'compliance', component: () => import('./views/Compliance.vue'), meta: { title: '合规检测' } },
       { path: 'compliance-workbench', component: () => import('./views/ComplianceWorkbench.vue'), meta: { title: '合规工作台' } },
+      { path: 'launch', component: () => import('./views/LaunchCenter.vue'), meta: { title: '上线中心' } },
       { path: 'shops', component: () => import('./views/Shops.vue'), meta: { title: '店铺授权' } },
       { path: 'suppliers', component: () => import('./views/Suppliers.vue'), meta: { title: '供应商' } },
       { path: 'factory-portal', component: () => import('./views/FactoryPortal.vue'), meta: { title: '工厂供给门户' } },

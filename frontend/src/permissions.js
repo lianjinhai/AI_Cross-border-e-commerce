@@ -105,6 +105,12 @@ export const roleKey = () => contextRole() || LEGACY_ROLE_MAP[role().toLowerCase
 export const isSupplier = () => roleKey() === 'FACTORY_COLLABORATOR'
 
 const APPROVER_PATHS = new Set(['/compliance-workbench', '/dashboard', '/bi', '/listings', '/compliance'])
+// 前缀白名单：合规员可进 /launch 与后续的 /launch/:id（上线中心只读可见）；
+// 其余路径仍**精确匹配**，不得放宽既有语义（R12）。
+const APPROVER_PREFIX_PATHS = ['/launch']
+const isApproverPath = (path) => APPROVER_PATHS.has(path)
+  || (typeof path === 'string'
+    && APPROVER_PREFIX_PATHS.some((prefix) => path === prefix || path.startsWith(`${prefix}/`)))
 const ADMIN_PATHS = new Set(['/users', '/settings'])
 
 /**
@@ -177,7 +183,7 @@ export function routeRedirect({ path, authenticated, user, impersonating = false
   if (path === '/platform-admin') return '/dashboard'
   if (userRole === 'FACTORY_COLLABORATOR') return path === '/factory-portal' ? null : '/factory-portal'
   if (path === '/factory-portal') return '/dashboard'
-  if (userRole === 'COMPLIANCE' && !APPROVER_PATHS.has(path)) return '/compliance-workbench'
+  if (userRole === 'COMPLIANCE' && !isApproverPath(path)) return '/compliance-workbench'
   if (ADMIN_PATHS.has(path) && userRole !== 'OWNER') return '/dashboard'
   return null
 }

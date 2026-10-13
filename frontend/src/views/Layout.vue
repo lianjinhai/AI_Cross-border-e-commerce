@@ -114,6 +114,7 @@ const businessMenus = [
     { path: '/discovery', label: '商品发现', icon: 'Search' },
     { path: '/products', label: '商品池', icon: 'Goods' },
     { path: '/listings', label: 'Listing 工作台', icon: 'Document' },
+    { path: '/launch', label: '上线中心', icon: 'Position' },
     { path: '/compliance-workbench', label: '合规工作台', icon: 'Finished' },
     { path: '/compliance', label: '合规检测', icon: 'CircleCheck' },
   ]},
@@ -143,8 +144,8 @@ const menus = computed(() => {
   if (isSuper.value) return platformMenus
   if (isSupplier.value) return supplierMenus
   if (isCompliance.value) {
-    // 合规员菜单：工作台放首位（其职责是审批+监控，不是逛商品池）
-    const allowed = new Set(['/compliance-workbench', '/dashboard', '/bi', '/listings', '/compliance'])
+    // 合规员菜单：工作台放首位（其职责是审批+监控，不是逛商品池）；上线中心属只读可看
+    const allowed = new Set(['/compliance-workbench', '/dashboard', '/bi', '/listings', '/compliance', '/launch'])
     return businessMenus.map(g => ({ ...g, items: g.items.filter(x => allowed.has(x.path)) })).filter(g => g.items.length)
   }
   if (!isOwner.value) {

@@ -25,7 +25,10 @@ api.interceptors.response.use(
       import('./workspace.js').then((m) => m.clearWorkspaceContext()).catch(() => {})
       if (router.currentRoute.value.path !== '/login') router.push('/login')
     }
-    ElMessage.error(err.response?.data?.detail || '请求失败，请稍后重试')
+    // Launch 等新接口把 detail 作为统一 envelope 对象返回（{code,message,blockers,...}）；
+    // 直接交给 ElMessage 会渲染成 [object Object]，故对象形态取 message，其余形态保持原逻辑。
+    const detail = err.response?.data?.detail
+    ElMessage.error((detail && typeof detail === 'object' ? detail.message : detail) || '请求失败，请稍后重试')
     return Promise.reject(err)
   },
 )

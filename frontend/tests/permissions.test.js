@@ -69,6 +69,17 @@ describe('executable role journeys', () => {
     }
   })
 
+  /**
+   * 上线中心（/launch 前缀白名单）：合规员可只读进入列表与详情，
+   * 但前缀匹配**不得**放宽其它路径（如 /orders 仍被弹回）。新增用例，不改既有断言。
+   */
+  it('lets compliance approvers read the launch center by prefix, without widening other paths', () => {
+    expect(access('compliance_approver', '/launch')).toBeNull()
+    expect(access('compliance_approver', '/launch/42')).toBeNull()
+    expect(access('compliance_approver', '/launching')).toBe('/compliance-workbench')
+    expect(access('compliance_approver', '/orders')).toBe('/compliance-workbench')
+  })
+
   it('allows tenant admins to manage tenant settings but not the platform console', () => {
     expect(access('admin', '/users')).toBeNull()
     expect(access('admin', '/settings')).toBeNull()
