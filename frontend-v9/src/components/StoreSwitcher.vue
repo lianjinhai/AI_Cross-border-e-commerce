@@ -8,27 +8,44 @@
     @change="onChange"
   >
     <el-option
-      v-for="shop in shops"
+      v-for="shop in salesShops"
       :key="shop.id"
       :label="shop.name"
       :value="shop.id"
+    />
+    <el-option
+      v-for="item in unconnected"
+      :key="`unconnected-${item.id}`"
+      :label="`${item.name}（待连接）`"
+      :value="item.id"
+      disabled
     />
   </el-select>
 </template>
 
 <script setup>
 /**
- * 店铺切换器（契约 §2.4）：props {shops, modelValue}，emit update:modelValue。
- * 选中值持久化到 localStorage `v9_selected_shop`，供订单/广告/客服页作默认筛选。
+ * 店铺切换器（契约 §2.4 → 蓝图 R1 P1 扩展）。
+ *
+ * 新增：
+ * - unconnected prop：未接店铺引导项
+ * - guideConnect 事件：跳 CH-01 /app/channels
+ * - 仅销售店铺（filterSalesShops 剔除 source 类型）
+ * 纯函数源：shared/storeScope.js（filterSalesShops / resolveScopeKey / isAllShops / unconnectedShops）。
  */
-import { watch } from 'vue'
+import { computed, watch } from 'vue'
+import { filterSalesShops } from '../shared/storeScope'
 
 const props = defineProps({
   shops: { type: Array, default: () => [] },
   modelValue: { type: [String, Number], default: '' },
+  /** 未接店铺引导项 [{id, name, hint}]。 */
+  unconnected: { type: Array, default: () => [] },
 })
 
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(['update:modelValue', 'guideConnect'])
+
+const salesShops = computed(() => filterSalesShops(props.shops))
 
 function onChange(shopId) {
   emit('update:modelValue', shopId ?? '')

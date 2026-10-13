@@ -1,6 +1,13 @@
 <template>
   <div class="page">
-    <PageHeader title="平台总览" subtitle="租户 · 用户 · 授权到期" />
+    <PageHeader title="平台总览" subtitle="平台级运行指标 · 租户 / 用户 / 授权到期" />
+
+    <!-- PC-01（蓝图 §5.19）：首页仅展示平台级运行指标（聚合口径），不默认显示跨租户交易明细；
+         跨租户明细须走合法代客 + 审计（见「租户管理」代客进入）。 -->
+    <DataQualityBanner
+      tag="API_UNVERIFIED"
+      detail="本页为平台级聚合指标（口径=租户/用户计数与授权到期），不默认显示跨租户交易明细；查看某租户明细请使用「租户管理」代客进入（原因/时间/操作者记录审计）。"
+    />
 
     <SectionState :state="state" :error="error" @retry="load" empty-hint="暂无平台数据">
       <el-row :gutter="16">
@@ -21,6 +28,7 @@ import { computed, onMounted, ref } from 'vue'
 import PageHeader from '../../components/PageHeader.vue'
 import MetricCard from '../../components/MetricCard.vue'
 import SectionState from '../../components/SectionState.vue'
+import DataQualityBanner from '../../components/DataQualityBanner.vue'
 import { fetchOverview } from '../../api/domains/admin'
 import { statCardsFromOverview } from '../../composables/tenantAdmin'
 

@@ -9,13 +9,21 @@ import { LEGACY_REDIRECTS, legacyRedirectTarget } from '../src/app/router/legacy
  * 3. R8：/platform-admin 与 /platform-admin?tab=audit 同 path 异 query。
  */
 const ALL_SPACE_ROUTES = [
-  '/app', '/app/market/discovery', '/app/products', '/app/products/:id', '/app/listings',
-  '/app/listings/:id', '/app/compliance', '/app/compliance/approvals', '/app/launch',
-  '/app/launch/:id', '/app/channels/shops', '/app/supply/suppliers', '/app/supply/purchases',
-  '/app/pricing', '/app/ads', '/app/orders', '/app/refunds', '/app/settlements',
-  '/app/support', '/app/risk/alerts', '/app/analytics/bi', '/app/analytics/finance',
-  '/app/analytics/landed-cost', '/app/ai/workflows', '/app/ai/knowledge',
-  '/app/ai/decisions', '/app/settings/ai', '/app/settings/team',
+  '/app', '/app/tasks', '/onboarding',
+  '/app/market/discovery', '/app/market/candidates', '/app/market/opportunity/:id',
+  '/app/products', '/app/products/:id', '/app/products/assets',
+  '/app/listings', '/app/listings/:id',
+  '/app/compliance', '/app/compliance/approvals',
+  '/app/launch', '/app/launch/:id',
+  '/app/channels', '/app/channels/shops',
+  '/app/supply/sourcing', '/app/supply/suppliers', '/app/supply/matching', '/app/supply/purchases',
+  '/app/pricing', '/app/ads', '/app/fulfillment', '/app/orders', '/app/refunds', '/app/settlements',
+  '/app/support', '/app/risk/alerts', '/app/optimization/experiments',
+  '/app/analytics/bi', '/app/analytics/finance', '/app/analytics/landed-cost', '/app/analytics/forecast',
+  '/app/ai/workflows', '/app/ai/knowledge', '/app/ai/decisions', '/app/ai/agent-runs',
+  '/app/ai/actions',
+  '/app/settings/ai', '/app/settings/team', '/app/settings/workspace',
+  '/app/settings/credentials', '/app/settings/plan',
   '/console/overview', '/console/tenants', '/console/audit', '/console/maintenance',
   '/factory/products',
 ]
@@ -62,12 +70,14 @@ describe('router coverage — 新空间路由', () => {
       expect(typeof child.meta?.title).toBe('string')
       expect(typeof child.meta?.domain).toBe('string')
     }
-    // requiresOwner 仅 /app/settings/*
+    // requiresOwner 仅 /app/settings/* + 蓝图 R1 新增 /app/ai/agent-runs
     const settings = shell.children.filter((c) => c.meta?.requiresOwner)
-    expect(settings.map((c) => c.path).sort()).toEqual(['settings/ai', 'settings/team'])
-    // hidden 仅参数详情路由
+    expect(settings.map((c) => c.path).sort()).toEqual([
+      'ai/agent-runs', 'settings/ai', 'settings/credentials', 'settings/plan', 'settings/team', 'settings/workspace',
+    ])
+    // hidden 仅参数详情路由 + /onboarding（壳外顶层）
     const hidden = shell.children.filter((c) => c.meta?.hidden)
-    expect(hidden.map((c) => c.path).sort()).toEqual(['launch/:id', 'listings/:id', 'products/:id'])
+    expect(hidden.map((c) => c.path).sort()).toEqual(['channels/shops/:id', 'launch/:id', 'listings/:id', 'market/opportunity/:id', 'products/:id'])
   })
 })
 

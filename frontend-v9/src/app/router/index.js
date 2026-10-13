@@ -7,18 +7,25 @@ import { UXE_B_ROUTES } from './routes-uxe-b'
 import { legacyRedirectTarget } from './legacy-redirects'
 
 /**
- * 三空间路由表（契约 §3）。
+ * 三空间路由表（契约 §3 → 蓝图 R1 导航重组）。
  *
  * meta 约定（§3.1）：{space, domain, title, hidden?, requiresOwner?}；
  * - space：'app'|'console'|'factory'，守卫与 AppShell 选壳依据；
- * - domain：一级域中文标签（与导航树 domain.label 同源），面包屑渲染；
+ * - domain：一级域中文标签（与导航树 domain.label 同源，蓝图 R1 8 域），面包屑渲染；
  * - title：页标题（document.title + 面包屑叶）；hidden：参数详情路由不入侧栏；
  * - requiresOwner：仅 /app/settings/* 标注，非 OWNER 守卫拦截。
  *
  * 页面组件：UX-B 阶段统一挂 StubPage 占位，后续阶段（UX-C/D/E）以 routes-uxd.js /
  * routes-uxe-a.js / routes-uxe-b.js 数组与页内直挂组件替换（routes-*.js 为各阶段
- * 单一事实源，保留供测试引用）；目前仅剩 listings/:id、compliance 两条 UX-F 待接。
+ * 单一事实源，保留供测试引用）。
  * 旧路径 302：见 legacy-redirects.js（查表 redirect，R8 显式判断 query.tab）。
+ *
+ * 蓝图 R1 新增：
+ * - /app/tasks（WK-02 TaskCenter）
+ * - /onboarding（ONB-01~03 三屏合一，hidden 顶层）
+ * - /app/market/candidates（MK-03）
+ * - /app/market/opportunity/:id（MK-02，hidden）
+ * - 替换 compliance 两条 stub → 真实组件
  */
 const stub = () => import('../../app/pages/StubPage.vue')
 
@@ -32,23 +39,46 @@ const launchCenter = () => import('../../pages/product/LaunchCenter.vue')
 const launchDetail = () => import('../../pages/product/LaunchDetail.vue')
 const shops = () => import('../../pages/channel/Shops.vue')
 
+// ── 蓝图 R1 包 1 新增页面 ──
+const taskCenter = () => import('../../pages/home/TaskCenter.vue')
+const onboarding = () => import('../../pages/onboarding/Onboarding.vue')
+const opportunityDetail = () => import('../../pages/market/OpportunityDetail.vue')
+const candidates = () => import('../../pages/market/Candidates.vue')
+const compliance = () => import('../../pages/compliance/Compliance.vue')
+const approvals = () => import('../../pages/compliance/Approvals.vue')
+
 const appChildren = [
-  { path: '', component: home, meta: { space: 'app', domain: '首页', title: '经营工作台' } },
-  { path: 'market/discovery', component: discovery, meta: { space: 'app', domain: '市场机会', title: '商品发现' } },
-  { path: 'products', component: products, meta: { space: 'app', domain: '商品经营', title: '商品池' } },
-  { path: 'products/:id', component: productDetail, meta: { space: 'app', domain: '商品经营', title: '商品详情', hidden: true } },
-  { path: 'listings', component: listings, meta: { space: 'app', domain: '商品经营', title: 'Listing 工作台' } },
-  { path: 'listings/:id', component: stub, meta: { space: 'app', domain: '商品经营', title: 'Listing 详情', hidden: true } },
-  { path: 'compliance', component: stub, meta: { space: 'app', domain: '商品经营', title: '合规报告中心' } },
-  { path: 'compliance/approvals', component: stub, meta: { space: 'app', domain: '商品经营', title: '合规工作台' } },
-  { path: 'launch', component: launchCenter, meta: { space: 'app', domain: '商品经营', title: '上线中心' } },
-  { path: 'launch/:id', component: launchDetail, meta: { space: 'app', domain: '商品经营', title: '上线流程详情', hidden: true } },
-  { path: 'channels/shops', component: shops, meta: { space: 'app', domain: '销售渠道', title: '店铺授权' } },
+  // ── 工作台域 ──
+  { path: '', component: home, meta: { space: 'app', domain: '工作台', title: '经营首页' } },
+  { path: 'tasks', component: taskCenter, meta: { space: 'app', domain: '工作台', title: '我的待办' } },
+  // ── 发现与商品域 ──
+  { path: 'market/discovery', component: discovery, meta: { space: 'app', domain: '发现与商品', title: '市场机会' } },
+  { path: 'market/candidates', component: candidates, meta: { space: 'app', domain: '发现与商品', title: '商品候选池' } },
+  { path: 'market/opportunity/:id', component: opportunityDetail, meta: { space: 'app', domain: '发现与商品', title: '机会详情', hidden: true } },
+  { path: 'products', component: products, meta: { space: 'app', domain: '发现与商品', title: '商品库' } },
+  { path: 'products/:id', component: productDetail, meta: { space: 'app', domain: '发现与商品', title: '商品详情', hidden: true } },
+  { path: 'products/assets', component: stub, meta: { space: 'app', domain: '发现与商品', title: '素材中心' } },
+  { path: 'listings', component: listings, meta: { space: 'app', domain: '发现与商品', title: 'Listing 工作台' } },
+  { path: 'listings/:id', component: stub, meta: { space: 'app', domain: '发现与商品', title: 'Listing 详情', hidden: true } },
+  { path: 'compliance', component: compliance, meta: { space: 'app', domain: '发现与商品', title: '合规报告' } },
+  { path: 'compliance/approvals', component: approvals, meta: { space: 'app', domain: '发现与商品', title: '合规工作台' } },
+  { path: 'launch', component: launchCenter, meta: { space: 'app', domain: '发现与商品', title: '上线中心' } },
+  { path: 'launch/:id', component: launchDetail, meta: { space: 'app', domain: '发现与商品', title: '上线流程详情', hidden: true } },
+  // ── 渠道与店铺域 ──
+  { path: 'channels', component: stub, meta: { space: 'app', domain: '渠道与店铺', title: '渠道推荐' } },
+  { path: 'channels/shops', component: shops, meta: { space: 'app', domain: '渠道与店铺', title: '店铺管理' } },
   // ── UX-E 后半：AI 域与设置页 5 条（routes-uxe-b.js 单一事实源） ──
   ...UXE_B_ROUTES,
   // ── UX-D 经营闭环页 12 条（routes-uxd.js 单一事实源，path/meta 与冻结表一致） ──
   ...UXD_ROUTES,
 ]
+
+// ── 顶层 hidden /onboarding（ONB-01~03 三屏合一，step query 切屏） ──
+const onboardingRoute = {
+  path: '/onboarding',
+  component: onboarding,
+  meta: { space: 'app', domain: '工作台', title: '新手引导', hidden: true },
+}
 
 const consoleChildren = [
   // ── UX-E 前半：控制台 4 页（routes-uxe-a.js 单一事实源） ──
@@ -65,6 +95,8 @@ const routes = [
   ...legacyRedirectTable(),
   // ── 登录（全空间共用，壳外独立页；UX-E 前半真实组件） ──
   ...UXE_A_ROOT,
+  // ── 顶层 hidden /onboarding（壳外独立页，meta.space='app' 但不用 WorkspaceShell） ──
+  onboardingRoute,
   // ── 三空间外壳（AppShell 三薄壳选型依据 meta.space） ──
   {
     path: '/app',

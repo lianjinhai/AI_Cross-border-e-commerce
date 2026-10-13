@@ -6,6 +6,7 @@ import {
   buildDomains,
   filterDomainsByPaths,
   whitelistForRole,
+  NON_OWNER_HIDDEN_PATHS,
 } from '../src/shared/navigation/filter'
 
 /**
@@ -17,21 +18,24 @@ import {
 const pathsOf = (domains) => domains.flatMap((d) => d.children.map((c) => c.path)).sort()
 
 const ALL_BUSINESS_PATHS = [
-  '/app', '/app/market/discovery', '/app/products', '/app/listings', '/app/launch',
-  '/app/compliance', '/app/compliance/approvals', '/app/supply/suppliers',
-  '/app/supply/purchases', '/app/channels/shops', '/app/orders', '/app/settlements',
-  '/app/refunds', '/app/support', '/app/pricing', '/app/ads', '/app/risk/alerts',
-  '/app/analytics/bi', '/app/analytics/finance', '/app/analytics/landed-cost',
-  '/app/ai/workflows', '/app/ai/knowledge', '/app/ai/decisions',
-  '/app/settings/ai', '/app/settings/team',
+  '/app', '/app/tasks',
+  '/app/market/discovery', '/app/market/candidates',
+  '/app/products', '/app/products/assets',
+  '/app/listings', '/app/launch',
+  '/app/compliance', '/app/compliance/approvals',
+  '/app/supply/sourcing', '/app/supply/suppliers', '/app/supply/matching', '/app/supply/purchases',
+  '/app/channels', '/app/channels/shops',
+  '/app/orders', '/app/fulfillment', '/app/refunds', '/app/support', '/app/settlements',
+  '/app/pricing', '/app/ads', '/app/risk/alerts', '/app/optimization/experiments',
+  '/app/analytics/bi', '/app/analytics/finance', '/app/analytics/landed-cost', '/app/analytics/forecast',
+  '/app/ai/actions', '/app/ai/workflows', '/app/ai/agent-runs', '/app/ai/knowledge', '/app/ai/decisions',
 ].sort()
 
 describe('WORKSPACE_DOMAINS', () => {
-  it('defines the frozen 11 first-level domains', () => {
-    expect(WORKSPACE_DOMAINS).toHaveLength(11)
+  it('defines the frozen 8 first-level domains', () => {
+    expect(WORKSPACE_DOMAINS).toHaveLength(8)
     expect(WORKSPACE_DOMAINS.map((d) => d.key)).toEqual([
-      'home', 'market', 'product', 'supply', 'channel', 'fulfill',
-      'aftersale', 'optimization', 'analytics', 'aiops', 'settings',
+      'workbench', 'discovery', 'supply', 'channel', 'orders', 'optimize', 'finance', 'ai',
     ])
   })
 
@@ -56,46 +60,53 @@ describe('WORKSPACE_DOMAINS', () => {
 })
 
 describe('CONSOLE / FACTORY trees', () => {
-  it('console tree splits the old /platform-admin into 4 pages', () => {
+  it('console tree splits the old /platform-admin into 4 pages + R1 包 3 新增 3 项', () => {
     expect(pathsOf(CONSOLE_DOMAINS)).toEqual([
-      '/console/audit', '/console/maintenance', '/console/overview', '/console/tenants',
+      '/console/adapters', '/console/ai-resources', '/console/audit',
+      '/console/maintenance', '/console/overview', '/console/rules', '/console/tenants',
     ])
   })
 
-  it('factory tree exposes only the wired entry (2 pending integrations stay out)', () => {
-    expect(pathsOf(FACTORY_DOMAINS)).toEqual(['/factory/products'])
+  it('factory tree exposes home + products + R1 包 3 新增 stocking/fulfillment/capability', () => {
+    expect(pathsOf(FACTORY_DOMAINS)).toEqual([
+      '/factory', '/factory/capability', '/factory/fulfillment',
+      '/factory/products', '/factory/stocking',
+    ])
   })
 })
 
 describe('buildDomains — role visibility', () => {
-  it('OWNER with member admin sees all 11 domains and every business path', () => {
+  it('OWNER with member admin sees all 8 domains and every business path', () => {
     const domains = buildDomains({ roleKey: 'OWNER', canManageMembers: true })
-    expect(domains).toHaveLength(11)
+    expect(domains).toHaveLength(8)
     expect(pathsOf(domains)).toEqual(ALL_BUSINESS_PATHS)
   })
 
-  it('OWNER without member admin still sees AI settings but not team settings', () => {
+  it('OWNER without member admin still sees all business paths (settings 已下沉账户菜单)', () => {
+    // settings 已不在 WORKSPACE_DOMAINS，OWNER 无 canManageMembers 时 paths 不含 /app/settings/*
+    // 但仍可访问全部 8 域业务路径（agent-runs 无 requiresOwner 标注，对 OWNER 可见）
     const paths = pathsOf(buildDomains({ roleKey: 'OWNER', canManageMembers: false }))
-    expect(paths).toContain('/app/settings/ai')
+    expect(paths).toContain('/app/ai/actions')
+    expect(paths).toContain('/app/ai/agent-runs')
     expect(paths).not.toContain('/app/settings/team')
   })
 
-  it.each(['OPERATOR', 'READ_ONLY'])('%s hides /app/settings/* and /app/compliance/approvals', (roleKey) => {
+  it.each(['OPERATOR', 'READ_ONLY'])('%s hides Owner-only paths and compliance approvals', (roleKey) => {
     const paths = pathsOf(buildDomains({ roleKey }))
-    expect(paths).not.toContain('/app/settings/ai')
-    expect(paths).not.toContain('/app/settings/team')
+    // settings 已下沉，非 OWNER 无 /app/settings/*；compliance/approvals 仍对 OPERATOR 隐藏
     expect(paths).not.toContain('/app/compliance/approvals')
     const expected = ALL_BUSINESS_PATHS.filter(
-      (p) => !['/app/settings/ai', '/app/settings/team', '/app/compliance/approvals'].includes(p),
+      (p) => !NON_OWNER_HIDDEN_PATHS.has(p),
     )
     expect(paths).toEqual(expected)
   })
 
-  it('drops domains that become empty after filtering (OPERATOR loses the settings domain)', () => {
+  it('drops domains that become empty after filtering (OPERATOR loses empty domains)', () => {
     const domains = buildDomains({ roleKey: 'OPERATOR' })
-    expect(domains.map((d) => d.key)).not.toContain('settings')
-    // 11 域去掉仅含隐藏项的 settings 域 → 10
-    expect(domains).toHaveLength(10)
+    // 8 域中 OPERATOR 可见的域数（NON_OWNER_HIDDEN 仅 compliance/approvals）
+    // workbench/discovery/supply/channel/orders/optimize/finance/ai → 8 域，
+    // 但 discovery 域的 compliance/approvals 被隐藏后 discovery 仍有其他子项 → 仍保留
+    expect(domains).toHaveLength(8)
   })
 
   it('COMPLIANCE keeps only the 6 whitelisted paths and drops empty domains', () => {
@@ -103,7 +114,7 @@ describe('buildDomains — role visibility', () => {
     expect(pathsOf(domains)).toEqual(
       ['/app', '/app/analytics/bi', '/app/listings', '/app/compliance', '/app/compliance/approvals', '/app/launch'].sort(),
     )
-    // 命中 home / product / analytics 三个域
+    // 命中 workbench / discovery / finance 三个域（旧 home/product/analytics → 新 workbench/discovery/finance）
     expect(domains).toHaveLength(3)
   })
 
@@ -123,13 +134,15 @@ describe('buildDomains — role visibility', () => {
   it('FACTORY_COLLABORATOR gets the factory domain only', () => {
     const domains = buildDomains({ roleKey: 'FACTORY_COLLABORATOR' })
     expect(domains).toBe(FACTORY_DOMAINS)
-    expect(pathsOf(domains)).toEqual(['/factory/products'])
+    expect(pathsOf(domains)).toEqual([
+      '/factory', '/factory/capability', '/factory/fulfillment',
+      '/factory/products', '/factory/stocking',
+    ])
   })
 
-  it('keeps /app/settings/team only when canManageMembers is true', () => {
-    expect(pathsOf(buildDomains({ roleKey: 'OWNER', canManageMembers: true }))).toContain('/app/settings/team')
-    expect(pathsOf(buildDomains({ roleKey: 'OWNER', canManageMembers: false }))).not.toContain('/app/settings/team')
+  it('non-OWNER roles never see Owner-only settings paths (settings 已下沉)', () => {
     expect(pathsOf(buildDomains({ roleKey: 'OPERATOR' }))).not.toContain('/app/settings/team')
+    expect(pathsOf(buildDomains({ roleKey: 'READ_ONLY' }))).not.toContain('/app/settings/ai')
   })
 
   it('treats an unknown role like a non-owner (hidden admin entries)', () => {
@@ -152,7 +165,9 @@ describe('whitelistForRole — 与 buildDomains 同源（禁止双事实源）',
 
   it('console tree for PLATFORM_ADMIN, factory tree for FACTORY_COLLABORATOR', () => {
     expect([...whitelistForRole({ roleKey: 'PLATFORM_ADMIN' })].sort()).toEqual(pathsOf(CONSOLE_DOMAINS))
-    expect([...whitelistForRole({ roleKey: 'FACTORY_COLLABORATOR' })]).toEqual(['/factory/products'])
+    expect([...whitelistForRole({ roleKey: 'FACTORY_COLLABORATOR' })].sort()).toEqual(
+      ['/factory', '/factory/capability', '/factory/fulfillment', '/factory/products', '/factory/stocking'],
+    )
   })
 })
 

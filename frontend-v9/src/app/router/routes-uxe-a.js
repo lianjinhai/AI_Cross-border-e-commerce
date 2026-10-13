@@ -43,13 +43,50 @@ export const UXE_A_CONSOLE_CHILDREN = [
     component: () => import('../../pages/console/Maintenance.vue'),
     meta: { space: 'console', domain: '平台管理', title: '维护' },
   },
+  // ── 蓝图 R1 包 3 追加（PC-03/04/05，P2 骨架；现有 4 条不动） ──
+  {
+    path: 'adapters',
+    component: () => import('../../pages/console/Adapters.vue'),
+    meta: { space: 'console', domain: '平台管理', title: 'Adapter 认证中心' },
+  },
+  {
+    path: 'rules',
+    component: () => import('../../pages/console/Rules.vue'),
+    meta: { space: 'console', domain: '平台管理', title: '数据源与规则' },
+  },
+  {
+    path: 'ai-resources',
+    component: () => import('../../pages/console/AiResources.vue'),
+    meta: { space: 'console', domain: '平台管理', title: 'AI 资源与成本' },
+  },
 ]
 
 /** Factory 子路由（工厂门户主页）。 */
 export const UXE_A_FACTORY_CHILDREN = [
+  // ── 蓝图 R1 包 3 追加（FP-01/03/04/05，P2 骨架；现有 products 主入口保留） ──
+  {
+    path: '',
+    component: () => import('../../pages/factory/FactoryHome.vue'),
+    meta: { space: 'factory', domain: '工厂门户', title: '工厂首页' },
+  },
   {
     path: 'products',
     component: () => import('../../pages/factory/FactoryProducts.vue'),
     meta: { space: 'factory', domain: '工厂门户', title: '产品与产能' },
+  },
+  {
+    path: 'stocking',
+    component: () => import('../../pages/factory/StockingTasks.vue'),
+    meta: { space: 'factory', domain: '工厂门户', title: '备货/贴标任务' },
+  },
+  {
+    path: 'fulfillment',
+    component: () => import('../../pages/factory/FulfillmentHistory.vue'),
+    meta: { space: 'factory', domain: '工厂门户', title: '工厂履约与历史' },
+  },
+  {
+    path: 'capability',
+    component: () => import('../../pages/factory/Capability.vue'),
+    meta: { space: 'factory', domain: '工厂门户', title: '报价与供货能力' },
   },
 ]

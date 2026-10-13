@@ -23,6 +23,10 @@ backend/*.db.bak-*
 frontend/node_modules/
 frontend/dist/
 frontend/.zcode/
+# V9 前端（frontend-v9）构建产物 + QA 临时构建目录
+frontend-v9/node_modules/
+frontend-v9/dist/
+frontend-v9/dist_tmp_qa*/
 
 # ---- 其它生成物 ----
 *.log

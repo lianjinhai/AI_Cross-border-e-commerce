@@ -89,6 +89,17 @@
         <el-button type="primary" @click="copyCred">复制账号密码</el-button>
       </template>
     </el-dialog>
+
+    <!-- PC-02（蓝图 §5.19）：代客操作挂审计字段（原因/时间/操作者），最近代客记录可回看 -->
+    <el-card v-if="recentAudits.length" shadow="never" class="mt16">
+      <template #header><span class="card-title">最近代客操作（本地审计）</span></template>
+      <el-table :data="recentAudits" size="small">
+        <el-table-column prop="tenant" label="租户" width="140" show-overflow-tooltip />
+        <el-table-column prop="operator" label="操作者" width="140" show-overflow-tooltip />
+        <el-table-column prop="reason" label="原因" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="at" label="时间" width="180" />
+      </el-table>
+    </el-card>
   </div>
 </template>
 
@@ -114,6 +125,24 @@ const page = ref(1)
 const pageSize = 15
 const loading = ref(false)
 const entering = ref('')
+
+/** PC-02 代客审计（本地留痕）：{tenant, operator, reason, at}[]。读自 localStorage，跨会话可回看。 */
+const AUDIT_KEY = 'v9_impersonation_audits'
+const recentAudits = ref(loadRecentAudits())
+
+function loadRecentAudits() {
+  try {
+    const list = JSON.parse(localStorage.getItem(AUDIT_KEY) || '[]')
+    return Array.isArray(list) ? list.slice(0, 20) : []
+  } catch { return [] }
+}
+
+function recordAudit(entry) {
+  const list = loadRecentAudits()
+  list.unshift(entry)
+  localStorage.setItem(AUDIT_KEY, JSON.stringify(list.slice(0, 50)))
+  recentAudits.value = list.slice(0, 20)
+}
 
 const createDialog = ref(false)
 const creating = ref(false)
@@ -197,18 +226,31 @@ async function toggleStatus(row) {
   await load()
 }
 
-/** 代客进入：显式确认 → 保存平台身份快照 → 换租户 token → 进 /app（横幅常显可退出）。 */
+/** 代客进入（PC-02）：填原因 → 显式确认 → 保存平台身份快照 + 挂审计字段（原因/时间/操作者）→ 换租户 token → 进 /app。 */
 async function enter(row) {
   if (isImpersonating()) {
     ElMessage.warning('已在代客会话中，请先退出当前租户')
     return
   }
+  // PC-02：代客须填原因（审计字段之一），缺失即阻断，避免无因代客。
+  let reason = ''
   try {
-    await ElMessageBox.confirm(
-      `进入租户「${row.name}」后，你的操作将以该租户身份执行并记录审计。确认进入？`,
-      '代客进入租户', { type: 'warning', confirmButtonText: '确认进入' },
-    )
+    ;({ value: reason } = await ElMessageBox.prompt(
+      '请填写代客进入原因（将连同操作者、时间一并记录审计）',
+      `代客进入租户「${row.name}」`,
+      {
+        inputValue: '', confirmButtonText: '确认进入',
+        inputPlaceholder: '必填，例如：协助排查租户订单同步问题',
+        inputValidator: (v) => (v && v.trim().length > 0 ? true : '代客进入必须填写原因'),
+        inputErrorMessage: '代客进入必须填写原因',
+      },
+    ))
   } catch { return }
+  reason = String(reason || '').trim()
+  if (!reason) {
+    ElMessage.warning('代客进入必须填写原因')
+    return
+  }
   entering.value = row.id
   try {
     const data = await enterTenant(row.id)
@@ -216,8 +258,15 @@ async function enter(row) {
     saveImpersonationSnapshot({
       token: localStorage.getItem('erp_token'), user: currentUser(), tenantName: row.name,
     }, data.token)
+    // PC-02：挂审计字段（原因/时间/操作者）——本地留痕，服务端 enterTenant 已记审计，前端补充可读记录。
+    recordAudit({
+      tenant: row.name,
+      operator: currentUser()?.username || currentUser()?.name || '平台管理员',
+      reason,
+      at: new Date().toISOString(),
+    })
     clearWorkspaceContext()
-    ElMessage.success('已进入租户工作台，操作将记录审计')
+    ElMessage.success('已进入租户工作台，代客原因已记录审计')
     window.location.assign('/app')
   } finally { entering.value = '' }
 }
@@ -227,6 +276,8 @@ onMounted(() => { if (roleKey() === 'PLATFORM_ADMIN' || roleKey()) load() })
 
 <style scoped>
 .mt12 { margin-top: 12px; }
+.mt16 { margin-top: 16px; }
+.card-title { font-weight: 600; }
 .expired { color: var(--color-danger); font-weight: 600; }
 .stat-item { display: inline-block; margin-right: 12px; font-size: 12px; color: var(--color-text-regular); }
 .stat-item:last-child { margin-right: 0; }

@@ -1,5 +1,5 @@
 /**
- * 角色过滤（契约 §2.3）：菜单树与路由白名单的**唯一事实源**。
+ * 角色过滤（契约 §2.3 → 蓝图 R1 P0 扩展）：菜单树与路由白名单的**唯一事实源**。
  *
  * 平移 frontend/src/composables/navigation.js 的纯函数组织与语义，路径映射为
  * `/app|/console|/factory` 前缀（FRONTEND_V9_NAVIGATION.md §5）：
@@ -11,6 +11,8 @@
  *
  * `whitelistForRole` 与 `buildDomains` 同源产出：菜单过滤用 Set 精确匹配叶子，
  * 路由守卫用 `isPathAllowedForRole`（同一份规则 + 前缀语义），禁止另建第二事实源。
+ *
+ * 蓝图 R1 新增：buildDomains 增 persona 参数（新手域抑制，视觉层不改路由守卫白名单）。
  */
 import { WORKSPACE_DOMAINS } from './workspace-navigation'
 import { CONSOLE_DOMAINS } from './console-navigation'
@@ -18,7 +20,7 @@ import { FACTORY_DOMAINS } from './factory-navigation'
 
 export { WORKSPACE_DOMAINS, CONSOLE_DOMAINS, FACTORY_DOMAINS }
 
-/** COMPLIANCE 侧栏叶子精确白名单（与 buildDomains 同源）。 */
+/** COMPLIANCE 侧栏叶子精确白名单（与 buildDomains 同源；path 集语义不变）。 */
 export const COMPLIANCE_ALLOWED_PATHS = new Set([
   '/app',
   '/app/analytics/bi',
@@ -119,17 +121,50 @@ export function isOwnerOnlyPath(path) {
 }
 
 /**
- * 按角色构造可见域数组（契约 §2.3 签名），规则与旧 navigation.buildDomains 语义等价。
+ * 按角色构造可见域数组（契约 §2.3 签名 → 蓝图 R1 增 persona 参数）。
+ *
+ * 新手域抑制（蓝图 §2.1）：GUIDED 模式仅展开与画像相关的域，PROFESSIONAL 全量展开。
+ * 抑制仅是**视觉层**，whitelistForRole / 路由守卫白名单不变，服务端仍双重限制权限。
  *
  * @param {object} p
  * @param {string} [p.roleKey=''] 新角色枚举（大写，Context 优先）。
  * @param {boolean} [p.canManageMembers=false] 是否可见「用户与角色」。
  * @param {boolean} [p.isImpersonating=false] 代客中：平台管理员临时进入租户 Workspace 视图。
+ * @param {string} [p.persona=''] 新手画像（A/B/C；PROFESSIONAL/未知 → 全量 8 域）。
  * @returns {Array} 该角色应见的域数组。
  */
-export function buildDomains({ roleKey = '', canManageMembers = false, isImpersonating = false } = {}) {
+export function buildDomains({ roleKey = '', canManageMembers = false, isImpersonating = false, persona = '' } = {}) {
   if (roleKey === 'PLATFORM_ADMIN' && !isImpersonating) return CONSOLE_DOMAINS
   if (roleKey === 'FACTORY_COLLABORATOR') return FACTORY_DOMAINS
+  // 1) 角色白名单过滤（既有逻辑不变，服务端双重限制仍然生效）
   const allowed = whitelistForRole({ roleKey, canManageMembers, isImpersonating })
-  return filterDomainsByPaths(WORKSPACE_DOMAINS, allowed)
+  let domains = filterDomainsByPaths(WORKSPACE_DOMAINS, allowed)
+  // 2) 新手域抑制（仅 WORKSPACE 视觉层；PLATFORM_ADMIN/FACTORY 树不适用）
+  if (persona) domains = suppressDomainsByPersona(domains, persona)
+  return domains
+}
+
+/**
+ * persona → 保留域 key 映射；未知 persona / PROFESSIONAL → 返回全量 domains。
+ * 画像 A(个人新手) → workbench / discovery / channel
+ * 画像 B(有货源)   → A + supply / orders
+ * 画像 C(有团队)   → A + orders / ai
+ * PROFESSIONAL / 未知 persona → 全量 8 域
+ */
+export const PERSONA_DOMAINS = {
+  A: ['workbench', 'discovery', 'channel'],
+  B: ['workbench', 'discovery', 'supply', 'channel', 'orders'],
+  C: ['workbench', 'discovery', 'channel', 'orders', 'ai'],
+}
+
+/**
+ * 按 persona 抑制域（纯函数，视觉层不改路由守卫白名单）。
+ * @param {Array} domains 角色过滤后的域数组。
+ * @param {string} persona 画像码。
+ * @returns {Array} 抑制后的域数组。
+ */
+export function suppressDomainsByPersona(domains, persona) {
+  const keep = PERSONA_DOMAINS[persona]
+  if (!keep) return domains // PROFESSIONAL / 未知 → 全量
+  return domains.filter((d) => keep.includes(d.key))
 }
