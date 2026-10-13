@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  applyView, deleteView, loadViews, sanitizeViewFilters, saveView,
+  applyView, applyViewToFilters, deleteView, loadViews, sanitizeViewFilters, saveView,
 } from '../src/composables/launchViews'
 
 /** 内存 storage（隔离 localStorage，vitest 直测纯函数）。 */
@@ -79,5 +79,13 @@ describe('保存视图 CRUD（storage 注入）', () => {
     const applied = applyView({ filters: { platform: 'amazon', page_num: 5, evil: 1 } })
     expect(applied).toEqual({ platform: 'amazon' })
     expect(applyView({})).toEqual({})
+  })
+
+  it('applyViewToFilters（P2-1）：视图键覆盖现值，未覆盖键保留', () => {
+    const current = { platform: 'shopee', market: 'US', mine: true, execution_status: 'BLOCKED' }
+    const merged = applyViewToFilters(current, { filters: { platform: 'amazon' } })
+    expect(merged).toEqual({ platform: 'amazon', market: 'US', mine: true, execution_status: 'BLOCKED' })
+    // 不可变：合并不污染当前筛选对象
+    expect(current.platform).toBe('shopee')
   })
 })

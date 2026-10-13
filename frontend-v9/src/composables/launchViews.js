@@ -58,3 +58,11 @@ export function deleteView(name, storage = localStorage) {
 export function applyView(view = {}) {
   return { ...sanitizeViewFilters(view.filters || {}) }
 }
+
+/**
+ * 应用视图到当前筛选（P2-1）：视图筛选合并到现有筛选上，
+ * 返回**新对象**；视图未覆盖的键保留现值（含清空语义由视图侧显式存空串表达）。
+ */
+export function applyViewToFilters(current = {}, view = {}) {
+  return { ...current, ...applyView(view) }
+}

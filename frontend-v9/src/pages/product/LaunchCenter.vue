@@ -7,7 +7,7 @@
     </PageHeader>
 
     <el-card class="mb16">
-      <AdvancedFilter saved-views-key="launch" :filters="filters">
+      <AdvancedFilter saved-views-key="launch" :filters="filters" @apply-filters="onApplyFilters">
         <el-select v-model="filters.execution_status" placeholder="执行状态" style="width:150px" size="small" clearable @change="reload">
           <el-option v-for="(meta, key) in EXECUTION_STATUS" :key="key" :label="meta.text" :value="key" />
         </el-select>
@@ -144,6 +144,12 @@ async function loadContextData() {
 function reload() {
   page.value = 1
   load()
+}
+
+/** 应用保存视图（P2-1）：视图筛选合并到当前筛选并立即重查。 */
+function onApplyFilters(applied) {
+  Object.assign(filters, applied)
+  reload()
 }
 
 const emptyReason = computed(() => emptyStateReason({
