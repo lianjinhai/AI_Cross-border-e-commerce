@@ -155,3 +155,15 @@ API：新增 `routers/launch.py` 八端点（`/context` 声明早于 `/{run_id}`
 测试：新增 `tests/test_launch_nba.py` 10 项与 `tests/test_launch_api.py` 16 项（覆盖 AC-1/2/3/9/10/11/12/13）。后端全量正序与反序均 **923 passed / 2 xfailed / 1 xpassed**（≥ 897 基线）；`ruff check` 全绿；`git diff --check` 干净。
 
 未完成 / 边界：仍是零迁移（核验记录落 `WorkflowStep.result` + `WorkflowEvent`，审批关联落 `AiAction.evidence`），未新增表或列；未接通领域动作（B03-B09）与真实平台联调不变；上线中心前端（F01-F03）与 B12 全量门禁（含 Playwright E2E）尚未交付。下一步：F01 上线中心列表与数据层（T04）。
+
+## 16. 启动恢复扫描补齐（本批完成）
+
+复核 §14/§15 时发现一处设计偏差：设计 D12/R9 要求「进程重启即回收」——`main.py` lifespan 在 `recover_incomplete_runs()` 之后以系统身份扫描未结束 `PLATFORM_LAUNCH` 的 `RUNNING` 步骤；但 §14 实际只把恢复逻辑挂在 `launch_state.converge`（由 `refresh_launch` 触发），而 `recover_incomplete_runs()` 仅处理 `LEGACY_AUTOMATION`（engine.py:368）。后果是进程崩溃后若无 manage 用户打开/同步该流程，`RUNNING` 步骤会长期停留。
+
+修复（提交 `934f922`）：新增 `launch_recovery.recover_launch_steps(db)`，扫描未结束（`ended_at is None` 且未 `CANCELLED`）流程，复用既有 `launch_plan.recover_running_steps` 做只读判定后统一落库——无持久外部意图的 `RUNNING` 回退 `READY`；有意图的保持 `RUNNING` 并首次写 `result.pending_verification=true`（不重发）；每个被回收步骤写一条 `LaunchRecovered` 事件（`source=SYSTEM`、`actor_id=None`、`idempotency_key=launch:{run}:recovery:{step_code}:{revision}`），CAS 失败即放弃该 run（零状态变更零事件），二次启动零新事件（幂等）。`main.py` lifespan 在 `recover_incomplete_runs()` 之后接线，自建 `SessionLocal()` 会话。零迁移，只写既有列。
+
+偏差（登记）：设计 §`launch_recovery.py` 另列 `recover_run_steps(db, run)` 供 sync 单 run 复用，未单独实现——sync 路径 `refresh_launch → converge` 已内含 `recover_running_steps` 且额外做投影/回执落地（为超集），再引入并行单 run 写路径会造成语义分叉；判定不需要。未强抽 `refresh_launch` 的 CAS 落库段为共享内核，原因：恢复是「逐步骤 `LaunchRecovered`」、刷新是「单条 `LaunchReadinessChanged`」，语义不同，强合会污染既有 30+ 刷新/动作用例——改用「最小独立落库段 + 复用 `launch_state` 内核」，`refresh_launch` 零改动。
+
+测试：新增 `tests/test_launch_recovery.py` 4 例（无意图回退 / 有意图标注不重发 / 二次调用幂等 / 已结束 run 不动）。后端全量正序与反序均 **927 passed / 2 xfailed / 1 xpassed**；`ruff check` 全绿。
+
+未完成 / 边界：启动扫描当前持单事务跨全部候选 run（重启时候选通常极少），未做每 run 独立事务；`recover_run_steps` 薄封装未提供。下一步：F01 上线中心列表与数据层（T04）。
