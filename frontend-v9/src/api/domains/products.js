@@ -33,6 +33,23 @@ export async function scrapeByUrl({ url } = {}) {
   return (await api.post('/products/collect_url', { url })).data
 }
 
+/** 源码解析采集（强反爬站点兜底）：POST /products/collect_html {url, html}。 */
+export async function collectFromHtml({ url = '', html = '' } = {}) {
+  return (await api.post('/products/collect_html', { url, html })).data
+}
+
+/** 演示源批量采集：POST /products/collect {source_platform, keyword, count}。 */
+export async function collectDemo({ sourcePlatform = '1688', keyword = '', count = 5 } = {}) {
+  return (await api.post('/products/collect', {
+    source_platform: sourcePlatform, keyword, count,
+  })).data
+}
+
+/** 导出商品 CSV（blob 下载）。 */
+export async function exportCsv() {
+  return api.get('/products/export', { responseType: 'blob' })
+}
+
 /** 触发标准化：POST /products/{id}/standardize → 标准化结果。 */
 export async function standardize(id) {
   return (await api.post(`/products/${id}/standardize`)).data

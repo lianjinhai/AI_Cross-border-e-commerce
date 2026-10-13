@@ -8,8 +8,26 @@ import api from '../../shared/api/client'
  */
 
 /** Listing 列表：GET /listings → {items[], total}。 */
-export async function fetchListings({ page, status } = {}) {
-  return (await api.get('/listings', { params: { page_num: page, status } })).data
+export async function fetchListings({ page, status, platform, productId, pageSize } = {}) {
+  return (await api.get('/listings', {
+    params: { page_num: page, status, platform, product_id: productId, page_size: pageSize },
+  })).data
+}
+
+/**
+ * 按 id 取 Listing 详情：后端无 GET /listings/{id}，经列表端点按页检索
+ * （page_size 放大 + 逐页回退，最多 5 页；未命中抛出 404 语义错误）。
+ */
+export async function fetchListingById(id) {
+  for (let page = 1; page <= 5; page += 1) {
+    const data = await fetchListings({ page, pageSize: 100 })
+    const hit = (data?.items || []).find((item) => Number(item.id) === Number(id))
+    if (hit) return hit
+    if (!data?.items?.length) break
+  }
+  const err = new Error('Listing 不存在或已删除')
+  err.status = 404
+  throw err
 }
 
 /** 发布回执列表：GET /listings/{id}/publication-attempts（PublicationReceipts 数据源）。 */
@@ -42,12 +60,17 @@ export async function submitReview(id) {
   return (await api.post(`/listings/${id}/review`)).data
 }
 
-/** 评审裁定：POST /listings/{id}/review/approve。 */
-export async function approveReview(id, verdict) {
-  return (await api.post(`/listings/${id}/review/approve`, { verdict })).data
+/** 评审审批（人工）：POST /listings/{id}/review/approve {note}（合规审批人专属）。 */
+export async function approveReview(id, note) {
+  return (await api.post(`/listings/${id}/review/approve`, { note })).data
 }
 
-/** 发布：POST /listings/{id}/publish {shop_ids} → 发布回执 DTO。 */
-export async function publish(id, { shopIds = [] } = {}) {
-  return (await api.post(`/listings/${id}/publish`, { shop_ids: shopIds })).data
+/** 发布：POST /listings/{id}/publish {shop_id}（单店；缺省=本地模拟）→ 发布结果。 */
+export async function publish(id, { shopId = null } = {}) {
+  return (await api.post(`/listings/${id}/publish`, { shop_id: shopId })).data
+}
+
+/** 删除 Listing：DELETE /listings/{id}。 */
+export async function removeListing(id) {
+  return (await api.delete(`/listings/${id}`)).data
 }

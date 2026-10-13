@@ -18,18 +18,28 @@ import { legacyRedirectTarget } from './legacy-redirects'
  */
 const stub = () => import('../../app/pages/StubPage.vue')
 
+// ── UX-C 交付页面（按 IMPLEMENTATION_PLAN §2；未交付页仍挂 StubPage） ──
+const home = () => import('../../pages/home/WorkspaceHome.vue')
+const discovery = () => import('../../pages/market/Discovery.vue')
+const products = () => import('../../pages/product/Products.vue')
+const productDetail = () => import('../../pages/product/ProductDetail.vue')
+const listings = () => import('../../pages/product/Listings.vue')
+const launchCenter = () => import('../../pages/product/LaunchCenter.vue')
+const launchDetail = () => import('../../pages/product/LaunchDetail.vue')
+const shops = () => import('../../pages/channel/Shops.vue')
+
 const appChildren = [
-  { path: '', component: stub, meta: { space: 'app', domain: '首页', title: '经营工作台' } },
-  { path: 'market/discovery', component: stub, meta: { space: 'app', domain: '市场机会', title: '商品发现' } },
-  { path: 'products', component: stub, meta: { space: 'app', domain: '商品经营', title: '商品池' } },
-  { path: 'products/:id', component: stub, meta: { space: 'app', domain: '商品经营', title: '商品详情', hidden: true } },
-  { path: 'listings', component: stub, meta: { space: 'app', domain: '商品经营', title: 'Listing 工作台' } },
+  { path: '', component: home, meta: { space: 'app', domain: '首页', title: '经营工作台' } },
+  { path: 'market/discovery', component: discovery, meta: { space: 'app', domain: '市场机会', title: '商品发现' } },
+  { path: 'products', component: products, meta: { space: 'app', domain: '商品经营', title: '商品池' } },
+  { path: 'products/:id', component: productDetail, meta: { space: 'app', domain: '商品经营', title: '商品详情', hidden: true } },
+  { path: 'listings', component: listings, meta: { space: 'app', domain: '商品经营', title: 'Listing 工作台' } },
   { path: 'listings/:id', component: stub, meta: { space: 'app', domain: '商品经营', title: 'Listing 详情', hidden: true } },
   { path: 'compliance', component: stub, meta: { space: 'app', domain: '商品经营', title: '合规报告中心' } },
   { path: 'compliance/approvals', component: stub, meta: { space: 'app', domain: '商品经营', title: '合规工作台' } },
-  { path: 'launch', component: stub, meta: { space: 'app', domain: '商品经营', title: '上线中心' } },
-  { path: 'launch/:id', component: stub, meta: { space: 'app', domain: '商品经营', title: '上线流程详情', hidden: true } },
-  { path: 'channels/shops', component: stub, meta: { space: 'app', domain: '销售渠道', title: '店铺授权' } },
+  { path: 'launch', component: launchCenter, meta: { space: 'app', domain: '商品经营', title: '上线中心' } },
+  { path: 'launch/:id', component: launchDetail, meta: { space: 'app', domain: '商品经营', title: '上线流程详情', hidden: true } },
+  { path: 'channels/shops', component: shops, meta: { space: 'app', domain: '销售渠道', title: '店铺授权' } },
   { path: 'supply/suppliers', component: stub, meta: { space: 'app', domain: '货源中心', title: '供应商库' } },
   { path: 'supply/purchases', component: stub, meta: { space: 'app', domain: '货源中心', title: '采购单' } },
   { path: 'pricing', component: stub, meta: { space: 'app', domain: '经营优化', title: '动态定价' } },
