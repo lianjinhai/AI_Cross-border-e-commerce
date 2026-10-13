@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { currentUser, routeRedirect } from '../../permissions/permissions'
 import { ensureWorkspaceContext, getContext } from '../../shared/workspace'
+import { UXD_ROUTES } from './routes-uxd'
 import { legacyRedirectTarget } from './legacy-redirects'
 
 /**
@@ -40,23 +41,13 @@ const appChildren = [
   { path: 'launch', component: launchCenter, meta: { space: 'app', domain: '商品经营', title: '上线中心' } },
   { path: 'launch/:id', component: launchDetail, meta: { space: 'app', domain: '商品经营', title: '上线流程详情', hidden: true } },
   { path: 'channels/shops', component: shops, meta: { space: 'app', domain: '销售渠道', title: '店铺授权' } },
-  { path: 'supply/suppliers', component: stub, meta: { space: 'app', domain: '货源中心', title: '供应商库' } },
-  { path: 'supply/purchases', component: stub, meta: { space: 'app', domain: '货源中心', title: '采购单' } },
-  { path: 'pricing', component: stub, meta: { space: 'app', domain: '经营优化', title: '动态定价' } },
-  { path: 'ads', component: stub, meta: { space: 'app', domain: '经营优化', title: '广告增长' } },
-  { path: 'orders', component: stub, meta: { space: 'app', domain: '订单履约', title: '订单管理' } },
-  { path: 'refunds', component: stub, meta: { space: 'app', domain: '客户售后', title: '售后管理' } },
-  { path: 'settlements', component: stub, meta: { space: 'app', domain: '订单履约', title: '账期结算' } },
-  { path: 'support', component: stub, meta: { space: 'app', domain: '客户售后', title: '智能客服' } },
-  { path: 'risk/alerts', component: stub, meta: { space: 'app', domain: '经营优化', title: '风险巡检' } },
-  { path: 'analytics/bi', component: stub, meta: { space: 'app', domain: '数据分析', title: 'BI 经营分析' } },
-  { path: 'analytics/finance', component: stub, meta: { space: 'app', domain: '数据分析', title: '财务工作台' } },
-  { path: 'analytics/landed-cost', component: stub, meta: { space: 'app', domain: '数据分析', title: '到岸成本配置' } },
   { path: 'ai/workflows', component: stub, meta: { space: 'app', domain: 'AI 运营', title: 'AI 工作流' } },
   { path: 'ai/knowledge', component: stub, meta: { space: 'app', domain: 'AI 运营', title: '知识库' } },
   { path: 'ai/decisions', component: stub, meta: { space: 'app', domain: 'AI 运营', title: 'AI 决策依据' } },
   { path: 'settings/ai', component: stub, meta: { space: 'app', domain: '设置与管理', title: 'AI 与集成设置', requiresOwner: true } },
   { path: 'settings/team', component: stub, meta: { space: 'app', domain: '设置与管理', title: '用户与角色', requiresOwner: true } },
+  // ── UX-D 经营闭环页 12 条（routes-uxd.js 单一事实源，path/meta 与冻结表一致） ──
+  ...UXD_ROUTES,
 ]
 
 const consoleChildren = [
