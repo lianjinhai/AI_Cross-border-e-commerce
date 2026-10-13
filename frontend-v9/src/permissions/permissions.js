@@ -25,6 +25,19 @@ export const LOGIN_PATH = '/console/login'
 /** 错误页：对所有已登录角色放行，避免守卫与错误页互相重定向死循环（契约 §3.3.3）。 */
 export const ERROR_PATHS = new Set(['/404', '/403', '/500'])
 
+/**
+ * 角色枚举常量（与后端 workspace_context 角色域一一对应，值即各模块在用的
+ * 字面量）：角色字符串一律从这里引用，禁止散落魔法字符串。
+ */
+export const ROLES = {
+  OWNER: 'OWNER',
+  OPERATOR: 'OPERATOR',
+  READ_ONLY: 'READ_ONLY',
+  COMPLIANCE: 'COMPLIANCE',
+  PLATFORM_ADMIN: 'PLATFORM_ADMIN',
+  FACTORY_COLLABORATOR: 'FACTORY_COLLABORATOR',
+}
+
 export const currentUser = () => {
   try { return JSON.parse(localStorage.getItem('erp_user') || 'null') }
   catch { return null }

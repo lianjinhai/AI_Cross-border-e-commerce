@@ -20,11 +20,12 @@ import { computed } from 'vue'
 import AppShellCore from './AppShellCore.vue'
 import NavSearch from '../components/NavSearch.vue'
 import { CONSOLE_DOMAINS, buildDomains } from '../shared/navigation/filter'
+import { ROLES } from '../permissions/permissions'
 import { getContext } from '../shared/workspace'
 
 // PLATFORM_ADMIN(非代客) → console 树（buildDomains 单一事实源）。
 const navigation = computed(() => buildDomains({
-  roleKey: getContext()?.role || 'PLATFORM_ADMIN',
+  roleKey: getContext()?.role || ROLES.PLATFORM_ADMIN,
   isImpersonating: false,
 }))
 
