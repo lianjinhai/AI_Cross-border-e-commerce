@@ -42,9 +42,10 @@
 | V9-B3 | P2 | ConsoleShell.vue:27 'PLATFORM_ADMIN' 字面量兜底 | ✅ 已修复（2128b60：permissions.js 导出 ROLES 枚举，ConsoleShell 引用） |
 | V9-B4 | P2 | 契约 §3.3.2 与 §3.3.3 对 COMPLIANCE 白名单外行为表述冲突 | ✅ 已修复（统一为 §3.3.2 重定向唯一权威规则，/403 仅防御性挂接，e18bd58） |
 | V9-B5 | P2 | ShellSidebar el-menu props 与 .menu-group 深色字面量 | 接受（沿现网写法，UX-C 接入 eslint 规则时一并治理） |
-| V9-C1 | P2 | LaunchCenter 保存视图「应用筛选」链路断裂（@apply-filters 无消费方） | 修复中（A 线 engineer-2） |
-| V9-D1 | P2 | Orders.vue 利润列文案未复用 biCaliber 常量 | 修复中（B 线 engineer-3） |
+| V9-C1 | P2 | LaunchCenter 保存视图「应用筛选」链路断裂（@apply-filters 无消费方） | ✅ 已修复（e0128a2：补事件绑定+applyViewToFilters 纯函数+用例） |
+| V9-D1 | P2 | Orders.vue 利润列文案未复用 biCaliber 常量 | ✅ 已修复（6a67b17：import biCaliber 常量） |
 | V9-D2 | P2 | UX-D 页面直接用 EmptyState/LoadingState 未走 SectionState 包装（风格分叉，行为等价） | 接受存量，UX-E 新页面起统一用 SectionState |
+| V9-B6 | P1→已修 | 旧 frontend exitImpersonate 只清标记不还原平台 token（平台管理员钉死租户身份） | ✅ UX-E 前半顺手根治（3c8c655：impersonation.js 快照/还原纯函数） |
 
 ## §4 验证基线
 
