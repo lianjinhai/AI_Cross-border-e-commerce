@@ -1,0 +1,110 @@
+/**
+ * V9 设计令牌基座（契约冻结：docs/FRONTEND_V9_CONTRACTS.md §1）。
+ *
+ * 起份方式：以 frontend/src/styles/tokens.css 全文拷贝为底（§1.1 旧 22 令牌逐字
+ * 平移，值与命名不变，视觉零变化），按 §1.2 追加扩展段；§1.3 深色模式本版只定
+ * 命名规则不实现；§1.4 Element Plus 映射约定沿用 `:root:root`（特异性 0,2,0）。
+ *
+ * 红线：字面量色值只允许出现在本文件；组件一律引用 §1.1/§1.2 的语义名，
+ * 深浅切换 = `[data-theme="dark"]` 内同名换值（只覆盖、不新增名字）。
+ */
+
+:root {
+  /* ---- 语义色（与 Element Plus 默认一致，§1.1 沿用） ---- */
+  --color-primary: #409EFF;
+  --color-success: #67C23A;
+  --color-warning: #E6A23C;
+  --color-danger: #F56C6C;
+  --color-info: #909399;
+  --color-bg: #f5f7fa;
+  --color-text: #303133;
+  --color-text-secondary: #909399;
+  --color-border: #dcdfe6;
+  --color-sidebar: #1f2d3d;
+
+  /* ---- 间距 ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* ---- 字号 ---- */
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 18px;
+  --font-size-display: 26px;
+
+  /* ---- 字重 ---- */
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-bold: 700;
+
+  /* ---- 圆角 ---- */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-round: 999px;
+
+  /* ---- 阴影（温和，避免抢占内容焦点） ---- */
+  --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.06);
+  --shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.12);
+  --shadow-focus: 0 0 0 2px rgba(64, 158, 255, 0.2);
+
+  /* ==== 以下为 V9 扩展段（契约 §1.2 新增） ==== */
+
+  /* ---- 文本/表面梯度（补齐现网散落值） ---- */
+  --color-text-regular: #606266;
+  --color-text-disabled: #c0c4cc;
+  --color-surface: #ffffff;
+  --color-surface-alt: #fafbfc;
+  --color-border-light: #e4e7ed;
+
+  /* ---- 语义浅底 ---- */
+  --color-primary-bg: #ecf5ff;
+  --color-success-bg: #f0f9eb;
+  --color-warning-bg: #fdf6ec;
+  --color-danger-bg: #fef0f0;
+  --color-info-bg: #f4f4f5;
+
+  /* ---- 空间强调色 ---- */
+  --space-accent-workspace: var(--color-primary);
+  --space-accent-console: #6f42c1;
+  --space-accent-factory: #0e9f6e;
+
+  /* ---- 图标尺寸 ---- */
+  --icon-sm: 14px;
+  --icon-md: 16px;
+  --icon-lg: 20px;
+
+  /* ---- 抽屉档位（统一两档） ---- */
+  --drawer-w-sm: 480px;
+  --drawer-w-md: 560px;
+}
+
+/**
+ * Element Plus 变量同源映射（契约 §1.4，逐字平移现方案）。
+ *
+ * 用 `:root:root`（特异性 0,2,0）而非 `:root`：EP 的变量定义在按需加载时可能
+ * 晚于本文件注入，同级选择器下后者胜出会覆盖本块；提高一格特异性可确保映射稳定
+ * 生效。EP 派生梯度（light-3/5/7/8/9）仍由 EP 构建期生成，本文件不处理。
+ */
+:root:root {
+  --el-color-primary: var(--color-primary);
+  --el-color-success: var(--color-success);
+  --el-color-warning: var(--color-warning);
+  --el-color-danger: var(--color-danger);
+  --el-color-error: var(--color-danger);
+  --el-color-info: var(--color-info);
+}
+
+/**
+ * 深色模式预留（契约 §1.3：本版不实现，只定命名规则）。
+ *
+ * 派生规则：深色值写于 `[data-theme="dark"]` 选择器内，**只覆盖、不新增名字**——
+ * 组件只允许引用上方语义名，深浅切换 = 同名换值；`--color-sidebar`、
+ * `--space-accent-*` 一并覆盖。禁止组件出现 `data-theme` 判断或第二套类名；
+ * 主题开关实现属 UX-F 之后，当前留空占位。
+ */

@@ -1,0 +1,8 @@
+body { margin: 0; font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif; background: var(--color-bg); }
+.page { padding: 16px; }
+.mb16 { margin-bottom: 16px; }
+.mr8 { margin-right: 8px; }
+.kpi-card { text-align: left; }
+.kpi-card .kpi-label { color: var(--color-text-secondary); font-size: 13px; margin-bottom: 6px; }
+.kpi-card .kpi-value { font-size: 26px; font-weight: 700; color: var(--color-text); }
+.chart-box { height: 320px; }

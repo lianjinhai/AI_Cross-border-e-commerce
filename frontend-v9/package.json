@@ -1,0 +1,28 @@
+{
+  "name": "ai-commerce-erp-frontend-v9",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5174",
+    "build": "vite build",
+    "preview": "vite preview --port 5174",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
+    "axios": "^1.7.9",
+    "echarts": "^6.1.0",
+    "element-plus": "^2.9.1",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "jsdom": "^25.0.1",
+    "unplugin-vue-components": "^0.27.5",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.9"
+  }
+}
