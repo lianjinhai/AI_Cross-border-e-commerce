@@ -20,9 +20,8 @@
 | UX-C 核心业务页 | ✅ QA 合并验收 PASS with notes（无 P0/P1） | 工作台/市场/商品/Listing/上线/店铺 + 第 2 批组件（含 SectionState 五态） | 7dd4f69 |
 | UX-D 经营闭环页 | ✅ QA 合并验收 PASS with notes（无 P0/P1） | 供应链拆分/履约/售后/优化/BI/财务/到岸成本 + 第 3 批组件 | c142577 |
 | 路由合并 | ✅ 完成（2e0ecd8：UXD_ROUTES 12 条挂接替换 StubPage，整仓 build 过） | router/index.js 引入 routes-uxd.js | 2e0ecd8 |
-| UX-E AI 及管理页 | ✅ 代码完成（A 线 3c8c655 + B 线 9f4eb68，295/295 全绿；路由合并中，QA 验收待合并后） | Console 4 页/工厂门户/登录分流 + 工作流/知识库/决策审计/AI 设置/团队/AI 副驾驶 | 3c8c655, 9f4eb68 |
-| UX-E AI 及管理页 | ⏳ 排队（前半可并行） | AI 运营/登录初始化/Console 4 页/Factory Portal | — |
-| UX-F 验证切换 | ⏳ 排队 | 覆盖矩阵/E2E/权限/性能/切换回退 | — |
+| UX-E AI 及管理页 | ✅ QA 验收 PASS with notes（295/295 全绿；代客安全链完整；AI 诚实边界完整；1 P2 缺项） | Console 4 页/工厂门户/登录分流 + AI 域/设置/副驾驶，路由合并 eda8729 | 3c8c655, 9f4eb68, eda8729 |
+| UX-F 验证切换 | ✅ 终验完成（ACCEPTANCE v2，0c2b597）：20 标准 18 通过+2 排期；7 旅程探活无断点；可切换 | 验收报告 v2 + 切换/回退建议 | 0c2b597 |
 
 ## §2 UX-B 交付事实（commit 1dd1526）
 
@@ -47,6 +46,7 @@
 | V9-D2 | P2 | UX-D 页面直接用 EmptyState/LoadingState 未走 SectionState 包装（风格分叉，行为等价） | 接受存量，UX-E 新页面起统一用 SectionState |
 | V9-B6 | P1→已修 | 旧 frontend exitImpersonate 只清标记不还原平台 token（平台管理员钉死租户身份） | ✅ UX-E 前半顺手根治（3c8c655：impersonation.js 快照/还原纯函数） |
 | V9-E1 | 备注 | AI 会话持久化、定价/广告/客服「查看依据」深链发送端、Support→Knowledge 反向互跳、最后 OWNER 降级后端约束——均后端能力未就绪或跨批接入项 | UX-F 覆盖核对时统一处置（不放假入口） |
+| V9-E2 | P2 | console/Tenants.vue 未展示 license_note（授权备注）列（后端 admin.py 字段仍在，纯展示遗漏） | 登记在案，UX-F 修复或接受 |
 
 ## §4 验证基线
 
@@ -67,5 +67,5 @@
 
 ## §6 变更记录
 
-- 2026-10-13：UX-A 冻结（f690fea + 契约 aed39e8）；UX-B 完成并过 QA（1dd1526 + 2128b60）；契约 P2 修订（e18bd58）；UX-C/D 并行交付（7dd4f69 + c142577）；路由合并（2e0ecd8）；契约回写七处真实端点偏离（dd7c055）；QA 合并验收进行中。
+- 2026-10-13：UX-A 冻结（f690fea + 契约 aed39e8）；UX-B 完成并过 QA（1dd1526 + 2128b60）；契约 P2 修订（e18bd58）；UX-C/D 并行交付（7dd4f69 + c142577）；路由合并（2e0ecd8）；契约回写七处真实端点偏离（dd7c055）；UX-E 双线交付（3c8c655 + 9f4eb68 + eda8729，代客 token 还原根治）；UX-F 终验完成（ACCEPTANCE v2，0c2b597，判定 PASS 可切换）。
 - 架构师一致性提醒（供 UX-F）：①矩阵 #6 Listing 发布验收用例仍写多店语义，需随单店发布口径修订；②UX-C 广告 ROI 与 #14 定价口径互链、UX-D LandedCost 与 #14 同口径，UX-F 走查时核对一致。
