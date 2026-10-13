@@ -56,7 +56,7 @@
         <el-table-column label="金额" width="100">
           <template #default="{ row }">${{ Number(row.amount || 0).toFixed(2) }}</template>
         </el-table-column>
-        <el-table-column label="利润（估算口径）" width="130">
+        <el-table-column :label="ESTIMATED_PROFIT_LABEL" width="130">
           <template #default="{ row }">
             <span :style="{ color: row.profit > 0 ? 'var(--color-success)' : 'var(--color-danger)' }">
               ${{ Number(row.profit || 0).toFixed(2) }}
@@ -151,6 +151,7 @@ import {
   ORDER_STATUS_LABELS, ORDER_MAIN_FLOW, nextStatusOptions, orderTimeline,
   parseImportErrors, CSV_IMPORT_HINT,
 } from '../../features/fulfillment/orderStateMachine'
+import { ESTIMATED_PROFIT_LABEL } from '../../shared/biCaliber'
 
 const PLATFORMS = ['tiktok', 'shopee', 'amazon', 'ebay', 'walmart', 'lazada', 'aliexpress', 'temu', 'shopify', 'mercadolibre', 'shein']
 
