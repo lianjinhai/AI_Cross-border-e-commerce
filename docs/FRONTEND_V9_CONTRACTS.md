@@ -60,6 +60,8 @@ slots: { default /* 页面内容 */, 'topbar-extras' /* 顶栏空间差异化装
 emits: { 'exit-impersonate' /* 退出代客 */, 'toggle-sidebar' /* 收起/展开 */ }
 ```
 
+**P2-1 补注（权威口径）**：UX-B 实现采用内核内置 `<router-view>` 承载路由页面内容（AppShellCore.vue），这是路由组合场景的**权威形态**，页面开发一律经路由挂载；`default` 插槽约定保留给非路由嵌套场景（测试桩、静态演示），两者不并存使用。
+
 三薄壳职责（各 ≤60 行）：WorkspaceShell 装配 WorkspaceSwitcher+StoreSwitcher+全局搜索+TaskCenter+通知+AI 副驾驶 FAB；ConsoleShell 仅租户标识+搜索；FactoryShell 仅工厂名（无副驾驶）。工厂账号隐藏副驾驶、Console 不显示副驾驶（旅程验收 J6/J7）。
 
 ### 2.2 导航数据结构（三空间同构，域数组）
@@ -156,7 +158,8 @@ meta: {
 
 1. 有 token 先 `ensureWorkspaceContext()`（刷新不丢权限，现行约定）；
 2. `routeRedirect()` 判定顺序不变：未登录→/console/login；PLATFORM_ADMIN(非代客)→仅 /console/*；FACTORY_COLLABORATOR→仅 /factory/*；COMPLIANCE→白名单外重定向落地页；`requiresOwner` 且非 OWNER→/app；代客中放行该租户 Workspace 视图；
-3. 404：未匹配路由→`/404`（NotFound）；403：已登录但白名单拒绝→`/403`（Forbidden），页内可「返回默认落地页」；500：全局错误边界→ServerError；
+3. **P2-4 澄清（权威规则唯一化）**：运行时权限分流**一律按第 2 条重定向**——COMPLIANCE 白名单外→`/app/compliance/approvals`、`requiresOwner` 非 OWNER→`/app`，此为唯一权威口径；`/403` 页仅作防御性挂接点保留（直接导航 /403、或未来显式拒绝场景），守卫**不会**把用户送到 /403，原「已登录但白名单拒绝→/403」条款**废弃**；
+4. 404：未匹配路由→`/404`（NotFound）；500：全局错误边界→ServerError；
 4. 登录成功按 `defaultLanding()` 分流（超管→/console/overview、工厂→/factory/products、合规→/app/compliance/approvals、其余→/app）。
 
 ---
@@ -196,9 +199,14 @@ fetchLaunches({page,filters,view}) → {items[],total};  createLaunch({product_i
 fetchLaunch(id) → {steps[],timeline[],mode:'GUIDED'|'PROFESSIONAL',...};  runStepAction(id,stepId,action) → 步骤回执
 syncLaunch(id) → 同步回执
 
-// listings.js（listings）：fetchListings({page,status}) → {items[],total};fetchListing(id) → 详情+回执
+// listings.js（listings）：fetchListings({page,status}) → {items[],total}
+// 【P2-2 回写】后端无 GET /listings/{id}（listings.py 实存仅：列表、/{id}/publication-attempts、review-queue、/{id}/reviews），
+//  原 fetchListing(id) 拆分为：
+fetchListingReceipts(id) → 发布回执数组（GET /listings/{id}/publication-attempts，PublicationReceipts 数据源）
+fetchListingReviews(id)  → 复核记录列表（GET /listings/{id}/reviews，审批分栏数据源）
+// 详情页数据由列表项 + 上述两接口拼装，不再假设单条详情端点
 generate(d)/optimize(id,d) → 生成/优化结果（含 AI 建议三段式数据）;  submitReview(id)/approveReview(id,verdict)
-publish(id,{shopIds}) → 发布回执 DTO（PublicationReceipts 数据源）
+publish(id,{shopIds}) → 发布回执 DTO
 
 // orders.js（orders）：fetchOrders({page,status,shopId}) → {items[],total};importCsv(file) → {ok[],errors:[{row,reason}]}
 updateStatus(id,status)（非法流转由后端拒绝，前端 StateBar 预校验）;ship(id,d) → 履约回执（物流轨迹待接入不渲染）
