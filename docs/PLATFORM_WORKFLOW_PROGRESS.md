@@ -144,4 +144,14 @@ T02 实现动作执行框架与处理器：`launch_actions.execute_launch_action
 
 测试：新增 `tests/test_launch_actions.py` 22 项（覆盖 AC-4~8）。后端全量正序与反序均 **897 passed / 2 xfailed / 1 xpassed**（既有合规待定样本保持，同时补齐 §13 素材批次的全量结果）；`ruff check` 全绿；文档一致性 `total=0`，`test_docs_consistency` 43 passed。
 
-未完成 / 边界：本轮闭环的是流程机制与可执行性——本地契约样本中仅「商品资料」步骤可被确定性完成，合规/核价/备货/标签/实拍等步骤仍保持就绪度规则给出的真实状态并给出原因与负责人，不得宣传为业务全链路已上线；Launch HTTP（B10/T03）与上线中心前端（F01-F03）尚未交付；主库与外部平台未操作。下一步：B02 确定性 NBA + B10 Launch API 与角色投影。
+未完成 / 边界：本轮闭环的是流程机制与可执行性——本地契约样本中仅「商品资料」步骤可被确定性完成，合规/核价/备货/标签/实拍等步骤仍保持就绪度规则给出的真实状态并给出原因与负责人，不得宣传为业务全链路已上线；Launch HTTP（B10/T03）与上线中心前端（F01-F03）尚未交付；主库与外部平台未操作。
+
+## 15. 确定性 NBA 与 Launch API（本批完成）
+
+T03（提交 `1feb18f`）交付 B02 与 B10：`launch_nba` 以纯函数按固定规则序计算 allowed/disabled/blocked 与 Next Best Action（不落库、不读时钟，同输入同输出；`COMPLETE_DATA` 需 `completion_satisfied`，`CANCEL` 需流程可取消）；`launch_dto` 承担响应投影（含 `StepDTO` 的 COMPLIANCE 角色剔除价格/成本/利润率/备货动作、事件载荷深度脱敏、`missing_evidence` 确定性派生、`verification_notice` 固定文案）；`launch_list` 先 Store Scope 后 SQL 筛选再分页，逐行重算时就绪度/事实异常降级为单条 `blocked_summary` 而非整页失败；`profiles.probe_profile` 提供忽略类目匹配的可用性探测。
+
+API：新增 `routers/launch.py` 八端点（`/context` 声明早于 `/{run_id}` 保证路由顺序；写路径服务函数不提交、由路由层统一 commit/rollback）与 `routers/product_channels.py`（`GET /products/{id}/channels`），`main.py` 注册两个路由。统一错误 envelope `{code,message,blockers,current_revision?,existing_launch_id?}`；列表分页字段为 `page_num`；未知查询参数或未知筛选值 422 `FILTER_INVALID`；只读方（`launch:read`）的详情/列表/步骤/事件端点零写入且不改 revision；Factory 身份统一 404。
+
+测试：新增 `tests/test_launch_nba.py` 10 项与 `tests/test_launch_api.py` 16 项（覆盖 AC-1/2/3/9/10/11/12/13）。后端全量正序与反序均 **923 passed / 2 xfailed / 1 xpassed**（≥ 897 基线）；`ruff check` 全绿；`git diff --check` 干净。
+
+未完成 / 边界：仍是零迁移（核验记录落 `WorkflowStep.result` + `WorkflowEvent`，审批关联落 `AiAction.evidence`），未新增表或列；未接通领域动作（B03-B09）与真实平台联调不变；上线中心前端（F01-F03）与 B12 全量门禁（含 Playwright E2E）尚未交付。下一步：F01 上线中心列表与数据层（T04）。
