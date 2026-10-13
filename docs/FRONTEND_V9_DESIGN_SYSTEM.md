@@ -60,6 +60,7 @@
 | FormSection | 表单分组（设置子页/向导步） | props: title、description；slot: default | 新增（承接 #27 五类配置分组） |
 | ConfirmDialog | 确认弹窗（含危险级） | props: level('normal'\|'danger')、message | 新增（统一 ElMessageBox 封装） |
 | AuditTimeline | 审计/时间线（launch 时间线、退款状态机、AI 决策链） | props: events、dict | 吸收 LaunchTimeline 泛化 + Refunds 状态机可视化 |
+| SectionState | 页面取数状态机五态包装（loading/empty/error/nopermission/默认内容）【UX-C 第 2 批延伸交付】 | props: state、reason?；slots: default、各态定制 | 包装复用 LoadingState/EmptyState（含 NO_PERMISSION reason）/ErrorState 家族，页面取数处统一套用 |
 
 未被上表吸收的 V1.0 组件去留：StateWrapper/NoPermissionState/NotConfiguredState/WaitingExternalState → 语义并入 EmptyState 的 reason 枚举扩展（`NO_PERMISSION`/`NOT_CONFIGURED`/`WAITING_EXTERNAL`）+ PageHeader 降级插槽，V9 统一为 EmptyState 家族；NextActionButton/PublishActions/LaunchActionDialog/LaunchExperienceToggle/LaunchStatusSummary/PublicationReceipts/ShopCommerceFields/PartialDataBanner → 归入对应 features/ 域组件（launch/listings/shops 专用，不进公共库），保留逻辑平移；Breadcrumb → 并入 AppShell。
 

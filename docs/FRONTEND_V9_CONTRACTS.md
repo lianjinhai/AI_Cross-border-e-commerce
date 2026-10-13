@@ -192,7 +192,8 @@ createDropshipOrder(id,{...}) → 采购单 DTO（走 purchases 链路）;  fetc
 fetchChannels(id) → 渠道只读列表
 
 // shops.js（shops）：fetchShops() → {items[]（含授权态/token 过期态）};authorize(shopType)/exchangeCode(d)/refresh(id)
-syncOrders(id) → 同步结果;  saveCategoryMapping(id,d)
+syncOrders(id) → 单店拉单回执（POST /shops/{id}/sync_orders）
+saveCategoryMapping(id,d)【UX-C 回写：d 不含 shop_id——shops.py MappingIn 无此字段，归属关系由路径 id 承载】
 
 // launch.js（launch，沿用 composables/launchCenter.js 封装逻辑平移）：
 fetchLaunches({page,filters,view}) → {items[],total};  createLaunch({product_id,shop_id,...}) → 流程 DTO
@@ -205,18 +206,32 @@ syncLaunch(id) → 同步回执
 fetchListingReceipts(id) → 发布回执数组（GET /listings/{id}/publication-attempts，PublicationReceipts 数据源）
 fetchListingReviews(id)  → 复核记录列表（GET /listings/{id}/reviews，审批分栏数据源）
 // 详情页数据由列表项 + 上述两接口拼装，不再假设单条详情端点
-generate(d)/optimize(id,d) → 生成/优化结果（含 AI 建议三段式数据）;  submitReview(id)/approveReview(id,verdict)
-publish(id,{shopIds}) → 发布回执 DTO
+generate(d)/optimize(id,d) → 生成/优化结果（含 AI 建议三段式数据）;  submitReview(id)
+approveReview(id,{note}) → 审批回执【UX-C 回写：实参为 {note}，listings.py:140-141 无 verdict 字段】
+publish(id,{shop_id}) → 发布回执 DTO【UX-C 回写：单店发布，listings.py PublishIn 实际字段为 shop_id，非 shop_ids[]】
+fetchListingById(id) → Listing 详情 DTO【UX-C 新增兜底：无独立后端端点，实现为按页检索列表后按 id 匹配取项；
+  用途：深链直达 /app/listings/:id 时补齐列表项数据；页容量内未命中返回 null 由页面呈 ErrorState】
 
-// orders.js（orders）：fetchOrders({page,status,shopId}) → {items[],total};importCsv(file) → {ok[],errors:[{row,reason}]}
+// orders.js（orders）：fetchOrders({page,status,platform,keyword}) → {items[],total}
+// 【UX-D 回写】后端真实筛参为 platform/keyword；签名保留 shopId 形参但**不发送**（后端无此筛参，仅前端本地过滤用）
+importCsv(file) → {ok[],errors:[{row,reason}]}
 updateStatus(id,status)（非法流转由后端拒绝，前端 StateBar 预校验）;ship(id,d) → 履约回执（物流轨迹待接入不渲染）
-syncShopOrders(shopId) → 同步回执
+// 两个同步入口分工【UX-D 回写】：
+syncShopOrders({platform,count}) → 平台级同步回执（POST /orders/sync，后端 SyncIn 无 shop_id——按平台批量同步）
+// 真实「按店铺拉单」走 shops.syncOrders(id)（POST /shops/{id}/sync_orders）；订单页同步按钮按是否选中店铺分流调用
 
 // purchases.js（purchases）：fetchPurchases({page,status,supplierId}) → {items[],total}
-createPurchase(d) → 采购单 DTO;generateFromForecast(supplierId) → 生成结果（一键从预测生成）
+createPurchase(d) → 采购单 DTO
+generateFromForecast({productIds,qtyMultiplier}) → 生成结果【UX-D 回写：入参为商品 id 数组+数量倍数（后端 FromForecastIn），非 supplierId；一键从预测生成】
 
-// bi.js（bi）：fetchMetrics() → 指标数组（每项含口径说明字段）;fetchTrends(query) → 序列数据
+// bi.js（bi）：fetchMetrics({days}) → 指标数组（每项含口径说明字段；{days} 为时间窗 query 入参）
+fetchDataQuality() → 数据质量报告 DTO;  fetchProfitAnalysis(query) → 利润分析 DTO【UX-D 回写新增】
+fetchTrends(query) → 序列数据
 generateReport(query) → {taskId?,report}（异步进度按回执轮询，无 taskId 则同步返回）
+
+// support.js（support）：fetchSessions({status,page}) → {items[],total};  reply(id,{content}) → 回执;  close(id) → 回执
+autoReply(id) → AI 建议回复（落库端点，无「仅草稿」端点）【UX-D 回写】
+// 交互模式约定：调用 autoReply 后前端将建议内容**引用到回复输入框**（非直接发送），运营可编辑后再人工发送——草稿态为纯前端行为，不依赖后端
 
 // actions.js（独立前缀 /actions，ApprovalPanel 统一消费）：
 fetchActions({status,type,page}) → {items[],total};approve(id)/reject(id,{reason}) → 审批回执
