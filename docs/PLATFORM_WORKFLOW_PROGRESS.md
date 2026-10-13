@@ -167,3 +167,15 @@ API：新增 `routers/launch.py` 八端点（`/context` 声明早于 `/{run_id}`
 测试：新增 `tests/test_launch_recovery.py` 4 例（无意图回退 / 有意图标注不重发 / 二次调用幂等 / 已结束 run 不动）。后端全量正序与反序均 **927 passed / 2 xfailed / 1 xpassed**；`ruff check` 全绿。
 
 未完成 / 边界：启动扫描当前持单事务跨全部候选 run（重启时候选通常极少），未做每 run 独立事务；`recover_run_steps` 薄封装未提供。下一步：F01 上线中心列表与数据层（T04）。
+
+## 17. 上线中心列表与数据层（本批完成）
+
+T04（提交 `1e6a331`）交付 F01：新增 `frontend/src/composables/launchCenter.js`（数据层：context/列表/详情/步骤/事件/动作执行/sync；动作执行必带 `Idempotency-Key` 与 `expected_revision`；含可 vitest 直测的纯函数——执行/平台状态文案、空态分因、Guided 摘要、`return_to` 站内白名单校验、幂等键生成、错误 envelope 解析与 409 保留输入）与 `frontend/src/views/LaunchCenter.vue`（11 列 + 11 项筛选 + 服务端分页用 `page_num` + 空态分因可重试 + 行点击进详情带 `return_to`）。
+
+配套修改：`api.js` 响应拦截器在 `detail` 为对象时取 `detail.message`（此前会渲染 `[object Object]`）；`router.js` 新增 `/launch` 列表路由（详情路由留 T05）；`Layout.vue`「商品」组新增「上线中心」并把 `/launch` 加入合规员菜单白名单（非 OWNER 隐藏列表不含 `/launch`）；`permissions.js` 新增 `APPROVER_PREFIX_PATHS=['/launch']`，合规员放行 `/launch` 与 `/launch/:id`，其余路径仍精确匹配。
+
+AC 落地：AC-14.2 已核验——`WAITING_EXTERNAL` 文案「等待平台反馈」用中性 `info`（非失败红），`UNKNOWN` 用 `info`（不显示为绿色完成）；AC-14.6 `verification_notice`（「本地流程验证，不代表真实平台接入」）；AC-14.7 `return_to` 还原筛选；AC-16.4 `experienceMode` 读 `context.effective_experience_mode` 兜底 `GUIDED`；AC-17.1 列表行可识别 `environment`/`verification_status`。
+
+测试：新增 `frontend/tests/launch-center.test.js` 28 例 + `permissions.test.js` 仅新增 1 例（未改既有断言）；`npm test` 8 文件 **108 passed**（≥ 前端基线 77）；`npm run build` 通过（路由级代码分割生效）。
+
+未完成 / 边界：行点击导航到 `/launch/:id` 需 T05 注册详情路由（当前点击暂无匹配路由）；责任人筛选用 `owner_user_id` 数字输入（无用户列表端点，未新增后端）。下一步：F02/F03 详情双模式与 B12 全量门禁（T05）。
