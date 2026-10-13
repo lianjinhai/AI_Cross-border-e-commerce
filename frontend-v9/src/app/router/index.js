@@ -2,6 +2,8 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { currentUser, routeRedirect } from '../../permissions/permissions'
 import { ensureWorkspaceContext, getContext } from '../../shared/workspace'
 import { UXD_ROUTES } from './routes-uxd'
+import { UXE_A_CONSOLE_CHILDREN, UXE_A_FACTORY_CHILDREN, UXE_A_ROOT } from './routes-uxe-a'
+import { UXE_B_ROUTES } from './routes-uxe-b'
 import { legacyRedirectTarget } from './legacy-redirects'
 
 /**
@@ -13,8 +15,9 @@ import { legacyRedirectTarget } from './legacy-redirects'
  * - title：页标题（document.title + 面包屑叶）；hidden：参数详情路由不入侧栏；
  * - requiresOwner：仅 /app/settings/* 标注，非 OWNER 守卫拦截。
  *
- * 页面组件：UX-B 阶段统一挂 StubPage 占位（真实页面由 UX-C/D/E 交付），
- * 路由 path/meta/懒加载结构按契约一次冻结，后续阶段只替换 component。
+ * 页面组件：UX-B 阶段统一挂 StubPage 占位，后续阶段（UX-C/D/E）以 routes-uxd.js /
+ * routes-uxe-a.js / routes-uxe-b.js 数组与页内直挂组件替换（routes-*.js 为各阶段
+ * 单一事实源，保留供测试引用）；目前仅剩 listings/:id、compliance 两条 UX-F 待接。
  * 旧路径 302：见 legacy-redirects.js（查表 redirect，R8 显式判断 query.tab）。
  */
 const stub = () => import('../../app/pages/StubPage.vue')
@@ -41,31 +44,27 @@ const appChildren = [
   { path: 'launch', component: launchCenter, meta: { space: 'app', domain: '商品经营', title: '上线中心' } },
   { path: 'launch/:id', component: launchDetail, meta: { space: 'app', domain: '商品经营', title: '上线流程详情', hidden: true } },
   { path: 'channels/shops', component: shops, meta: { space: 'app', domain: '销售渠道', title: '店铺授权' } },
-  { path: 'ai/workflows', component: stub, meta: { space: 'app', domain: 'AI 运营', title: 'AI 工作流' } },
-  { path: 'ai/knowledge', component: stub, meta: { space: 'app', domain: 'AI 运营', title: '知识库' } },
-  { path: 'ai/decisions', component: stub, meta: { space: 'app', domain: 'AI 运营', title: 'AI 决策依据' } },
-  { path: 'settings/ai', component: stub, meta: { space: 'app', domain: '设置与管理', title: 'AI 与集成设置', requiresOwner: true } },
-  { path: 'settings/team', component: stub, meta: { space: 'app', domain: '设置与管理', title: '用户与角色', requiresOwner: true } },
+  // ── UX-E 后半：AI 域与设置页 5 条（routes-uxe-b.js 单一事实源） ──
+  ...UXE_B_ROUTES,
   // ── UX-D 经营闭环页 12 条（routes-uxd.js 单一事实源，path/meta 与冻结表一致） ──
   ...UXD_ROUTES,
 ]
 
 const consoleChildren = [
-  { path: 'overview', component: stub, meta: { space: 'console', domain: '平台管理', title: '平台总览' } },
-  { path: 'tenants', component: stub, meta: { space: 'console', domain: '平台管理', title: '租户管理' } },
-  { path: 'audit', component: stub, meta: { space: 'console', domain: '平台管理', title: '访问审计' } },
-  { path: 'maintenance', component: stub, meta: { space: 'console', domain: '平台管理', title: '维护' } },
+  // ── UX-E 前半：控制台 4 页（routes-uxe-a.js 单一事实源） ──
+  ...UXE_A_CONSOLE_CHILDREN,
 ]
 
 const factoryChildren = [
-  { path: 'products', component: stub, meta: { space: 'factory', domain: '工厂门户', title: '产品与产能' } },
+  // ── UX-E 前半：工厂门户主页（routes-uxe-a.js 单一事实源） ──
+  ...UXE_A_FACTORY_CHILDREN,
 ]
 
 const routes = [
   // ── 旧路径 302 查表（契约 §3.2，30 条；未命中旧路径由 catch-all 落 404） ──
   ...legacyRedirectTable(),
-  // ── 登录（全空间共用） ──
-  { path: '/console/login', component: stub, meta: { space: 'console', title: '登录' } },
+  // ── 登录（全空间共用，壳外独立页；UX-E 前半真实组件） ──
+  ...UXE_A_ROOT,
   // ── 三空间外壳（AppShell 三薄壳选型依据 meta.space） ──
   {
     path: '/app',
