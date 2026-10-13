@@ -61,6 +61,11 @@ async def lifespan(_app: FastAPI):
     start_scheduler()
     from .workflows.engine import recover_incomplete_runs
     recover_incomplete_runs()
+    # 平台上线流程的启动扫描（AC-8.5/D12）：以系统身份回收未结束流程的 RUNNING 步骤，
+    # 不依赖任何 manage 用户刷新（系统级确定性）。
+    from .workflows.launch_recovery import recover_launch_steps
+    with SessionLocal() as db:
+        recover_launch_steps(db)
     yield
 
 
