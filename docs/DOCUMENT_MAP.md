@@ -83,6 +83,22 @@
 | `docs/AI原生能力升级方案.md` | **待专家论证** | AI 能力升级（数据飞轮/主动智能/可解释决策） | 论证后按 Agent OS 架构实施 |
 | `docs/M4客服知识自进化方案与论证.md` | 论证完成，**待实施**（P2，高风险） | 客服知识自动进化 | 实施后并入 Agent OS 或归档 |
 
+### 2.6 前端 IA / UX 蓝图类（UX-00 起推进）
+
+本类为全平台前端信息架构与体验统一优化的蓝图与进度文档，按阶段推进；冻结口径 v1.0 见进度文档 §0。
+
+| 文档 | 状态 | 作用 |
+|---|---|---|
+| docs/FRONTEND_UX_PROGRESS.md | 活（进度事实源） | 前端 UX 统一优化的阶段状态/关键决策/缺陷/验证基线唯一事实源 |
+| docs/FRONTEND_INFORMATION_ARCHITECTURE.md | FROZEN_FOR_IMPLEMENTATION | as-is→to-be 信息架构、路由/菜单映射、权限分流规则 |
+| docs/FRONTEND_DESIGN_SYSTEM.md | FROZEN_FOR_IMPLEMENTATION | 设计令牌规范 + 20 类公共组件冻结清单 |
+| docs/FRONTEND_API_ALIGNMENT.md | FROZEN_FOR_IMPLEMENTATION | 11 域端点对照、未接通动作边界、BFF 只读聚合方案 |
+| docs/FRONTEND_IMPLEMENTATION_PLAN.md | FROZEN_FOR_IMPLEMENTATION | UX-01..UX-05 文件级实施计划与冻结接口清单 |
+| docs/FRONTEND_UX_AUDIT.md | 待产出（产品经理） | 全站体验与能力缺口审计 |
+| docs/FRONTEND_PAGE_MATRIX.md | 待产出（产品经理） | 全站 30 页页面矩阵 |
+| docs/FRONTEND_USER_JOURNEYS.md | 待产出（产品经理） | A–H 旅程与 A–G 用户画像与断点 |
+| docs/FRONTEND_UX_ACCEPTANCE.md | 待产出（UX-05 QA） | 全旅程验收报告 |
+
 ---
 
 ## 3. 归档目录
