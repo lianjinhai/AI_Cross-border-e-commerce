@@ -99,6 +99,20 @@
 | docs/FRONTEND_USER_JOURNEYS.md | 待产出（产品经理） | A–H 旅程与 A–G 用户画像与断点 |
 | docs/FRONTEND_UX_ACCEPTANCE.md | 待产出（UX-05 QA） | 全旅程验收报告 |
 
+### 2.x V9 全站前端重设计系列（FRONTEND_V9_*，UX-A 冻结）
+
+V9.0 全站前端重设计项目的产品与架构冻结文档；UX-A 一次性冻结，UX-B..F 按实施计划推进。切换完成前旧 `frontend/` 保持可运行。
+
+| 文档 | 状态 | 作用 |
+|---|---|---|
+| docs/FRONTEND_V9_MASTER_DESIGN.md | UX-A 冻结 | 三空间外壳架构、基座落位决策（frontend-v9 新目录）、迁移/回退总纲、风险清单 |
+| docs/FRONTEND_V9_PAGE_MATRIX.md | UX-A 冻结 | 全站 30 界面逐页矩阵（含 18 项弹窗/隐藏界面清单、后端域覆盖核对） |
+| docs/FRONTEND_V9_USER_JOURNEYS.md | UX-A 冻结 | 三产品空间定义与 7 类用户旅程、跨起点衔接 |
+| docs/FRONTEND_V9_NAVIGATION.md | UX-A 冻结 | 三空间导航冻结（11 业务域+Console/Factory 菜单）、顶栏规范、6 角色可见路径 |
+| docs/FRONTEND_V9_DESIGN_SYSTEM.md | UX-A 冻结 | Design Tokens 扩展 + 20 类公共组件复用/替代映射、AI 建议三段式、状态字典 |
+| docs/FRONTEND_V9_API_MAPPING.md | UX-A 冻结 | 30 页逐页端点映射（仅真实后端路由）、API 层组织、BFF 只读约束沿用 |
+| docs/FRONTEND_V9_IMPLEMENTATION_PLAN.md | UX-A 冻结 | UX-B..F 文件级计划、冻结契约与并行批次、测试策略、切换回退步骤 |
+
 ---
 
 ## 3. 归档目录
