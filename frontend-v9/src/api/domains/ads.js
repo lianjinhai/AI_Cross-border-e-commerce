@@ -1,7 +1,26 @@
+import api from '../../shared/api/client'
+
 /**
- * ads（广告增长） 域（占位）：对应 backend/app/routers/ads.py。
- *
- * UX-B 仅建文件锁定模块清单（契约 §4.1）；实现于 UX-C/D/E 按契约 §4.2
- * 签名模式补齐：fetchXxx(参数) → Promise<DTO>；actionXxx(参数) → Promise<结果DTO>；
- * 只封装本 router 真实存在的端点，DTO 转换走 api/dto.js 纯函数。
+ * ads 域（契约 §4.2）：对应 backend/app/routers/ads.py（前缀 /ads）。
+ * 预算优化的审批-执行-结果三态经独立 /actions 域（ApprovalPanel 统一消费）。
  */
+
+/** 广告 ROI 报告：GET /ads/campaigns → {campaigns[], summary}。 */
+export async function fetchCampaigns() {
+  return (await api.get('/ads/campaigns')).data
+}
+
+/** 创建广告活动：POST /ads/campaigns → 活动 DTO（草稿态）。 */
+export async function createCampaign(data = {}) {
+  return (await api.post('/ads/campaigns', data)).data
+}
+
+/** 预算优化：POST /ads/campaigns/{id}/optimize → 提案（status/action_id/approval_required）。 */
+export async function optimizeCampaign(campaignId) {
+  return (await api.post(`/ads/campaigns/${campaignId}/optimize`)).data
+}
+
+/** AI 选词：POST /ads/suggest {product_id, platform} → {keywords[], reason, ...}。 */
+export async function suggestKeywords({ productId, platform = 'facebook' } = {}) {
+  return (await api.post('/ads/suggest', { product_id: productId, platform })).data
+}
