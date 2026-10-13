@@ -158,14 +158,67 @@ def select_profile(db, ctx, product_id, shop_id, environment):
 
 
 def _match_score(row, targets, category):
+    score = _profile_target_score(row, targets)
+    if score is None:
+        return None
+    if row.category_scope != ["ANY"]:
+        if not category or category not in row.category_scope:
+            return None
+        score += 1
+    return score
+
+
+def _profile_target_score(row, targets):
+    """店铺上下文匹配打分（忽略类目）：任一具体字段不匹配返回 None。"""
     score = 0
     for field, target in targets.items():
         value = getattr(row, field)
         if value != "ANY" and value != target:
             return None
         score += value != "ANY"
-    if row.category_scope != ["ANY"]:
-        if not category or category not in row.category_scope:
-            return None
-        score += 1
     return score
+
+
+def probe_profile(db, ctx, shop_id, environment):
+    """忽略类目的 Profile 可用性探测（context 端点用，AC-13.1）。
+
+    返回 ``(row|None, reason)``；reason ∈ "" | STORE_CONTEXT_MISSING | PROFILE_NOT_FOUND |
+    PROFILE_AMBIGUOUS。抛 ProfileError（SCOPE_DENIED / TARGET_NOT_FOUND / SOURCE_STORE /
+    ENVIRONMENT_INVALID）；与 select_profile 同源规则，仅去掉类目维度。
+    """
+    current, scope = _context(db, ctx)
+    try:
+        scope.require(shop_id)
+    except StoreScopeError as exc:
+        raise ProfileError("SCOPE_DENIED", str(exc), exc.status_code) from exc
+    shop = db.get(Shop, shop_id, populate_existing=True)
+    if shop is None or shop.tenant_id != current.legacy_tenant_id or shop.archived_at is not None:
+        raise ProfileError("TARGET_NOT_FOUND", "目标店铺不存在", 404)
+    if shop.role != "sales" or shop.platform == "1688":
+        raise ProfileError("SOURCE_STORE", "货源店铺不能作为上线目标")
+    if environment not in {"CONTRACT_TEST", "PRODUCTION"}:
+        raise ProfileError("ENVIRONMENT_INVALID", "流程环境无效")
+    if not shop.market or shop.fulfillment_mode not in FULFILLMENT_MODES:
+        return None, "STORE_CONTEXT_MISSING"
+    market = store_market(shop.market)
+    if not market:
+        return None, "STORE_CONTEXT_MISSING"
+    targets = {field: getattr(shop, field) for field in
+               ("platform", "store_type", "account_type", "business_mode", "fulfillment_mode")}
+    targets["market"] = market
+    rows = db.query(WorkflowTemplate).filter_by(
+        tenant_id=current.legacy_tenant_id, flow_kind=PLATFORM_LAUNCH,
+        definition_status="PUBLISHED", environment=environment).populate_existing().all()
+    matches = {}
+    for row in rows:
+        definition_snapshot(row)
+        score = _profile_target_score(row, targets)
+        if score is not None and (row.profile_key not in matches or row.version > matches[row.profile_key][1].version):
+            matches[row.profile_key] = score, row
+    if not matches:
+        return None, "PROFILE_NOT_FOUND"
+    best_score = max(score for score, _ in matches.values())
+    best = [row for score, row in matches.values() if score == best_score]
+    if len(best) != 1:
+        return None, "PROFILE_AMBIGUOUS"
+    return best[0], ""

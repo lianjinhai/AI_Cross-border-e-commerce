@@ -27,11 +27,13 @@ from .routers import (
     factory_network,
     finance,
     knowledge,
+    launch,
     listings,
     me,
     orders,
     pricing,
     product_assets,
+    product_channels,
     products,
     purchases,
     refunds,
@@ -74,8 +76,8 @@ def create_app() -> FastAPI:
     # 放在 CORS 之后 = 成为最外层，信任边界贴在最边缘。
     install_proxy_headers_middleware(app)
 
-    for m in (auth, products, product_assets, discovery, suppliers, listings, compliance, actions,
-              pricing, ads, orders, support, bi, workflows, knowledge, ai,
+    for m in (auth, products, product_assets, product_channels, discovery, suppliers, listings, compliance, actions,
+              pricing, ads, orders, support, bi, workflows, launch, knowledge, ai,
               schedules, purchases, shops, admin, refunds, settlements, finance,
               factory_network, cross_border, me, alerts):
         app.include_router(m.router, prefix="/api")
