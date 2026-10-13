@@ -45,11 +45,11 @@
       <div class="sub">可执行动作</div>
       <div class="actions">
         <div v-for="entry in actions" :key="entry.action" class="action">
-          <el-button size="small" :type="entry.executable ? 'primary' : 'info'" plain
-            :disabled="!entry.executable || !canManage" @click="$emit('run', entry)">
-            {{ entry.action }}
-          </el-button>
-          <span v-if="!entry.executable" class="reason">{{ entry.disabled_reason }}</span>
+          <!-- 不可执行一律 disabled（默认动作按钮语义），权限不足同样不可点；原因旁展示。 -->
+          <NextActionButton :action="entry.action" :executable="entry.executable && canManage"
+            :reason="entry.disabled_reason" @run="$emit('run', entry)" />
+          <NotConfiguredState v-if="isNotConnected(entry)" :capability="entry.action"
+            :reason="entry.disabled_reason" />
         </div>
         <span v-if="!actions.length" class="muted">该步骤无可执行动作</span>
         <span v-if="!canManage" class="muted">只读账号：写操作已隐藏</span>
@@ -61,7 +61,11 @@
 
 <script setup>
 import { computed } from 'vue'
-import { evidenceText, executionStatusMeta, notConnected, professionalFields } from '../composables/launchCenter'
+import {
+  NOT_CONNECTED, evidenceText, executionStatusMeta, notConnected, professionalFields,
+} from '../composables/launchCenter'
+import NextActionButton from './NextActionButton.vue'
+import NotConfiguredState from './NotConfiguredState.vue'
 
 const props = defineProps({
   step: { type: Object, default: null },
@@ -78,6 +82,12 @@ const resultText = computed(() => {
   if (!result || !Object.keys(result).length) return '未接入'
   return JSON.stringify(result, null, 2)
 })
+
+/** 原因即「未接入」时，额外显式声明能力缺失（UX-03）。 */
+function isNotConnected(entry) {
+  const reason = entry?.disabled_reason
+  return typeof reason === 'string' && reason.includes(NOT_CONNECTED)
+}
 </script>
 
 <style scoped>
@@ -88,7 +98,7 @@ const resultText = computed(() => {
 .result { background: #f5f7fa; border-radius: 4px; padding: 8px; font-size: 12px;
   max-height: 160px; overflow: auto; margin: 0; white-space: pre-wrap; word-break: break-all; }
 .actions { display: flex; flex-direction: column; gap: 6px; }
-.action { display: flex; align-items: center; gap: 8px; }
+.action { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .reason { color: #e6a23c; font-size: 12px; }
 .missing { color: #e6a23c; }
 .muted { color: #a8abb2; font-size: 12px; }

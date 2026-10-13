@@ -26,11 +26,21 @@
     </el-card>
 
     <el-card v-loading="loading">
+      <template #header>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span>上线流程</span>
+          <!-- 权限走 permissions.js 的 can()（Context 权威）；无 launch:create 时不渲染 -->
+          <el-button v-if="canCreate" type="primary" size="small" @click="openCreate">＋ 创建上线流程</el-button>
+        </div>
+      </template>
+
       <el-empty v-if="!loading && !items.length" :description="empty.text" :image-size="80">
         <div class="empty-hint">{{ empty.hint }}</div>
         <el-button v-if="empty.action === 'retry'" type="primary" @click="reload">重试</el-button>
         <el-button v-else-if="empty.action === 'clear_filters'" @click="resetFilters">清除筛选</el-button>
         <el-button v-else-if="empty.action === 'add_shop'" @click="goShops">去店铺授权</el-button>
+        <!-- 增量：NO_PRODUCT 空态提供创建入口（既有 6 种原因的 action 语义不变） -->
+        <el-button v-if="empty.createAction && canCreate" type="primary" @click="openCreate">创建上线流程</el-button>
       </el-empty>
 
       <template v-else>
@@ -92,6 +102,26 @@
           :page-size="pageSize" v-model:current-page="pageNum" @current-change="load" />
       </template>
     </el-card>
+
+    <el-dialog v-model="createDialog" title="创建上线流程" width="440px">
+      <el-form label-width="70px">
+        <el-form-item label="商品">
+          <el-select v-model="createForm.productId" filterable placeholder="选择商品" style="width:100%">
+            <el-option v-for="p in productOptions" :key="p.id" :label="`#${p.id} ${p.title}`" :value="p.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="店铺">
+          <el-select v-model="createForm.shopId" placeholder="选择店铺" style="width:100%">
+            <el-option v-for="s in shopOptions" :key="s.id" :label="`${s.platform} · ${s.name}`" :value="s.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="createDialog = false">取消</el-button>
+        <!-- 商品 / 店铺未选齐时禁用，避免必然失败的提交 -->
+        <el-button type="primary" :loading="creating" :disabled="!canSubmitCreate" @click="submitCreate">创建</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -99,12 +129,16 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
+import { ElMessage } from '../ui'
+import { can } from '../permissions'
 import {
   EXECUTION_STATUS,
   blockerText,
   buildReturnTo,
+  createLaunch,
   detailPath,
   emptyStateReason,
+  errorEnvelope,
   executionStatusMeta,
   listLaunches,
   listQuery,
@@ -132,12 +166,21 @@ const context = ref(null)
 const error = ref(null)
 const productOptions = ref([])
 
+// 创建上线流程（UX-03）
+const shopOptions = ref([])
+const createDialog = ref(false)
+const creating = ref(false)
+const createForm = reactive({ productId: null, shopId: null })
+
 const shops = computed(() => context.value?.shops || [])
 const platforms = computed(() => [...new Set(shops.value.map((s) => s.platform).filter(Boolean))])
 const markets = computed(() => [...new Set(shops.value.map((s) => s.market).filter(Boolean))])
 const empty = computed(() => emptyStateReason({
   context: context.value, filters: q, error: error.value, total: total.value,
 }))
+// 权限：Context 权威（D24），无 launch:create 时不渲染入口
+const canCreate = computed(() => can('launch:create'))
+const canSubmitCreate = computed(() => Boolean(createForm.productId && createForm.shopId))
 
 async function loadContextSafely() {
   try { context.value = await loadContext() } catch { context.value = null }
@@ -189,11 +232,41 @@ async function loadProducts() {
   }
 }
 
+async function loadShops() {
+  try {
+    const { data } = await api.get('/shops', { params: { page_num: 1, page_size: 100 } })
+    shopOptions.value = data.items || []
+  } catch {
+    shopOptions.value = []
+  }
+}
+
+function openCreate() {
+  createForm.productId = null
+  createForm.shopId = null
+  createDialog.value = true
+}
+
+async function submitCreate() {
+  if (!canSubmitCreate.value) return
+  creating.value = true
+  try {
+    const run = await createLaunch({ productId: createForm.productId, shopId: createForm.shopId })
+    createDialog.value = false
+    router.push(detailPath(run.id, buildReturnTo(q)))
+  } catch (err) {
+    // 失败如实提示，绝不伪造成功、不跳转
+    ElMessage.error(errorEnvelope(err).message)
+  } finally {
+    creating.value = false
+  }
+}
+
 onMounted(async () => {
   // 从详情返回时按 return_to 还原筛选（AC-14.7；白名单由数据层校验）。
   const restored = parseReturnTo(route.query.return_to)
   if (restored) Object.assign(q, restored)
-  await Promise.all([loadContextSafely(), loadProducts()])
+  await Promise.all([loadContextSafely(), loadProducts(), loadShops()])
   load()
 })
 </script>

@@ -1,4 +1,5 @@
 import api from '../api'
+import { RETURN_WHITELIST, isSafeReturnTo, sanitizeReturnTo } from '../utils/navigationReturn'
 
 /**
  * 上线中心数据层（设计 D9 / T04）：列表、上下文、详情、步骤、事件、动作执行、同步。
@@ -11,11 +12,14 @@ import api from '../api'
  * 纯函数集中在文件后半段，供 vitest 直测（组件只消费，不重复实现判定）。
  */
 
+// 站内回跳白名单校验已迁入中立模块 `utils/navigationReturn.js`（白名单扩为上线可挂接的
+// 专业页，实现 AC-14.7 闭环）。此处**重新导出**，保证本模块冻结公共 API 与既有测试不变。
+export { RETURN_WHITELIST, isSafeReturnTo, sanitizeReturnTo }
+
 const LIST_PAGE_FIELDS = new Set(['page_num', 'page_size'])
 const BOOLEAN_FILTERS = ['mine', 'waiting_platform', 'blocked_only', 'include_history']
 const NUMBER_FILTERS = ['product_id', 'shop_id', 'owner_user_id']
 const TEXT_FILTERS = ['platform', 'market', 'execution_status']
-const RETURN_WHITELIST = ['/launch']
 
 // ── 数据层（T04 用到 ①②③；④⑤⑥⑦ 供 T05 详情复用） ───────────────────────────
 
@@ -60,6 +64,20 @@ export async function executeAction(runId, action, payload = {},
 export async function syncLaunch(runId, expectedRevision) {
   return (await api.post(`/launch/${runId}/sync`,
     { mode: 'refresh', expected_revision: expectedRevision })).data
+}
+
+/**
+ * ⑧ 创建上线流程（POST /launch）。
+ *
+ * 请求体 `{product_id, shop_id}`（后端 LaunchCreateIn，launch.py:33-36），
+ * 头 `Idempotency-Key` 保证重试不产生重复 run。成功返回后端创建出的 run 详情
+ * （含 `id`）；失败**抛出原始 error**，由调用方用 `errorEnvelope` 归一后如实提示
+ * （绝不在此吞异常制造假成功）。
+ */
+export async function createLaunch({ productId, shopId } = {}) {
+  return (await api.post('/launch',
+    { product_id: productId, shop_id: shopId },
+    { headers: { 'Idempotency-Key': newIdempotencyKey('launch') } })).data
 }
 
 // ── 纯函数（vitest 直测） ───────────────────────────────────────────────────
@@ -235,7 +253,9 @@ export const EMPTY_REASONS = {
   NO_SHOP: { text: '还没有销售店铺', hint: '请先在「店铺授权」添加销售店铺', action: 'add_shop' },
   NO_PROFILE: { text: '没有可用的上线流程', hint: '目标店铺缺少适用的已发布流程', action: 'none' },
   NO_MATCH: { text: '没有匹配的流程', hint: '请调整或清除筛选条件', action: 'clear_filters' },
-  NO_PRODUCT: { text: '还没有上线流程', hint: '从商品库选择商品创建上线流程', action: 'none' },
+  // createAction 为**增量**提示位：既有 action='none' 语义不变（回归保护），
+  // 仅额外告诉页面「此空态可提供创建入口」（UX-03）。
+  NO_PRODUCT: { text: '还没有上线流程', hint: '从商品库选择商品创建上线流程', action: 'none', createAction: true },
 }
 
 /** 是否设置了收窄型筛选（不含分页与 include_history 作用域开关）。 */
@@ -259,18 +279,6 @@ export function emptyStateReason({ context = null, filters = {}, error = null, t
   }
   if (total === 0 && hasActiveFilters(filters)) return pick('NO_MATCH')
   return pick('NO_PRODUCT')
-}
-
-/** 站内白名单校验（AC-14.7）：仅放行 `/launch` 与 `/launch/...`。 */
-export function isSafeReturnTo(path) {
-  if (typeof path !== 'string' || !path.startsWith('/')) return false
-  if (path.startsWith('//') || path.includes('\\') || path.includes('..')) return false
-  const base = path.split('?')[0].split('#')[0]
-  return RETURN_WHITELIST.some((p) => base === p || base.startsWith(`${p}/`))
-}
-
-export function sanitizeReturnTo(path, fallback = '/launch') {
-  return isSafeReturnTo(path) ? path : fallback
 }
 
 /** 由当前筛选构造 return_to（跳过空值与分页字段）。 */

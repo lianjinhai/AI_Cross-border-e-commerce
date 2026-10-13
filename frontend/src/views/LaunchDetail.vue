@@ -19,6 +19,10 @@
     <template v-if="detail">
       <launch-status-summary :launch="detail" :guided="!professional" class="mb16" />
 
+      <!-- 待平台核验：显式说明「等待核验」，绝不显示为已上线/已完成 -->
+      <waiting-external-state v-if="waitingExternal" class="mb16" owner="平台"
+        :since="detail.last_submitted_at || ''" :hint="detail.verification_notice || ''" />
+
       <el-descriptions v-if="professional" :column="3" border size="small" class="mb16">
         <el-descriptions-item label="Profile">{{ detail.profile?.key }} v{{ detail.profile?.version }}</el-descriptions-item>
         <el-descriptions-item label="Profile hash">{{ detail.profile?.hash || '未接入' }}</el-descriptions-item>
@@ -62,6 +66,7 @@ import LaunchStatusSummary from '../components/LaunchStatusSummary.vue'
 import LaunchTimeline from '../components/LaunchTimeline.vue'
 import LaunchStepPanel from '../components/LaunchStepPanel.vue'
 import LaunchActionDialog from '../components/LaunchActionDialog.vue'
+import WaitingExternalState from '../components/WaitingExternalState.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -88,6 +93,24 @@ const title = computed(() => {
   return product ? `${product} ｜ ${suffix}` : `上线流程 #${runId.value}`
 })
 const backTarget = computed(() => sanitizeReturnTo(route.query.return_to, '/launch'))
+
+/** 平台侧「等待核验」状态：SUBMITTED / UNDER_REVIEW。 */
+const WAITING_PLATFORM_STATUSES = new Set(['SUBMITTED', 'UNDER_REVIEW'])
+const waitingExternal = computed(() => WAITING_PLATFORM_STATUSES.has(detail.value?.platform_status))
+
+/**
+ * 当前详情 URL（剔除 return_to 自身）：作为专业页回跳的 fallback，
+ * 使专业页「返回上一步」能回到**原上线步骤**（而非丢回列表）。
+ */
+const currentDetailUrl = computed(() => {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(route.query)) {
+    if (key === 'return_to' || value === null || value === undefined) continue
+    params.set(key, String(value))
+  }
+  const qs = params.toString()
+  return qs ? `${route.path}?${qs}` : route.path
+})
 
 async function load() {
   loading.value = true
@@ -154,7 +177,8 @@ async function doSync() {
 }
 
 function openLink(link) {
-  router.push({ path: link.path, query: { return_to: sanitizeReturnTo(link.return_to, backTarget.value) } })
+  // fallback 改为**当前详情 URL**：专业页据此「返回上一步」回到原步骤（AC-14.7 闭环）。
+  router.push({ path: link.path, query: { return_to: sanitizeReturnTo(link.return_to, currentDetailUrl.value) } })
 }
 
 function goBack() {
