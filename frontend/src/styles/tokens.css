@@ -1,0 +1,73 @@
+/**
+ * 设计令牌基座（UX-01）。
+ *
+ * 本批只做一件事：把「当前全站实际使用、且与 Element Plus 默认完全一致」的取值
+ * 收敛为语义令牌，供后续把 24 个页面里的硬编码色逐步替换为 `var(--color-*)`。
+ * 因此**视觉零变化**——这里出现的每一个色值与 Element Plus 默认值逐字相同。
+ *
+ * 注意：Element Plus 的 light-3/5/7/8/9 派生色（如 --el-color-primary-light-3）
+ * 是构建期计算的同色梯度字面量，本文件不处理，仍由 EP 自行生成，避免引入偏差。
+ *
+ * 命名规范见 docs/FRONTEND_DESIGN_SYSTEM.md §2。
+ */
+
+:root {
+  /* ---- 语义色（与 Element Plus 默认一致） ---- */
+  --color-primary: #409EFF;
+  --color-success: #67C23A;
+  --color-warning: #E6A23C;
+  --color-danger: #F56C6C;
+  --color-info: #909399;
+  --color-bg: #f5f7fa;
+  --color-text: #303133;
+  --color-text-secondary: #909399;
+  --color-border: #dcdfe6;
+  --color-sidebar: #1f2d3d;
+
+  /* ---- 间距 ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* ---- 字号 ---- */
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 18px;
+  --font-size-display: 26px;
+
+  /* ---- 字重 ---- */
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-bold: 700;
+
+  /* ---- 圆角 ---- */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-round: 999px;
+
+  /* ---- 阴影（温和，避免抢占内容焦点） ---- */
+  --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.06);
+  --shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.12);
+  --shadow-focus: 0 0 0 2px rgba(64, 158, 255, 0.2);
+}
+
+/**
+ * Element Plus 变量同源映射。
+ *
+ * 用 `:root:root`（特异性 0,2,0）而非 `:root`：EP 的变量定义在按需加载时可能
+ * 晚于本文件注入，同级选择器下后者胜出会覆盖本块；提高一格特异性可确保映射稳定
+ * 生效。取值与 EP 默认完全一致，故即便被覆盖也仍是同一颜色。
+ */
+:root:root {
+  --el-color-primary: var(--color-primary);
+  --el-color-success: var(--color-success);
+  --el-color-warning: var(--color-warning);
+  --el-color-danger: var(--color-danger);
+  --el-color-error: var(--color-danger);
+  --el-color-info: var(--color-info);
+}

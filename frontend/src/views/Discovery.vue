@@ -148,6 +148,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage } from '../ui'
 import api from '../api'
+import { can } from '../permissions'
 
 const trends = ref([])
 const keyword = ref('')

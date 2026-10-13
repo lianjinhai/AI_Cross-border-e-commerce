@@ -1,13 +1,14 @@
 <template>
-  <el-tag :type="map[status] || 'info'" size="small">{{ label[status] || status }}</el-tag>
+  <StatusTag :status="status" />
 </template>
 
 <script setup>
-const props = defineProps({ status: String })
-const map = { success: 'success', running: 'primary', failed: 'danger',
-  partial: 'warning', blocked: 'warning', skipped: 'info', queued: 'info',
-  published: 'success', draft: 'info', pending: 'info', low: 'success', mid: 'warning', high: 'danger' }
-const label = { success: '成功', running: '运行中', failed: '失败', published: '已发布',
-  partial: '部分成功', blocked: '等待人工', skipped: '已跳过', queued: '排队中',
-  draft: '草稿', pending: '待处理', low: '低', mid: '中', high: '高' }
+/**
+ * RunStatus（UX-01 起）改为 StatusTag 的薄封装：
+ * 6 个引用页保持 `<RunStatus :status="x" />` 用法不变，props 仍为 `status: String`，
+ * 视觉与行为零变化。
+ */
+import StatusTag from '../components/StatusTag.vue'
+
+defineProps({ status: String })
 </script>

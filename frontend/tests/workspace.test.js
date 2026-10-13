@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { computed, nextTick, watchEffect } from 'vue'
 
 /**
  * workspace.js 用 axios.create 自建实例，这里 mock 掉 axios 模块，
@@ -21,9 +22,11 @@ const {
   clearWorkspaceContext,
   contextRole,
   getContext,
+  getWorkspaceEpoch,
   hasPermission,
   loadWorkspaceContext,
   loadWorkspaces,
+  subscribeWorkspaceChange,
   switchWorkspace,
 } = await import('../src/workspace')
 
@@ -236,5 +239,96 @@ describe('workspace listing', () => {
 
     client.get.mockRejectedValueOnce(errorResponse(500))
     expect(await loadWorkspaces()).toEqual([])
+  })
+})
+
+/**
+ * UX-01：Context 必须响应式。背景是旧实现把 Context 存在普通模块变量里，
+ * `Layout.vue` 的 computed 读它时不建立依赖 → 切换 Workspace 后菜单不刷新。
+ * 这两条用例锁死「读取 getContext() 即建立响应式依赖」这一根因修复。
+ */
+describe('workspace context reactivity', () => {
+  beforeEach(() => {
+    clearWorkspaceContext()
+    localStorage.clear()
+    client.get.mockReset()
+    client.post.mockReset()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+
+  it('updates a computed reader when the context loads and clears', async () => {
+    const seen = computed(() => getContext())
+    expect(seen.value).toBeNull()
+
+    client.get.mockResolvedValueOnce(contextResponse())
+    await loadWorkspaceContext()
+    expect(seen.value).toEqual(CONTEXT)
+
+    clearWorkspaceContext()
+    expect(seen.value).toBeNull()
+  })
+
+  it('drives watchEffect when the context changes', async () => {
+    const observed = []
+    const stop = watchEffect(() => { observed.push(getContext()) })
+    // watchEffect 立即执行一次，初始为 null。
+    expect(observed).toEqual([null])
+
+    client.get.mockResolvedValueOnce(contextResponse())
+    await loadWorkspaceContext()
+    await nextTick()
+    expect(observed.at(-1)).toEqual(CONTEXT)
+
+    clearWorkspaceContext()
+    await nextTick()
+    expect(observed.at(-1)).toBeNull()
+    stop()
+  })
+})
+
+describe('subscribeWorkspaceChange', () => {
+  beforeEach(() => {
+    clearWorkspaceContext()
+    localStorage.clear()
+    client.get.mockReset()
+    client.post.mockReset()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+
+  it('fires once on load and once on clear with a monotonic epoch, then stops after unsubscribe', async () => {
+    const events = []
+    const unsubscribe = subscribeWorkspaceChange((payload) => { events.push(payload) })
+
+    client.get.mockResolvedValueOnce(contextResponse())
+    await loadWorkspaceContext()
+
+    expect(events).toHaveLength(1)
+    expect(events[0].reason).toBe('load')
+    expect(events[0].context).toEqual(CONTEXT)
+
+    clearWorkspaceContext()
+
+    expect(events).toHaveLength(2)
+    expect(events[1].reason).toBe('clear')
+    expect(events[1].context).toBeNull()
+    expect(events[1].epoch).toBeGreaterThan(events[0].epoch)
+    expect(getWorkspaceEpoch()).toBe(events[1].epoch)
+
+    unsubscribe()
+    clearWorkspaceContext()
+
+    // 退订后不再收到通知。
+    expect(events).toHaveLength(2)
+  })
+
+  it('keeps earlier subscribers working across multiple clears', async () => {
+    const events = []
+    const unsubscribe = subscribeWorkspaceChange((payload) => { events.push(payload.reason) })
+
+    clearWorkspaceContext()
+    clearWorkspaceContext()
+
+    expect(events).toEqual(['clear', 'clear'])
+    unsubscribe()
   })
 })

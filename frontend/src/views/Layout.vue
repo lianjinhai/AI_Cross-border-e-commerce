@@ -19,17 +19,20 @@
           <span style="font-size:16px;font-weight:600">{{ $route.meta.title }}</span>
           <el-tag v-if="isSuper" type="danger" size="small" effect="dark" style="margin-left:10px">平台控制台</el-tag>
         </div>
-        <el-dropdown @command="onCommand">
-          <span class="user-chip"><el-icon class="mr8"><User /></el-icon>{{ displayName }}
-            <el-tag size="small" style="margin-left:8px">{{ roleLabel }}</el-tag>
-          </span>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item v-if="isImpersonating" command="leave-impersonation">返回平台控制台</el-dropdown-item>
-              <el-dropdown-item command="logout">退出登录</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+        <div style="display:flex;align-items:center;gap:12px">
+          <WorkspaceSwitcher />
+          <el-dropdown @command="onCommand">
+            <span class="user-chip"><el-icon class="mr8"><User /></el-icon>{{ displayName }}
+              <el-tag size="small" style="margin-left:8px">{{ roleLabel }}</el-tag>
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item v-if="isImpersonating" command="leave-impersonation">返回平台控制台</el-dropdown-item>
+                <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
       </el-header>
       <el-main style="padding:0;overflow:auto">
         <!-- 只读账号提示（角色界面差异化 D4）：让用户明确知道"按钮消失是权限所致"，
@@ -48,6 +51,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AiAssistant from './AiAssistant.vue'
+import WorkspaceSwitcher from '../components/WorkspaceSwitcher.vue'
 import { canAdmin, roleKey } from '../permissions'
 import { clearWorkspaceContext, isMembershipContext, workspaceName } from '../workspace'
 
