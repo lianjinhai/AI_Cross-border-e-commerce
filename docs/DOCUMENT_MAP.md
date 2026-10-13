@@ -114,6 +114,7 @@ V9.0 全站前端重设计项目的产品与架构冻结文档；UX-A 一次性�
 | docs/FRONTEND_V9_IMPLEMENTATION_PLAN.md | UX-A 冻结 | UX-B..F 文件级计划、冻结契约与并行批次、测试策略、切换回退步骤 |
 | docs/FRONTEND_V9_CONTRACTS.md | UX-B 输入冻结 | UX-B 四契约：tokens 令牌名/AppShell+三导航结构/路由 meta+30 条 302 表/api.domains 签名 |
 | docs/FRONTEND_V9_PROGRESS.md | 活（进度事实源） | V9 全站重设计的阶段状态/决策/缺陷/验证基线唯一事实源 |
+| docs/FRONTEND_V9_ACCEPTANCE.md | v2（UX-F 终验） | 20 条质量标准判定 + 7 旅程走查 + 缺陷遗留 + 切换建议 |
 
 ---
 
