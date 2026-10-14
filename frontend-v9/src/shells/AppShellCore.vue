@@ -10,6 +10,9 @@
     <el-container class="shell__body">
       <el-header class="shell__topbar" height="56px">
         <div class="shell__topbar-left">
+          <!-- R3-2A：顶层上下文条槽（Workspace/店铺范围 + 任务计数条，baseline §3）。
+               仅 Workspace 薄壳填充；控制台/工厂留空（:empty 自动隐藏，不留分隔符）。 -->
+          <div class="shell__topbar-context"><slot name="topbar-context" /></div>
           <el-breadcrumb separator="/">
             <el-breadcrumb-item v-for="item in breadcrumb" :key="item.label" :to="item.to">
               {{ item.label }}
@@ -144,6 +147,20 @@ function logout() {
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-border-light);
 }
+.shell__topbar-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.shell__topbar-context {
+  display: flex;
+  align-items: center;
+  padding-right: var(--space-3);
+  border-right: 1px solid var(--color-border-light);
+}
+/* 未填充上下文条的薄壳（控制台/工厂）不留分隔符 */
+.shell__topbar-context:empty { display: none; }
 .shell__topbar-extras {
   display: flex;
   align-items: center;

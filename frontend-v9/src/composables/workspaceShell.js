@@ -9,14 +9,20 @@ import {
   subscribeWorkspaceChange,
   switchWorkspace,
   workspaceId,
+  workspaceName as contextWorkspaceName,
 } from '../shared/workspace'
+import { isAllShops } from '../shared/storeScope'
 import { restoreImpersonation } from './impersonation'
 import { fetchShops } from '../api/domains/shops'
+import { useWorkbenchCounts } from './workbenchCounts'
 
 /**
  * Workspace 薄壳数据装配（契约 §2.1 的壳外下沉，保持薄壳 ≤60 行）。
  * 导航与 Context 响应式联动（getContext 读取即建立依赖）；禁止新写 Context
  * 获取逻辑或第二份 axios 实例（一律 shared/workspace.js + api/domains 平移件）。
+ *
+ * R3-2A：新增顶栏上下文条数据（Workspace 名称 / 店铺范围 / 任务三计数），
+ * 供 ShellContextBar 消费；计数来自 useWorkbenchCounts（复用只读 overview）。
  */
 export function useWorkspaceShell() {
   const workspaces = ref([])
@@ -33,6 +39,15 @@ export function useWorkspaceShell() {
     canManageMembers: (getContext()?.permissions || []).includes('workspace:member:admin'),
     isImpersonating: impersonating.value,
   }))
+
+  // ── 顶栏上下文条（R3-2A） ──────────────────────────────────────────────
+  const workspaceName = computed(() => contextWorkspaceName())
+  const shopScope = computed(() => {
+    if (isAllShops(selectedShopId.value)) return '全部店铺'
+    const hit = (shops.value || []).find((s) => String(s?.id) === String(selectedShopId.value))
+    return hit?.name || '全部店铺'
+  })
+  const { counts, unavailable: countsUnavailable } = useWorkbenchCounts()
 
   // 丢弃过期快照：在途响应回来时 epoch 已变则不写回（getWorkspaceEpoch 约定）。
   async function loadShops() {
@@ -69,5 +84,7 @@ export function useWorkspaceShell() {
   return {
     workspaces, shops, selectedShopId, impersonating, readOnly,
     activeWorkspaceId, navigation, onSwitchWorkspace, exitImpersonate,
+    // R3-2A 顶栏上下文条
+    workspaceName, shopScope, counts, countsUnavailable,
   }
 }

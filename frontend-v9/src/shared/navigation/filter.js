@@ -1,18 +1,27 @@
 /**
- * 角色过滤（契约 §2.3 → 蓝图 R1 P0 扩展）：菜单树与路由白名单的**唯一事实源**。
+ * 角色过滤（契约 §2.3 → 蓝图 R1 P0 扩展 → R3-2A 4+1 收敛）：菜单树与路由白名单的
+ * **唯一事实源**。
  *
  * 平移 frontend/src/composables/navigation.js 的纯函数组织与语义，路径映射为
  * `/app|/console|/factory` 前缀（FRONTEND_V9_NAVIGATION.md §5）：
- * - PLATFORM_ADMIN(非代客) → console 树；FACTORY_COLLABORATOR → factory 树；
+ * - PLATFORM_ADMIN(非代客) → console 树；FACTORY_COLLABORATOR → factory 树（不变）；
  * - COMPLIANCE → 白名单过滤（/app、/app/analytics/bi、/app/listings*、
  *   /app/compliance*、/app/launch*）；
- * - 非 OWNER 隐藏 /app/settings/*、/app/compliance/approvals；
+ * - 非 OWNER 隐藏 /app/settings/*（整组，与 requiresOwner 守卫同源）、/app/compliance/approvals；
  * - OWNER 全量（/app/settings/team 需 canManageMembers）。
  *
  * `whitelistForRole` 与 `buildDomains` 同源产出：菜单过滤用 Set 精确匹配叶子，
  * 路由守卫用 `isPathAllowedForRole`（同一份规则 + 前缀语义），禁止另建第二事实源。
  *
  * 蓝图 R1 新增：buildDomains 增 persona 参数（新手域抑制，视觉层不改路由守卫白名单）。
+ *
+ * R3-2A：树由 8 域收敛为 4+1 入口（mybiz/goods/orders/revenue/tools）。本文件仅
+ * 按 path 白名单过滤，**不感知入口分组**，故收敛对过滤逻辑透明；仅同步更新：
+ * - NON_OWNER_HIDDEN_PATHS 扩为「全部 /app/settings/* + compliance/approvals」，
+ *   与 `OWNER_ONLY_PREFIX` 守卫（routeRedirect：非 OWNER 进 /app/settings/* → /app）
+ *   严格一致，避免非 OWNER 侧栏出现「可点但必被逐出」的设置项；
+ * - PERSONA_DOMAINS 域 key 改为新 4+1 key（视觉层抑制，未接路由守卫白名单）。
+ * COMPLIANCE 白名单（COMPLIANCE_ALLOWED_PATHS）保持冻结不变，守卫与既有断言不受影响。
  */
 import { WORKSPACE_DOMAINS } from './workspace-navigation'
 import { CONSOLE_DOMAINS } from './console-navigation'
@@ -33,10 +42,19 @@ export const COMPLIANCE_ALLOWED_PATHS = new Set([
 /** COMPLIANCE 前缀白名单：详情路由（/:id）随父级放行，前缀必须带尾斜杠防形近路径（R12 语义平移）。 */
 const COMPLIANCE_PREFIX_PATHS = ['/app/listings/', '/app/compliance/', '/app/launch/']
 
-/** 非 OWNER 隐藏路径（NON_OWNER_HIDDEN_PATHS 语义映射到新前缀）。 */
+/**
+ * 非 OWNER 隐藏路径（NON_OWNER_HIDDEN_PATHS 语义映射到新前缀）。
+ *
+ * R3-2A：设置项回归 tools 工具柜后，为避免非 OWNER 侧栏出现「可点但必被守卫逐出」的
+ * 死项，此集合扩为**全部 /app/settings/***（与 `OWNER_ONLY_PREFIX` 守卫完全一致）
+ * 加合规工作台。这是**收紧**（隐藏面不变或更小），非放宽。
+ */
 export const NON_OWNER_HIDDEN_PATHS = new Set([
+  '/app/settings/workspace',
   '/app/settings/ai',
   '/app/settings/team',
+  '/app/settings/credentials',
+  '/app/settings/plan',
   '/app/compliance/approvals',
 ])
 
@@ -130,7 +148,7 @@ export function isOwnerOnlyPath(path) {
  * @param {string} [p.roleKey=''] 新角色枚举（大写，Context 优先）。
  * @param {boolean} [p.canManageMembers=false] 是否可见「用户与角色」。
  * @param {boolean} [p.isImpersonating=false] 代客中：平台管理员临时进入租户 Workspace 视图。
- * @param {string} [p.persona=''] 新手画像（A/B/C；PROFESSIONAL/未知 → 全量 8 域）。
+ * @param {string} [p.persona=''] 新手画像（A/B/C；PROFESSIONAL/未知 → 全量 5 入口）。
  * @returns {Array} 该角色应见的域数组。
  */
 export function buildDomains({ roleKey = '', canManageMembers = false, isImpersonating = false, persona = '' } = {}) {
@@ -145,16 +163,20 @@ export function buildDomains({ roleKey = '', canManageMembers = false, isImperso
 }
 
 /**
- * persona → 保留域 key 映射；未知 persona / PROFESSIONAL → 返回全量 domains。
- * 画像 A(个人新手) → workbench / discovery / channel
- * 画像 B(有货源)   → A + supply / orders
- * 画像 C(有团队)   → A + orders / ai
- * PROFESSIONAL / 未知 persona → 全量 8 域
+ * persona → 保留域 key 映射（R3-2A：域 key 同步为新 4+1 入口）。
+ * 画像 A(个人新手)   → mybiz / goods / tools（先看生意与商品，工具柜可展开）
+ * 画像 B(有货源)     → A + orders
+ * 画像 C(有团队)     → A + orders / revenue（团队经营需看收益）
+ * PROFESSIONAL / 未知 persona → 全量 5 入口
+ *
+ * 说明：旧 8 域的低频能力（supply/channel/optimize/ai/settings）已并入 tools，
+ * 故三档画像均含 tools（否则会误伤「专业能力可搜索可收藏」的承诺）；
+ * 抑制仍为**视觉层**，不改路由守卫白名单。
  */
 export const PERSONA_DOMAINS = {
-  A: ['workbench', 'discovery', 'channel'],
-  B: ['workbench', 'discovery', 'supply', 'channel', 'orders'],
-  C: ['workbench', 'discovery', 'channel', 'orders', 'ai'],
+  A: ['mybiz', 'goods', 'tools'],
+  B: ['mybiz', 'goods', 'orders', 'tools'],
+  C: ['mybiz', 'goods', 'orders', 'revenue', 'tools'],
 }
 
 /**
