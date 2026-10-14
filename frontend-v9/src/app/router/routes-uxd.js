@@ -114,15 +114,6 @@ export const UXD_ROUTES = [
     component: () => import('../../pages/analytics/Forecast.vue'),
     meta: { space: 'app', domain: '财务与分析', title: '预测与数据质量' },
   },
-  // ── 蓝图 R1 CH-01/CH-03：渠道推荐 + 店铺详情（hidden 参数路由） ──
-  {
-    path: 'channels',
-    component: () => import('../../pages/channel/Channels.vue'),
-    meta: { space: 'app', domain: '渠道与店铺', title: '渠道推荐' },
-  },
-  {
-    path: 'channels/shops/:id',
-    component: () => import('../../pages/channel/ShopDetail.vue'),
-    meta: { space: 'app', domain: '渠道与店铺', title: '店铺详情', hidden: true },
-  },
+  // ── 蓝图 R1 CH-01/CH-03：渠道推荐 + 店铺详情（R3-1A E09 起改由 index.js 唯一挂载；
+  //    原两条同 path 声明已移除，消除展开顺序导致的占位页命中风险）──
 ]

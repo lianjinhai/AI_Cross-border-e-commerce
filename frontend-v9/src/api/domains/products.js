@@ -4,6 +4,12 @@ import api from '../../shared/api/client'
  * products 域（契约 §4.2）：对应 backend/app/routers/products.py +
  * product_assets.py + product_channels.py（前缀均 /products）。
  * 商品 DTO 含 assets、channels 只读数据；dropship 走 purchases 链路。
+ *
+ * R3-1A 修正（E01/E02/E05）：
+ * - fetchChannels：后端 channels_dto 返回 {product, total, channels[]}，直接透传，
+ *   不猜测 .items（launch_dto.channels_dto / product_channels.py）。
+ * - 素材读/写一律带 shop_id（product_assets.py：GET 要求 shop_id Query(...) 必填；
+ *   AssetIn.shop_id 必填；验证 shop.market/platform 必须与素材适用范围一致）。
  */
 
 /** 商品列表：GET /products → {items[], total}。 */
@@ -60,22 +66,51 @@ export async function createDropshipOrder(id, data = {}) {
   return (await api.post('/purchases/dropship', { product_id: id, ...data })).data
 }
 
-/** 商品素材列表：GET /products/{id}/assets。 */
-export async function fetchAssets(id) {
-  return (await api.get(`/products/${id}/assets`)).data
+/**
+ * 商品素材分页列表（E02）：GET /products/{id}/assets?shop_id=...&page_num&。
+ * 后端 shop_id 为 Query(...) 必填；素材按店铺 market/platform 隔离，缺店铺上下文不得调用。
+ * → {items[]（ProductAsset 全字段）， total, page, page_size}。
+ */
+export async function fetchAssets(id, { shopId, pageNum = 1, pageSize = 20 } = {}) {
+  if (!Number.isInteger(shopId) || shopId < 1) {
+    throw new Error('素材列表必须指定目标店铺 shop_id（缺店铺上下文，禁止猜测默认店铺）')
+  }
+  return (await api.get(`/products/${id}/assets`, {
+    params: { shop_id: shopId, page_num: pageNum, page_size: pageSize },
+  })).data
 }
 
-/** 新增素材：POST /products/{id}/assets。 */
+/**
+ * 登记素材（E05）：POST /products/{id}/assets。
+ * 后端 AssetIn（AssetRegistration + shop_id，extra=forbid）必填：
+ * asset_key/expected_version/asset_type/uri/content_hash(sha256 hex64)/rights_status/
+ * source/market/platform + shop_id；SUPPLIER_AUTHORIZED/LICENSED 还需 rights_evidence_ref。
+ * 前端不得替后端臆造 content_hash——缺真实哈希时拒绝提交并提示登记哈希服务缺口。
+ */
+const ASSET_CONTENT_HASH_RE = /^[a-f0-9]{64}$/
+
+export function isAssetContentHash(value) {
+  return ASSET_CONTENT_HASH_RE.test(String(value || ''))
+}
+
 export async function addAsset(id, data = {}) {
   return (await api.post(`/products/${id}/assets`, data)).data
 }
 
-/** 素材核验：POST /products/{id}/assets/{assetId}/verify。 */
-export async function verifyAsset(id, assetId) {
-  return (await api.post(`/products/${id}/assets/${assetId}/verify`)).data
+/**
+ * 素材核验（E05）：POST /products/{id}/assets/{assetId}/verify。
+ * 后端 ReviewIn 必填 {shop_id, expected_version, decision: VERIFIED|REJECTED,
+ * evidence_ref, reason}；仅合规审批人（compliance:approve）可调用。
+ */
+export async function verifyAsset(id, assetId, review = {}) {
+  return (await api.post(`/products/${id}/assets/${assetId}/verify`, review)).data
 }
 
-/** 渠道只读列表：GET /products/{id}/channels。 */
+/**
+ * 渠道只读聚合（E01）：GET /products/{id}/channels。
+ * 后端 channels_dto → {product, total, channels:[{shop:{id,name,platform,market},
+ * active_launch, history[]}]；active_launch/history 为 launch_list_item。直接透传。
+ */
 export async function fetchChannels(id) {
   return (await api.get(`/products/${id}/channels`)).data
 }

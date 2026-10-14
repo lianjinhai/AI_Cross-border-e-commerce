@@ -25,21 +25,20 @@ const EXPECTED = {
   fulfillment: { space: 'app', domain: '订单与服务', title: '发货/代发/备货' },
   'optimization/experiments': { space: 'app', domain: '经营优化', title: '策略实验' },
   'analytics/forecast': { space: 'app', domain: '财务与分析', title: '预测与数据质量' },
-  // ── 蓝图 R1 CH-01/CH-03：渠道推荐 + 店铺详情（hidden 参数路由） ──
-  channels: { space: 'app', domain: '渠道与店铺', title: '渠道推荐' },
-  'channels/shops/:id': { space: 'app', domain: '渠道与店铺', title: '店铺详情', hidden: true },
+  // R3-1A E09：channels / channels/shops/:id 两条 CH-01/CH-03 路由改由
+  // src/app/router/index.js 唯一挂载（消除重复 path 展开命中风险），本数组不再声明。
 }
 
 describe('routes-uxd', () => {
-  it('covers exactly the 19 UX-D pages with frozen meta', () => {
-    expect(UXD_ROUTES).toHaveLength(19)
+  it('covers exactly the 17 UX-D pages with frozen meta', () => {
+    expect(UXD_ROUTES).toHaveLength(17)
     for (const route of UXD_ROUTES) {
       expect(EXPECTED[route.path], `unknown path ${route.path}`).toBeDefined()
       expect(route.meta).toEqual(EXPECTED[route.path])
       expect(typeof route.component).toBe('function')
     }
     const paths = UXD_ROUTES.map((r) => r.path)
-    expect(new Set(paths).size).toBe(19)
+    expect(new Set(paths).size).toBe(17)
     expect(Object.keys(EXPECTED).every((p) => paths.includes(p))).toBe(true)
   })
 })

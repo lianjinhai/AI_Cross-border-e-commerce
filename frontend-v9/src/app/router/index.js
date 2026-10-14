@@ -46,6 +46,9 @@ const opportunityDetail = () => import('../../pages/market/OpportunityDetail.vue
 const candidates = () => import('../../pages/market/Candidates.vue')
 const compliance = () => import('../../pages/compliance/Compliance.vue')
 const approvals = () => import('../../pages/compliance/Approvals.vue')
+// E09（R3-1A）：`channels` 路由的唯一挂载点在 index.js（指向真实 Channels.vue）。
+// routes-uxd.js 不再重复声明同 path，消除「占位页先命中」的展开顺序风险。
+const channels = () => import('../../pages/channel/Channels.vue')
 
 const appChildren = [
   // ── 工作台域 ──
@@ -64,9 +67,12 @@ const appChildren = [
   { path: 'compliance/approvals', component: approvals, meta: { space: 'app', domain: '发现与商品', title: '合规工作台' } },
   { path: 'launch', component: launchCenter, meta: { space: 'app', domain: '发现与商品', title: '上线中心' } },
   { path: 'launch/:id', component: launchDetail, meta: { space: 'app', domain: '发现与商品', title: '上线流程详情', hidden: true } },
-  // ── 渠道与店铺域 ──
-  { path: 'channels', component: stub, meta: { space: 'app', domain: '渠道与店铺', title: '渠道推荐' } },
+  // ── 渠道与店铺域（E09：channels 唯一挂载点在此；channels/shops/:id 与
+  //    routes-uxd.js 的 CH-03 一致，ShopDetail 已交付，非占位页）──
+  { path: 'channels', component: channels, meta: { space: 'app', domain: '渠道与店铺', title: '渠道推荐' } },
   { path: 'channels/shops', component: shops, meta: { space: 'app', domain: '渠道与店铺', title: '店铺管理' } },
+  { path: 'channels/shops/:id', component: () => import('../../pages/channel/ShopDetail.vue'),
+    meta: { space: 'app', domain: '渠道与店铺', title: '店铺详情', hidden: true } },
   // ── UX-E 后半：AI 域与设置页 5 条（routes-uxe-b.js 单一事实源） ──
   ...UXE_B_ROUTES,
   // ── UX-D 经营闭环页 12 条（routes-uxd.js 单一事实源，path/meta 与冻结表一致） ──
