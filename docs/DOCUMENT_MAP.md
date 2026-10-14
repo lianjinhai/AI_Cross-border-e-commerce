@@ -12,6 +12,7 @@
 | 我要…… | 先读 | 再读 |
 |---|---|---|
 | 了解项目全貌 | `README.md` | `docs/项目介绍与功能地图.md` |
+| 查看项目策划与当前开发总结 | `docs/PROJECT_MASTER_PLAN.md` | `docs/archive/DEVELOPMENT_SUMMARY_2026-10-14.md` |
 | **动手写代码** | `AGENTS.md`（AI 助手）/ `CONTRIBUTING.md`（人类） | `docs/CODE_AND_DIRECTORY_STANDARD.md` |
 | 开发 AI / Agent 能力 | `docs/AI_AGENT_OPERATING_SYSTEM_ARCHITECTURE.md`（**强制先读**） | `docs/CONTRACT.md` |
 | 改接口 | `docs/CONTRACT.md` | `docs/DECISIONS.md` |
@@ -57,6 +58,7 @@
 | 文档 | 状态 | 作用 |
 |---|---|---|
 | `docs/项目介绍与功能地图.md` | 活 | 功能全景（模块、接口、能力清单） |
+| `docs/PROJECT_MASTER_PLAN.md` | 建设策划 V1.0（2026-10-14） | 产品定位、领域能力、前端与 AI 策略、里程碑、工作包、试点和验收 |
 | `docs/需求分析与详细设计说明书V8.0.md` | 历史基线 | 原始需求与设计（Phase 0 输入） |
 
 ### 2.5 **方案 / 设计稿类（待实施，未定稿）**
@@ -114,6 +116,12 @@ V9.0 全站前端重设计项目的产品与架构冻结文档；UX-A 一次性�
 | docs/FRONTEND_V9_IMPLEMENTATION_PLAN.md | UX-A 冻结 | UX-B..F 文件级计划、冻结契约与并行批次、测试策略、切换回退步骤 |
 | docs/FRONTEND_V9_CONTRACTS.md | UX-B 输入冻结 | UX-B 四契约：tokens 令牌名/AppShell+三导航结构/路由 meta+30 条 302 表/api.domains 签名 |
 | docs/FRONTEND_V9_PROGRESS.md | 活（进度事实源） | V9 全站重设计的阶段状态/决策/缺陷/验证基线唯一事实源 |
+| docs/UI_REFACTOR_BLUEPRINT.md | R2 实施建议（2026-10-14，未实施） | 新旧前端业务体验整改：契约断点、核心旅程、逐页方案、派工批次与可用性验收 |
+| docs/UI_REFACTOR_BLUEPRINT_R3.md | R3 总蓝图（2026-10-14） | 目标驱动前端重构：4+1 入口、J0–J4 旅程、E01–E12、数据可信度、任务驱动模型 |
+| docs/FRONTEND_R3_PAGE_OWNERSHIP_MATRIX.md | R3-0 冻结（2026-10-14） | 8 域→4+1 入口映射、stub 清单、E01–E12 追踪、角色可见性矩阵 |
+| docs/FRONTEND_R3_BACKEND_CAPABILITY_MAP.md | R3-0 冻结（2026-10-14） | 每页数据源/读写 API/权限/可信度/状态映射；数据可信度四轴 |
+| docs/FRONTEND_R3_TASK_CONTRACT.md | R3-0 冻结（2026-10-14） | R3-0~R3-6 阶段、J0–J4 旅程、数据可信度契约、验收门槛 |
+| docs/FRONTEND_R3_APP_SHELL_DESIGN_BASELINE.md | R3-0 冻结（2026-10-14） | 统一 AppShell 设计基线、4+1 导航、动作权限渲染、工作台首屏 |
 | docs/FRONTEND_V9_ACCEPTANCE.md | v2（UX-F 终验） | 20 条质量标准判定 + 7 旅程走查 + 缺陷遗留 + 切换建议 |
 
 ---
