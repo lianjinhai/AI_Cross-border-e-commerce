@@ -1,0 +1,10 @@
+[E-home] {"hasLayer1":true,"hasLayer2":true,"hasLayer3":true,"hasLayer4":true,"counters":["3","0","0"],"topbarChips":["3","0","0"],"hasObjectObject":false}
+[shot] F:/Desktop/个人文件/软件开发计划/AI-电商ERP/docs/evidence/R3-2B/06-r32b-home.png
+[E-tasks] {"hasUnifiedTable":true,"tabs":["全部待办（5）","等待外部（0）","被阻断（0）","已完成（0）"],"strip":["3","0","0"],"topbarChips":["3","0","0"],"hasFilters":true,"hasObjectObject":false}
+[shot] F:/Desktop/个人文件/软件开发计划/AI-电商ERP/docs/evidence/R3-2B/07-r32b-task-center.png
+[E-tasks return_to] {"clickRes":{"clicked":true},"afterClick":"http://localhost:5174/app/listings?return_to=/app/tasks","returnToCount":1}
+[shot] F:/Desktop/个人文件/软件开发计划/AI-电商ERP/docs/evidence/R3-2B/10-r32b-task-click.png
+[E-tasks back] {"beforeBack":"?view=blocked","afterBack":"?view=waiting"}
+[api-cross-check] {"todoSources":{"launch":"ok","action":"ok","alert":"ok","review":"ok"},"todoCounts":{"launch":0,"action":3,"alert":2,"review":0},"todoPartial":false,"todoItemRoutes":["/listings","/alerts"],"ovSources":{"bi":"ok","launch":"ok","alert":"ok","workflow":"ok","review":"ok","todo":"ok"},"needHuman":{"count":3},"inProgressLen":0,"inProgressSample":[],"aiDoneLen":0,"signals":{"has_sales_shop":false,"sales_shop_count":0,"has_factory":true,"factory_match_count":5,"has_1688_credential":false,"member_count":7,"order_count_30d":2}}
+DONE
+EXIT=0

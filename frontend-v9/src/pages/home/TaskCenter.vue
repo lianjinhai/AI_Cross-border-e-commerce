@@ -5,7 +5,7 @@
         <div class="filters">
           <el-radio-group :model-value="filters.view" size="small" @change="onViewChange">
             <el-radio-button v-for="v in views" :key="v.key" :value="v.key">
-              {{ v.label }}<span v-if="counts[v.key] != null">（{{ counts[v.key] }}）</span>
+              {{ v.label }}（{{ fmtCount(tabCounts[v.key]) }}）
             </el-radio-button>
           </el-radio-group>
           <el-input :model-value="filters.product" size="small" placeholder="商品" clearable style="width:130px"
@@ -30,12 +30,27 @@
       </template>
     </PageHeader>
 
+    <!-- 任务三计数（与顶栏上下文条、工作台卡同口径，单一事实源 deriveWorkbenchCounts） -->
+    <div class="counter-strip" data-testid="task-center-counters">
+      <span class="counter-strip__item">
+        <b class="counter-strip__num">{{ fmtCount(canonical.todo) }}</b><span>待我处理</span>
+      </span>
+      <span class="counter-strip__item">
+        <b class="counter-strip__num">{{ fmtCount(canonical.waiting) }}</b><span>等待外部</span>
+      </span>
+      <span class="counter-strip__item">
+        <b class="counter-strip__num counter-strip__num--warn">{{ fmtCount(canonical.blocked) }}</b><span>被阻断</span>
+      </span>
+      <span class="counter-strip__hint">（与顶栏、工作台同口径 · 缺失显示「—」不当 0）</span>
+    </div>
+
     <PartialBanner v-if="unavailable.length" class="mb16" :missing="unavailable" />
     <ErrorState v-if="error" class="mb16" :message="error" @retry="fetchAll" />
 
     <SectionState :code="activeCode" @action="onStateAction" @retry="fetchAll" :error="error">
       <div v-if="activeCode === 'ready'" class="task-center__body">
-        <el-table :data="visibleTasks" size="small" row-key="id">
+        <div class="task-center__scroll">
+          <el-table :data="visibleTasks" size="small" row-key="id" class="task-center__table">
           <el-table-column label="任务" min-width="200" show-overflow-tooltip>
             <template #default="{ row }">
               <el-tag size="small" :type="severityTag(row.severity)">{{ severityLabel(row.severity) }}</el-tag>
@@ -69,6 +84,7 @@
             </template>
           </el-table-column>
         </el-table>
+        </div>
         <div v-if="gapNotes.length" class="gap-note">
           缺口说明：{{ gapNotes.join('；') }}
         </div>
@@ -91,8 +107,9 @@ import SectionState from '../../components/SectionState.vue'
 import ErrorState from '../../components/ErrorState.vue'
 import PartialBanner from '../../features/home/PartialDataBanner.vue'
 import { fetchOverview, fetchTodo } from '../../api/domains/workbench'
+import { deriveWorkbenchCounts } from '../../shared/workbenchContext'
 import {
-  TASK_VIEWS, filterTasks, filtersFromQuery, normalizeTasks, queryFromFilters, viewCounts,
+  TASK_VIEWS, buildTaskHref, filterTasks, filtersFromQuery, normalizeTasks, queryFromFilters, viewCounts,
 } from '../../shared/taskCenterView'
 
 const route = useRoute()
@@ -106,10 +123,24 @@ const views = TASK_VIEWS
 
 /** 筛选/视图的单一事实源 = URL query（浏览器返回可恢复，§3）。 */
 const filters = computed(() => filtersFromQuery(route.query))
-const counts = computed(() => viewCounts(normalized.value.tasks))
 const normalized = computed(() => normalizeTasks({ todo: todo.value, overview: overview.value }))
 const unavailable = computed(() => normalized.value.unavailable)
 const visibleTasks = computed(() => filterTasks(normalized.value.tasks, filters.value))
+/**
+ * 计数口径（R3-2B 语义统一）：等待外部 / 被阻断 直接复用**与顶栏、工作台同一**的
+ * `deriveWorkbenchCounts`（值可为 null → 渲染「—」）；「全部待办」/「已完成」按列表
+ * 实际行数。三方「待我处理/等待外部/被阻断」由此保证一致。
+ */
+const canonical = computed(() => deriveWorkbenchCounts(overview.value))
+const tabCounts = computed(() => {
+  const vc = viewCounts(normalized.value.tasks)
+  return {
+    todo: vc.todo,
+    waiting: canonical.value.waiting,
+    blocked: canonical.value.blocked,
+    done: vc.done,
+  }
+})
 const gapNotes = computed(() => {
   const notes = new Set()
   for (const t of visibleTasks.value) for (const g of t.gaps || []) notes.add(g)
@@ -150,13 +181,22 @@ function severityLabel(sev) {
 function severityTag(sev) {
   return { high: 'danger', mid: 'warning', low: 'info' }[sev] || 'info'
 }
+/** 计数展示：null/undefined（不可得）→ 「—」，0 正常显示（不当 0 掩盖）。 */
+function fmtCount(value) {
+  return value === null || value === undefined ? '—' : String(value)
+}
 
-/** 处理任务：跳目标页并带 return_to（保留当前筛选，§3 返回原位置）。 */
+/** 处理任务：跳目标页并带 return_to（bug4 修复：URL 感知合并，不重复追加；保留当前筛选）。 */
 function openTask(task) {
   if (!task.link) return
-  const returnTo = `${route.path}${Object.keys(route.query).length ? '?' + new URLSearchParams(route.query).toString() : ''}`
-  const sep = task.link.includes('?') ? '&' : '?'
-  router.push(`${task.link}${sep}return_to=${encodeURIComponent(returnTo)}`)
+  // 用**逻辑（未编码）**的当前待办位置作为 return_to，由 buildTaskHref 统一编码，
+  // 避免「已编码再编码」的双重转义；已存在的 return_to 会被覆盖为唯一值。
+  const parts = Object.entries(route.query)
+    .filter(([, v]) => v !== null && v !== undefined && v !== '')
+    .map(([k, v]) => `${k}=${String(v)}`)
+  const returnTo = route.path + (parts.length ? `?${parts.join('&')}` : '')
+  const href = buildTaskHref(task.link, returnTo)
+  if (href) router.push(href)
 }
 
 async function fetchAll() {
@@ -178,10 +218,29 @@ onMounted(fetchAll)
 </script>
 
 <style scoped>
+.page { min-width: 0; }
 .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.counter-strip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 20px;
+  margin-bottom: 16px; padding: 8px 12px;
+  background: var(--color-info-bg); border-radius: var(--radius-base, 6px);
+}
+.counter-strip__item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.counter-strip__num { font-size: 18px; font-weight: var(--font-weight-medium, 600); color: var(--color-text); }
+.counter-strip__num--warn { color: var(--color-warning); }
+.counter-strip__hint { color: var(--color-text-secondary); font-size: var(--font-size-xs); }
 .task-title { margin-left: 8px; }
 .ml8 { margin-left: 8px; }
 .muted { color: var(--color-text-disabled); font-size: var(--font-size-xs); }
 .gap-note { margin-top: 8px; color: var(--color-text-secondary); font-size: var(--font-size-xs); }
 .mb16 { margin-bottom: 16px; }
+/* 窄屏：表格横向滚动，不挤压竖排；容器不横向溢出 */
+.task-center__scroll { width: 100%; overflow-x: auto; }
+.task-center__table { min-width: 760px; }
+@media (max-width: 768px) {
+  .counter-strip { gap: 12px; }
+  .filters { width: 100%; }
+  .filters :deep(.el-input),
+  .filters :deep(.el-select) { width: 100% !important; }
+}
 </style>

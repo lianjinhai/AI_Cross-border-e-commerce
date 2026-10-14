@@ -10,18 +10,20 @@
  * 红线：缺失显示 UNKNOWN='—'，不当 0；来源失败 → 视图标注不可用；不同 Store 的独立事项不合并。
  */
 
-import { UNKNOWN, safeInternalPath, taskLink } from './workspaceHomeView'
+import { UNKNOWN, displayName, safeInternalPath, taskLink } from './workspaceHomeView'
+import { isBlockedItem, isWaitingExternalItem } from './workbenchContext'
 
-/** 视图定义（默认「需要我处理」）。 */
+/**
+ * 视图定义。默认「全部待办」= 跨域来源摘要（launch/action/alert/review）；
+ * 其余三视图与顶栏/工作台计数条**同口径**（等待外部 = WAITING_EXTERNAL ∪ 平台
+ * SUBMITTED/UNDER_REVIEW；被阻断 = BLOCKED/FAILED），避免「同词不同义」。
+ */
 export const TASK_VIEWS = [
-  { key: 'todo', label: '需要我处理' },
+  { key: 'todo', label: '全部待办' },
   { key: 'waiting', label: '等待外部' },
-  { key: 'blocked', label: '受阻' },
+  { key: 'blocked', label: '被阻断' },
   { key: 'done', label: '已完成' },
 ]
-
-const WAITING_STATES = new Set(['WAITING_EXTERNAL', 'WAITING_PLATFORM', 'WAITING_EXTERNAL_FEEDBACK'])
-const BLOCKED_STATES = new Set(['BLOCKED', 'FAILED'])
 
 const TYPE_LABELS = { launch: '上线流程', action: '待审批动作', alert: '风险告警', review: '人工复核', ai_run: 'AI 运行' }
 export const typeLabel = (kind) => TYPE_LABELS[kind] || kind || '任务'
@@ -54,28 +56,36 @@ export function dedupeTasks(items = []) {
   return out
 }
 
-/** overview.sections.in_progress 行 → 统一任务项（等待外部 / 受阻）。 */
-function fromInProgress(rows, { waitingExternal = true } = {}) {
+/** overview.sections.in_progress 行 → 统一任务项（等待外部 / 被阻断 / 进行中）。 */
+function fromInProgress(rows) {
   if (!Array.isArray(rows)) return []
-  return rows.map((row, i) => {
-    const status = row?.execution_status || ''
-    const view = BLOCKED_STATES.has(status) ? 'blocked'
-      : (WAITING_STATES.has(status) ? 'waiting' : (waitingExternal ? 'waiting' : 'blocked'))
+  return rows.map((row) => {
+    // 视图口径与顶栏/工作台计数条同源（workbenchContext 谓词，对齐后端 _WAITING_STATES
+    // / _PLATFORM_WAITING）：被阻断 = BLOCKED/FAILED；等待外部 = WAITING_EXTERNAL 或平台
+    // SUBMITTED/UNDER_REVIEW；其余 mine 状态（READY/WAITING_USER/RUNNING…）→ 'active'
+    // （**不混入「等待外部」计数**，bug2 语义统一）。
+    const view = isBlockedItem(row) ? 'blocked' : (isWaitingExternalItem(row) ? 'waiting' : 'active')
     const reason = row?.blocked_summary?.[0]?.message
-      || row?.next_action?.reason
-      || (BLOCKED_STATES.has(status) ? '执行受阻' : UNKNOWN)
+      || (row?.next_action && row.next_action.executable === false ? row.next_action.reason : null)
+      || (view === 'blocked' ? '执行受阻' : (view === 'waiting' ? '等待外部平台回执' : UNKNOWN))
     const progress = row?.progress
+    // bug1 修复：后端 product={id,title,sku} / store={id,name,platform} 为**对象**，
+    // 直接插值会渲染 "[object Object]" → 归一化为人类可读字符串；原对象另存 raw 供筛选/跳转。
+    const productName = displayName(row?.product, 'product')
+    const storeName = displayName(row?.store, 'store')
     return {
-      id: `launch:${row?.id ?? i}`,
+      id: `launch:${row?.id ?? productName}`, // 业务键 = 上线运行 id（稳定，不含下标）
       kind: 'launch',
       view,
-      title: `${row?.product || '商品'} 的上线流程`,
-      object: row?.product || UNKNOWN,
-      store: row?.store || UNKNOWN,
+      title: `${productName} 的上线流程`,
+      object: productName,
+      store: storeName,
+      productRaw: row?.product ?? null,
+      storeRaw: row?.store ?? null,
       reason,
       owner: row?.owner?.role_hint || row?.owner?.actor || UNKNOWN,
       time: row?.created_at || UNKNOWN,
-      severity: BLOCKED_STATES.has(status) ? 'high' : 'mid',
+      severity: isBlockedItem(row) ? 'high' : 'mid',
       progress: progress ? `${progress.completed ?? 0}/${progress.total ?? 0}` : UNKNOWN,
       link: safeInternalPath(`/app/launch/${row?.id}`),
       ref: row?.id ?? null,
@@ -88,23 +98,35 @@ function fromInProgress(rows, { waitingExternal = true } = {}) {
 /** todo.items（来源分组摘要）→ 统一任务项（默认视图，如实标注「摘要」缺口）。 */
 function fromTodo(items) {
   if (!Array.isArray(items)) return []
-  return items.map((item, i) => ({
-    id: `todo:${item?.type || 'x'}:${i}`,
-    kind: item?.type || 'task',
-    view: 'todo',
-    title: item?.title || typeLabel(item?.type),
-    object: UNKNOWN,
-    store: UNKNOWN,
-    reason: '跨域待办（后端为来源分组摘要，逐条明细未提供）',
-    owner: UNKNOWN,
-    time: item?.due_at || UNKNOWN,
-    severity: item?.severity || 'low',
-    count: Number(item?.count) || 0,
-    link: taskLink(item?.route, '/app/tasks'),
-    ref: item?.ref ?? null,
-    source: 'workbench.todo',
-    gaps: ['明细实例（对象/店铺/责任人）未提供，按来源摘要展示'],
-  }))
+  return items.map((item) => {
+    // bug5 修复：稳定任务标识基于业务键（type + store + object），**不含下标**，
+    // 列表重排不漂移。分组摘要的 store/object 未知 → 用 ref/title 兜底保证唯一。
+    const storeDisp = displayName(item?.store, 'store')
+    const objectDisp = displayName(item?.object, 'product')
+    const parts = ['todo', item?.type || 'x']
+    if (storeDisp !== UNKNOWN) parts.push(storeDisp)
+    if (objectDisp !== UNKNOWN) parts.push(objectDisp)
+    if (storeDisp === UNKNOWN && objectDisp === UNKNOWN) {
+      parts.push(String(item?.ref ?? item?.title ?? '摘要'))
+    }
+    return {
+      id: parts.join(':'),
+      kind: item?.type || 'task',
+      view: 'todo',
+      title: item?.title || typeLabel(item?.type),
+      object: objectDisp,
+      store: storeDisp,
+      reason: '跨域待办（后端为来源分组摘要，逐条明细未提供）',
+      owner: UNKNOWN,
+      time: item?.due_at || UNKNOWN,
+      severity: item?.severity || 'low',
+      count: Number(item?.count) || 0,
+      link: taskLink(item?.route, '/app/tasks'),
+      ref: item?.ref ?? null,
+      source: 'workbench.todo',
+      gaps: ['明细实例（对象/店铺/责任人）未提供，按来源摘要展示'],
+    }
+  })
 }
 
 /** ai_done.items → 已完成视图。 */
@@ -204,15 +226,45 @@ function matchesDue(task, due) {
 
 const includesText = (value, needle) => String(value || '').toLowerCase().includes(String(needle).toLowerCase())
 
+/**
+ * 取任务字段的可筛选文本（bug2 修复）：object/store 可能是**后端对象**
+ * （product/store 引用）或已归一化的展示字符串 → 统一经 displayName 归一，
+ * 避免对对象比较导致筛选恒 0 行。优先展示字段，其次 raw 对象。
+ */
+function filterText(task, field) {
+  if (field === 'store') return displayName(task?.store ?? task?.storeRaw, 'store')
+  return displayName(task?.object ?? task?.productRaw, 'product')
+}
+
 /** 按筛选过滤（product/store/type/due/view）。 */
 export function filterTasks(tasks = [], filters = {}) {
   const list = Array.isArray(tasks) ? tasks : []
   return list.filter((t) => {
     if ((filters.view || 'todo') !== t.view) return false
     if (filters.type && t.kind !== filters.type) return false
-    if (filters.product && !includesText(t.object, filters.product)) return false
-    if (filters.store && !includesText(t.store, filters.store)) return false
+    if (filters.product && !includesText(filterText(t, 'product'), filters.product)) return false
+    if (filters.store && !includesText(filterText(t, 'store'), filters.store)) return false
     if (!matchesDue(t, filters.due)) return false
     return true
   })
+}
+
+/**
+ * 构造任务处理深链（bug4 修复）：**URL 感知**地把 return_to 合并进任务 link，
+ * 已含 return_to 则覆盖为规范化后的单一值（不重复追加），保留当前 ?view=&store=
+ * 等筛选于 return_to。使用 URLSearchParams 构造，避免手拼 query。
+ * @param {string} link 任务目标路径（可能已含 ?return_to=…）
+ * @param {string} returnTo 当前待办页位置（path + query）
+ * @returns {string} 站内路径；非法 path → ''
+ */
+export function buildTaskHref(link, returnTo) {
+  if (!link || typeof link !== 'string') return ''
+  const [rawPath, rawQuery = ''] = link.split('?')
+  const path = safeInternalPath(rawPath)
+  if (!path) return ''
+  const params = new URLSearchParams(rawQuery)
+  const back = safeInternalPath(returnTo)
+  if (back) params.set('return_to', back) // set → 覆盖重复项，保证唯一
+  const qs = params.toString()
+  return qs ? `${path}?${qs}` : path
 }

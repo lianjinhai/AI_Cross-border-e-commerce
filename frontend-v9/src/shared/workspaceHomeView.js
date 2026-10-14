@@ -13,8 +13,36 @@
  * （负责人/截止时间缺失即如实标注，不臆造）。
  */
 
+import { deriveWorkbenchCounts } from './workbenchContext'
+
 /** 未知/尚未获得占位（金额、计数、百分比通用）。 */
 export const UNKNOWN = '—'
+
+/**
+ * 人类可读名称（R3-2B 修复 bug1/bug3）：后端 `product`/`store` 是**对象**——
+ * `product={id,title,sku,category}`（launch_dto.py:35 `product_ref`）、
+ * `store={id,name,platform}`（launch_dto.py:40 `store_ref`）。直接插值会渲染成
+ * `"[object Object]"`。本函数把对象归一化为展示字符串，**不改变原对象**（调用方
+ * 另存 raw 字段供筛选/跳转）；已是字符串/数字原样返回；未知 → UNKNOWN。
+ * @param {*} value 字段原始值（对象 / 字符串 / 数字 / null）
+ * @param {'product'|'store'} kind 字段语义（决定取值优先级）
+ * @returns {string}
+ */
+export function displayName(value, kind = 'product') {
+  if (value === null || value === undefined || value === '') return UNKNOWN
+  if (typeof value === 'string' || typeof value === 'number') return String(value)
+  if (typeof value === 'object') {
+    const order = kind === 'store'
+      ? ['name', 'shop_name', 'title', 'id']
+      : ['title', 'sku', 'name', 'id']
+    for (const key of order) {
+      const v = value[key]
+      if (v !== null && v !== undefined && v !== '') return String(v)
+    }
+    return UNKNOWN
+  }
+  return UNKNOWN
+}
 
 /** 严重度权重（后端 severity 取值域 high|mid|low；未知排最后）。 */
 const SEVERITY_RANK = { high: 0, mid: 1, low: 2 }
@@ -22,8 +50,6 @@ const SEVERITY_RANK = { high: 0, mid: 1, low: 2 }
 /** 类型责任权重：需人工处理的排前（复核 > 审批动作 > 上线 > 告警）。 */
 const TYPE_RANK = { review: 0, action: 1, launch: 2, alert: 3 }
 
-/** 等待平台/外部反馈的执行状态（不计入「需我处理」，计入「等待外部」）。 */
-const WAITING_EXTERNAL_STATES = new Set(['WAITING_EXTERNAL', 'WAITING_PLATFORM', 'WAITING_EXTERNAL_FEEDBACK'])
 /** 阻断/失败执行状态（计入「被阻断」）。 */
 const BLOCKED_STATES = new Set(['BLOCKED', 'FAILED'])
 
@@ -76,42 +102,27 @@ export function pickHighPriority(items, limit = 3) {
   return rest.slice(0, Math.max(0, limit))
 }
 
-/** 源状态是否失败（单个源）。 */
-function isFailed(sources, key) {
-  return (sources || {})[key] === 'failed'
-}
-
 /**
  * 首屏计数条（§1）：待我处理 / 等待外部 / 被阻断。
- * 缺失或源失败 → 该计数为 UNKNOWN（**不当 0**）；确实为空 → 0。
- * @param {object} todo /workbench/todo 响应
+ *
+ * **语义口径统一（R3-2B 修复）**：三方（顶栏上下文条 / 工作台卡 / 待办中心视图）
+ * 唯一事实源 = `workbenchContext.deriveWorkbenchCounts(overview)`：
+ *   - 待我处理  ← overview.sections.need_human.count（待人工处理的行动 + 复核）
+ *   - 等待外部  ← in_progress 中 execution_status∈{WAITING_EXTERNAL} 或
+ *                 platform_status∈{SUBMITTED,UNDER_REVIEW}（对齐后端 `_WAITING_STATES`
+ *                 / `_PLATFORM_WAITING`，**不含 READY/RUNNING 等 mine 状态**）
+ *   - 被阻断    ← in_progress 中 execution_status∈{BLOCKED,FAILED}
+ * 缺失或源不可得 → UNKNOWN（'—'，**绝不当 0**）；确实为空 → 0。
+ * @param {object} todo /workbench/todo 响应（仅用于 partial）
  * @param {object} overview /workbench/overview 响应
  */
 export function taskCounters(todo = {}, overview = {}) {
-  const tSources = todo?.sources || {}
-  const oSources = overview?.sources || {}
-  const counts = todo?.counts || {}
-
-  // 待我处理 = 上线(需我) + 待审批动作 + 风险告警 + 待复核；任一相关源失败 → 未知
-  const mineKeys = ['launch', 'action', 'alert', 'review']
-  const mineFailed = mineKeys.some((k) => isFailed(tSources, k))
-  const mine = mineFailed
-    ? UNKNOWN
-    : mineKeys.reduce((sum, k) => sum + (Number(counts[k]) || 0), 0)
-
-  // 等待外部 / 被阻断：来自进行中上线（源失败 → 未知）
-  const inProgress = overview?.sections?.in_progress
-  const launchFailed = isFailed(oSources, 'launch')
-  const rows = Array.isArray(inProgress) ? inProgress : []
-  const derive = (states) => {
-    if (launchFailed) return UNKNOWN
-    if (!Array.isArray(inProgress)) return UNKNOWN
-    return rows.filter((r) => states.has(r?.execution_status)).length
-  }
+  const c = deriveWorkbenchCounts(overview)
+  const show = (v) => (v == null ? UNKNOWN : v)
   return {
-    mine,
-    waitingExternal: derive(WAITING_EXTERNAL_STATES),
-    blocked: derive(BLOCKED_STATES),
+    mine: show(c.todo),
+    waitingExternal: show(c.waiting),
+    blocked: show(c.blocked),
     partial: Boolean(todo?.partial) || Boolean(overview?.partial),
   }
 }
@@ -226,11 +237,14 @@ export function blockerSummary(overview = {}) {
   if (!Array.isArray(inProgress)) return { available: false, items: [], reason: '暂无上线数据' }
   const items = []
   for (const row of inProgress) {
+    // bug3 修复：product/store 为对象 → 归一化为人类可读字符串（不再渲染 "[object Object]"）
+    const productName = displayName(row?.product, 'product')
+    const storeName = displayName(row?.store, 'store')
     if (BLOCKED_STATES.has(row?.execution_status)) {
-      items.push({ kind: 'blocked', id: row?.id, product: row?.product, store: row?.store,
+      items.push({ kind: 'blocked', id: row?.id, product: productName, store: storeName,
         status: row?.execution_status, message: row?.blocked_summary?.[0]?.message || '执行受阻' })
     } else if (row?.next_action && row.next_action.executable === false && row.next_action.reason) {
-      items.push({ kind: 'waiting', id: row?.id, product: row?.product, store: row?.store,
+      items.push({ kind: 'waiting', id: row?.id, product: productName, store: storeName,
         status: row?.execution_status, message: row.next_action.reason })
     }
   }

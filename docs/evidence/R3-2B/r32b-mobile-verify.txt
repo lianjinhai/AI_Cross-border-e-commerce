@@ -1,0 +1,8 @@
+[shot] F:/Desktop/个人文件/软件开发计划/AI-电商ERP/docs/evidence/R3-2B/08-r32b-home-390.png
+[shot] F:/Desktop/个人文件/软件开发计划/AI-电商ERP/docs/evidence/R3-2B/09-r32b-tasks-390.png
+[E-mobile 390] {"home":{"inner":390,"scroll":390,"body":390},"tasks":{"inner":390,"scroll":390,"body":390},"homeOverflow":false,"tasksOverflow":false}
+[shot] F:/Desktop/个人文件/软件开发计划/AI-电商ERP/docs/evidence/R3-2B/08-r32b-home-768.png
+[shot] F:/Desktop/个人文件/软件开发计划/AI-电商ERP/docs/evidence/R3-2B/09-r32b-tasks-768.png
+[E-mobile 768] {"home":{"inner":768,"scroll":753,"body":753},"tasks":{"inner":768,"scroll":768,"body":768},"homeOverflow":false,"tasksOverflow":false}
+DONE
+EXIT=0

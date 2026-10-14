@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
-  UNKNOWN, aiActivity, blockerSummary, businessStage, businessSummary, entryPlan, pickHighPriority,
-  pickPrimaryTask, rankTasks, resolveEntryProfile, safeInternalPath, taskCounters, taskLink,
-  taskPriorityKey,
+  UNKNOWN, aiActivity, blockerSummary, businessStage, businessSummary, displayName, entryPlan,
+  pickHighPriority, pickPrimaryTask, rankTasks, resolveEntryProfile, safeInternalPath, taskCounters,
+  taskLink, taskPriorityKey,
 } from '../src/shared/workspaceHomeView'
+import { deriveWorkbenchCounts } from '../src/shared/workbenchContext'
 
 /**
  * R3-2B §1 四层工作台视图模型单测：排序/计数/入口/阶段/摘要/活动流。
@@ -52,42 +53,68 @@ describe('rankTasks / pickPrimaryTask / pickHighPriority（时限·风险·责�
   })
 })
 
-describe('taskCounters（首屏计数条：缺失/失败不当 0）', () => {
+describe('taskCounters（首屏计数条：缺失/失败不当 0；口径与顶栏统一）', () => {
   const overviewOk = {
-    sources: { launch: 'ok' },
+    sources: { launch: 'ok', need_human: 'ok' },
     sections: {
+      need_human: { count: 2 }, // 待我处理 = need_human 口径
       in_progress: [
         { id: 1, execution_status: 'WAITING_EXTERNAL' },
         { id: 2, execution_status: 'BLOCKED' },
         { id: 3, execution_status: 'FAILED' },
-        { id: 4, execution_status: 'RUNNING' },
+        { id: 4, execution_status: 'RUNNING' }, // mine 状态：不计入等待外部/阻断
       ],
     },
   }
 
-  it('正常：待我处理=全部待办来源计数之和，等待外部与阻断按状态计数', () => {
+  it('正常：待我处理=need_human.count；等待外部/阻断按状态计数（RUNNING 不计入）', () => {
     const c = taskCounters(SAMPLE_TODO, overviewOk)
-    expect(c.mine).toBe(9) // launch5 + action0 + alert3 + review1
+    expect(c.mine).toBe(2)
     expect(c.waitingExternal).toBe(1)
     expect(c.blocked).toBe(2)
   })
 
-  it('上线源失败 → 等待外部/阻断为「—」而非 0', () => {
+  it('上线源不可得 → 等待外部/阻断为「—」而非 0', () => {
     const c = taskCounters(SAMPLE_TODO, { sources: { launch: 'failed' }, sections: {} })
     expect(c.waitingExternal).toBe(UNKNOWN)
     expect(c.blocked).toBe(UNKNOWN)
   })
 
-  it('待办源失败 → 待我处理为「—」而非 0', () => {
-    const c = taskCounters({ ...SAMPLE_TODO, sources: { ...SAMPLE_TODO.sources, launch: 'failed' } }, overviewOk)
+  it('need_human 不可得 → 待我处理为「—」而非 0', () => {
+    const c = taskCounters(SAMPLE_TODO, { sources: { need_human: 'failed' }, sections: { in_progress: [] } })
     expect(c.mine).toBe(UNKNOWN)
   })
 
   it('确实为空 → 0（≠缺数据）', () => {
-    const c = taskCounters({ counts: { launch: 0, action: 0, review: 0 }, sources: { launch: 'ok', action: 'ok', review: 'ok' } },
-      { sources: { launch: 'ok' }, sections: { in_progress: [] } })
+    const c = taskCounters(
+      { counts: { launch: 0, action: 0, review: 0 }, sources: { launch: 'ok', action: 'ok', review: 'ok' } },
+      { sources: { need_human: 'ok' }, sections: { need_human: { count: 0 }, in_progress: [] } })
     expect(c.mine).toBe(0)
     expect(c.blocked).toBe(0)
+    expect(c.waitingExternal).toBe(0)
+  })
+
+  it('三方口径一致：工作台 taskCounters ≡ 顶栏 deriveWorkbenchCounts（顶栏/工作台/待办中心同源）', () => {
+    const ov = {
+      sources: { need_human: 'ok' },
+      sections: {
+        need_human: { count: 3 },
+        in_progress: [
+          { execution_status: 'WAITING_EXTERNAL' }, // 等待外部（执行态）
+          { platform_status: 'SUBMITTED' },         // 等待外部（平台状态）
+          { execution_status: 'FAILED' },           // 被阻断
+          { execution_status: 'READY' },            // 不计入任何计数
+        ],
+      },
+    }
+    const home = taskCounters({}, ov)
+    const bar = deriveWorkbenchCounts(ov)
+    expect(home.mine).toBe(bar.todo)
+    expect(home.waitingExternal).toBe(bar.waiting)
+    expect(home.blocked).toBe(bar.blocked)
+    expect(home.mine).toBe(3)
+    expect(home.waitingExternal).toBe(2) // WAITING_EXTERNAL + SUBMITTED；READY 不混入
+    expect(home.blocked).toBe(1)
   })
 })
 
@@ -127,14 +154,24 @@ describe('businessStage / blockerSummary / businessSummary（第三层）', () =
     expect(st.stage).toBe('LAUNCHING')
   })
 
-  it('阻断摘要：源失败 → available=false（未知非“无阻断”）', () => {
+  it('阻断摘要：源失败 → available=false（未知非“无阻断”）；对象字段人类可读（bug3）', () => {
     expect(blockerSummary({ sources: { launch: 'failed' } }).available).toBe(false)
     const ok = blockerSummary({
       sources: { launch: 'ok' },
-      sections: { in_progress: [{ id: 1, execution_status: 'BLOCKED', product: 'P', store: 'S', blocked_summary: [{ message: '缺资料' }] }] },
+      sections: {
+        in_progress: [{
+          id: 1, execution_status: 'BLOCKED',
+          product: { id: 5, title: '哑铃', sku: 'D-1' },
+          store: { id: 9, name: '美国站', platform: 'amazon' },
+          blocked_summary: [{ message: '缺资料' }],
+        }],
+      },
     })
     expect(ok.available).toBe(true)
     expect(ok.items[0].message).toBe('缺资料')
+    expect(ok.items[0].product).toBe('哑铃')
+    expect(ok.items[0].store).toBe('美国站')
+    expect(JSON.stringify(ok.items[0])).not.toContain('[object Object]')
   })
 
   it('经营摘要：指标缺失/无权限 → —（缺失不当 0）', () => {
@@ -165,5 +202,20 @@ describe('safeInternalPath / taskLink（站内回跳白名单）', () => {
     const link = taskLink({ path: '/launch' }, '/app/tasks?view=waiting')
     expect(link).toBe('/launch?return_to=%2Fapp%2Ftasks%3Fview%3Dwaiting')
     expect(taskLink({ path: '/launch' }, '//evil.com')).toBe('/launch')
+  })
+})
+
+describe('displayName（bug1/bug3：后端 product/store 对象 → 人类可读字符串）', () => {
+  it('product 取 title→sku→id；store 取 name→id；字符串原样；空 → —', () => {
+    expect(displayName({ id: 1, title: '弹力带', sku: 'B1' }, 'product')).toBe('弹力带')
+    expect(displayName({ id: 1, sku: 'B1' }, 'product')).toBe('B1') // 无 title 退 sku
+    expect(displayName({ id: 7 }, 'product')).toBe('7')            // 退 id
+    expect(displayName({ id: 2, name: '美国站', platform: 'amazon' }, 'store')).toBe('美国站')
+    expect(displayName({ id: 2 }, 'store')).toBe('2')
+    expect(displayName('美国站', 'store')).toBe('美国站')
+    expect(displayName(0, 'product')).toBe('0')
+    expect(displayName(null, 'store')).toBe(UNKNOWN)
+    expect(displayName(undefined, 'product')).toBe(UNKNOWN)
+    expect(displayName({}, 'product')).toBe(UNKNOWN)
   })
 })

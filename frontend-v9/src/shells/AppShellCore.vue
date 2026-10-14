@@ -1,7 +1,7 @@
 <template>
   <el-container class="shell" :class="`shell--${space}`">
     <el-aside :width="collapsed ? '64px' : '220px'" class="shell__aside">
-      <div class="shell__brand" @click="$emit('toggle-sidebar')">
+      <div class="shell__brand" @click="toggleSidebar">
         <span class="shell__brand-dot" :style="{ background: accentColor }" />
         <span v-if="!collapsed" class="shell__brand-text">{{ spaceLabel }}</span>
       </div>
@@ -55,7 +55,7 @@
  * 状态横幅优先级（NAVIGATION §4）：代客中 > 只读态 > partial 提示（partial 由
  * 页面级 PartialDataBanner 语义承接）。
  */
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { roleKey as contextRoleKey, defaultLanding } from '../permissions/permissions'
 import { clearWorkspaceContext, getContext } from '../shared/workspace'
@@ -70,7 +70,7 @@ const props = defineProps({
   readOnly: { type: Boolean, default: false },
 })
 
-defineEmits(['exit-impersonate', 'toggle-sidebar'])
+const emit = defineEmits(['exit-impersonate', 'toggle-sidebar'])
 
 const SPACE_META = {
   workspace: { label: '经营工作台', accent: 'var(--space-accent-workspace)' },
@@ -81,6 +81,31 @@ const SPACE_META = {
 const route = useRoute()
 const router = useRouter()
 const collapsed = ref(false)
+
+/** 侧栏折叠切换（品牌区点击）：本地翻转 + 上报父级（兼容既有监听）。 */
+function toggleSidebar() {
+  collapsed.value = !collapsed.value
+  emit('toggle-sidebar')
+}
+
+/**
+ * 移动端自适应（R3-2B 响应式）：视口 ≤768px 自动收起侧栏为图标条，
+ * 用户仍可点击品牌区展开；恢复宽屏时不强制展开（尊重用户选择）。
+ */
+let mobileQuery = null
+function syncCollapsedOnResize(event) {
+  if (event && event.matches) collapsed.value = true
+}
+onMounted(() => {
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    mobileQuery = window.matchMedia('(max-width: 768px)')
+    if (mobileQuery.matches) collapsed.value = true
+    mobileQuery.addEventListener('change', syncCollapsedOnResize)
+  }
+})
+onUnmounted(() => {
+  if (mobileQuery) mobileQuery.removeEventListener('change', syncCollapsedOnResize)
+})
 
 const spaceLabel = computed(() => SPACE_META[props.space]?.label || '')
 const accentColor = computed(() => SPACE_META[props.space]?.accent || 'var(--color-primary)')
@@ -115,11 +140,13 @@ function logout() {
 <style scoped>
 .shell {
   min-height: 100vh;
+  overflow-x: hidden;
 }
 .shell__aside {
   background: var(--color-sidebar);
   transition: width 0.2s;
   overflow-x: hidden;
+  flex: none;
 }
 .shell__brand {
   display: flex;
@@ -170,5 +197,13 @@ function logout() {
 }
 .shell__main {
   background: var(--color-bg);
+  min-width: 0;
+}
+/* 窄屏（≤768）：收紧顶栏间距，隐藏上下文条（窄屏易致横向溢出），
+   侧栏由 JS 自动收起为图标条（见 script）。 */
+@media (max-width: 768px) {
+  .shell__brand { padding: var(--space-3) var(--space-2); }
+  .shell__topbar { gap: var(--space-2); }
+  .shell__topbar-context { display: none; }
 }
 </style>

@@ -30,7 +30,7 @@
 
     <!-- 第四/三层主区：左侧四层（主任务→高优待办→阶段/摘要），右侧唯一推荐入口 -->
     <el-row :gutter="16">
-      <el-col :span="16">
+      <el-col :xs="24" :sm="24" :md="16">
         <!-- 第一层：唯一主任务 -->
         <el-card class="mb16 main-task-card" shadow="never">
           <template #header>
@@ -92,7 +92,7 @@
       </el-col>
 
       <!-- 右侧：经营阶段唯一推荐入口（画像不同入口不同） -->
-      <el-col :span="8">
+      <el-col :xs="24" :sm="24" :md="8">
         <el-card class="mb16" shadow="never">
           <template #header><span class="card-title">唯一推荐入口</span></template>
           <p class="hint">{{ entry.hint }}</p>
@@ -288,22 +288,23 @@ onUnmounted(() => charts.forEach((c) => c.dispose()))
 </script>
 
 <style scoped>
-.between { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.page { min-width: 0; }
+.between { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .card-title { font-size: 16px; font-weight: 600; }
 .scope { color: var(--color-text-secondary); font-size: var(--font-size-xs); }
 .hint { margin: 0 0 8px; color: var(--color-text-secondary); font-size: var(--font-size-sm); }
-.counters { display: flex; gap: 40px; }
+.counters { display: flex; flex-wrap: wrap; gap: 40px; }
 .counter { text-align: center; }
 .counter__num { font-size: 24px; font-weight: 600; }
 .counter__num--warn { color: var(--color-warning); }
 .counter__label { color: var(--color-text-secondary); font-size: var(--font-size-xs); margin-top: 2px; }
-.main-task { display: flex; align-items: center; gap: 12px; }
-.main-task__title { flex: 1; font-size: 16px; font-weight: 600; }
+.main-task { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.main-task__title { flex: 1 1 200px; min-width: 0; font-size: 16px; font-weight: 600; }
 .main-task--empty { justify-content: space-between; }
 .task-list { display: flex; flex-direction: column; }
-.stage-line { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.stage-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .blocker-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
-.summary { display: flex; gap: 24px; margin-top: 8px; }
+.summary { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 8px; }
 .summary__label { color: var(--color-text-secondary); font-size: var(--font-size-xs); }
 .summary__value { font-size: 18px; font-weight: 600; }
 .summary__value--missing { color: var(--color-text-disabled); font-weight: 400; }
@@ -313,4 +314,10 @@ onUnmounted(() => charts.forEach((c) => c.dispose()))
 .chart-box { height: 280px; }
 .mb12 { margin-bottom: 12px; }
 .mb16 { margin-bottom: 16px; }
+/* 窄屏（≤768）：卡片内元素换行，避免挤压成竖排单字；容器不横向溢出 */
+@media (max-width: 768px) {
+  .counters { gap: 24px; }
+  .summary { gap: 16px; }
+  .chart-box { height: 200px; }
+}
 </style>
