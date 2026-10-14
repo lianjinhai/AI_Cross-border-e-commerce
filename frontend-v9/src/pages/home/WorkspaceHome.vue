@@ -1,8 +1,8 @@
 <template>
   <div class="page">
-    <PageHeader title="经营工作台" subtitle="今日经营：待办分组 · 信号区块 · 引导">
+    <PageHeader title="经营工作台" subtitle="今天需要你处理 · 唯一主任务优先">
       <template #actions>
-        <el-tag size="small" type="info">{{ personaLabel }}</el-tag>
+        <el-tag size="small" type="info">{{ entry.label }}</el-tag>
       </template>
     </PageHeader>
 
@@ -10,137 +10,144 @@
     <PartialBanner v-if="overview.partial" class="mb16" :missing="missingSourceNames" />
     <ErrorState v-if="error" class="mb16" :message="error" :trace-id="overview.trace_id" @retry="fetchAll" />
 
-    <!-- onboarding 卡（新手画像，derived 非准入依据） -->
+    <!-- 顶部小型计数条：待我处理 / 等待外部 / 被阻断（缺失显示 — 不显示 0） -->
     <el-card class="mb16" shadow="never">
-      <p class="hint">{{ personaHint }}</p>
-      <ol class="guide-steps">
-        <li v-for="(step, i) in personaSteps" :key="i">
-          <span>{{ step.text }}</span>
-          <el-button v-if="step.path" link type="primary" size="small" @click="go(step.path)">前往</el-button>
-        </li>
-      </ol>
-    </el-card>
-
-    <!-- ① 在做什么 -->
-    <el-card class="mb16" shadow="never">
-      <template #header>
-        <div class="between"><span class="card-title">① 在做什么</span><span class="scope">口径：我参与的上线流程（mine）</span></div>
-      </template>
-      <SectionState :state="stateOf(overview.sections?.in_progress, 'launch')" @retry="fetchAll" empty-hint="还没有进行中的上线流程">
-        <el-table :data="overview.sections?.in_progress || []" size="small">
-          <el-table-column prop="product" label="商品" show-overflow-tooltip />
-          <el-table-column prop="store" label="店铺" width="150" show-overflow-tooltip />
-          <el-table-column label="进度" width="100">
-            <template #default="{ row }">{{ row.progress?.completed ?? 0 }}/{{ row.progress?.total ?? 0 }}</template>
-          </el-table-column>
-          <el-table-column label="状态" width="130">
-            <template #default="{ row }"><StatusBadge :status="row.execution_status" /></template>
-          </el-table-column>
-        </el-table>
-      </SectionState>
-    </el-card>
-
-    <!-- ② 进展如何（BI 指标降级为次级信息，销售/广告口径分列不混算） -->
-    <el-card class="mb16" shadow="never">
-      <template #header>
-        <div class="between"><span class="card-title">② 进展如何</span><span class="scope">口径：近 30 天销售/广告指标（次级信息）</span></div>
-      </template>
-      <SectionState :state="stateOf(overview.sections?.metrics, 'bi')" @retry="fetchAll" empty-hint="暂无经营指标（需财务读权限）" loading-type="cards">
-        <el-row :gutter="12">
-          <el-col v-for="m in metrics" :key="m.label" :span="6" class="mb12">
-            <MetricCard :label="m.label" :value="m.value" :color="m.color" />
-          </el-col>
-        </el-row>
-        <div class="scope-note">销售口径：GMV / 订单数 / 贡献利润 / 净收入 / 退款率；广告口径：广告花费 / ROI。两类口径**不做混算**。</div>
-      </SectionState>
-    </el-card>
-
-    <!-- ③ 今天最重要（待办按来源域分组 + 直达明细，J2 断链归零） -->
-    <el-card class="mb16" shadow="never">
-      <template #header>
-        <div class="between"><span class="card-title">③ 今天最重要</span><span class="scope">口径：跨域待办（launch / action / alert / review）</span></div>
-      </template>
-      <SectionState :state="stateOf(topToday, 'todo')" @retry="fetchAll" empty-hint="今天没有待办">
-        <TaskCard v-for="item in topToday" :key="item.type" :todo="item" />
-      </SectionState>
-    </el-card>
-
-    <!-- ④ 哪些要人工 -->
-    <el-card class="mb16" shadow="never">
-      <template #header>
-        <div class="between"><span class="card-title">④ 哪些要人工</span><span class="scope">口径：待审批动作 + 待人工复核</span></div>
-      </template>
-      <SectionState :state="stateOf(overview.sections?.need_human, 'review')" @retry="fetchAll" empty-hint="当前无需人工介入">
-        <div class="metric-inline">待人工处理：<b>{{ overview.sections?.need_human?.count ?? 0 }}</b></div>
-        <TaskCard v-for="item in humanItems" :key="item.type" :todo="item" />
-      </SectionState>
-    </el-card>
-
-    <!-- ⑤ AI 完成了什么 -->
-    <el-card class="mb16" shadow="never">
-      <template #header>
-        <div class="between"><span class="card-title">⑤ AI 完成了什么</span><span class="scope">口径：近 24 小时成功的自动化运行</span></div>
-      </template>
-      <SectionState :state="stateOf(overview.sections?.ai_done, 'workflow')" @retry="fetchAll" empty-hint="近 24 小时没有已完成的 AI 运行">
-        <el-table :data="overview.sections?.ai_done?.items || []" size="small">
-          <el-table-column prop="title" label="运行" show-overflow-tooltip />
-          <el-table-column prop="finished_at" label="完成时间" width="180" />
-          <el-table-column label="状态" width="110">
-            <template #default="{ row }"><StatusBadge :status="row.status" /></template>
-          </el-table-column>
-        </el-table>
-      </SectionState>
-    </el-card>
-
-    <!-- ⑥ 哪些异常 -->
-    <el-card class="mb16" shadow="never">
-      <template #header>
-        <div class="between"><span class="card-title">⑥ 哪些异常</span><span class="scope">口径：未关闭的风险告警</span></div>
-      </template>
-      <SectionState :state="stateOf(overview.sections?.exceptions, 'alert')" @retry="fetchAll" empty-hint="没有未处理的风险告警">
-        <el-table :data="overview.sections?.exceptions?.items || []" size="small">
-          <el-table-column prop="title" label="告警" show-overflow-tooltip />
-          <el-table-column prop="level" label="级别" width="90" />
-          <el-table-column prop="created_at" label="时间" width="180" />
-        </el-table>
-      </SectionState>
-    </el-card>
-
-    <!-- 下一步 -->
-    <el-card class="mb16" shadow="never">
-      <template #header><span class="card-title">下一步</span></template>
-      <div v-if="nextActions.length" class="next-actions">
-        <el-button v-for="item in nextActions" :key="item.type" type="primary" plain @click="go(item.route && item.path)">
-          {{ item.title }}（{{ item.count }}）
-        </el-button>
+      <div class="counters">
+        <div class="counter">
+          <div class="counter__num">{{ counters.mine }}</div>
+          <div class="counter__label">待我处理</div>
+        </div>
+        <div class="counter">
+          <div class="counter__num">{{ counters.waitingExternal }}</div>
+          <div class="counter__label">等待外部</div>
+        </div>
+        <div class="counter">
+          <div class="counter__num counter__num--warn">{{ counters.blocked }}</div>
+          <div class="counter__label">被阻断</div>
+        </div>
       </div>
-      <EmptyState v-else reason="NO_DATA" hint="暂无下一步动作" />
     </el-card>
 
-    <!-- 次级：BI 明细（仅当 BFF 判定具备 bi 读权限时加载） -->
-    <el-card v-if="biDetail" shadow="never">
-      <template #header><div class="between"><span class="card-title">BI 明细</span><span class="scope">次级信息 · 近 30 天</span></div></template>
-      <el-row :gutter="16" class="mb16">
-        <el-col :span="16"><div ref="trendRef" class="chart-box" /></el-col>
-        <el-col :span="8"><div ref="pieRef" class="chart-box" /></el-col>
-      </el-row>
-      <el-table :data="biDetail.top_products || []" size="small">
-        <el-table-column type="index" width="50" />
-        <el-table-column prop="title" label="热销商品" show-overflow-tooltip />
-        <el-table-column prop="units" label="销量" width="90" />
-        <el-table-column label="销售额" width="120">
-          <template #default="{ row }">${{ Number(row.revenue || 0).toFixed(2) }}</template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+    <!-- 第四/三层主区：左侧四层（主任务→高优待办→阶段/摘要），右侧唯一推荐入口 -->
+    <el-row :gutter="16">
+      <el-col :span="16">
+        <!-- 第一层：唯一主任务 -->
+        <el-card class="mb16 main-task-card" shadow="never">
+          <template #header>
+            <div class="between"><span class="card-title">今天最值得完成的一件事</span>
+              <span class="scope">按 时限 · 风险 · 责任 排序</span></div>
+          </template>
+          <SectionState :state="todoState" @retry="fetchAll" empty-hint="当前没有待你处理的任务">
+            <template v-if="primaryTask">
+              <div class="main-task">
+                <el-tag size="small" :type="severityTag(primaryTask.severity)">{{ severityLabel(primaryTask.severity) }}</el-tag>
+                <span class="main-task__title">{{ primaryTask.title }}</span>
+                <el-badge v-if="primaryTask.count" :value="primaryTask.count" type="primary" />
+                <el-button v-if="primaryTask.link" type="primary" @click="go(primaryTask.link)">去处理</el-button>
+              </div>
+            </template>
+            <template v-else>
+              <div class="main-task main-task--empty">
+                <span class="hint">{{ entry.hint }}</span>
+                <el-button type="primary" @click="go(entry.recommended.path)">{{ entry.recommended.text }}</el-button>
+              </div>
+            </template>
+          </SectionState>
+        </el-card>
+
+        <!-- 第二层：最多 3 项高优先级待办 -->
+        <el-card class="mb16" shadow="never">
+          <template #header>
+            <div class="between"><span class="card-title">还需要处理（最多 3 项）</span>
+              <el-button link type="primary" size="small" @click="go('/app/tasks')">查看全部待办</el-button></div>
+          </template>
+          <SectionState :state="todoState" @retry="fetchAll" empty-hint="没有其他高优先级待办">
+            <div v-if="highPriority.length" class="task-list">
+              <TaskCard v-for="item in highPriority" :key="item.key" :todo="item.raw" />
+            </div>
+            <EmptyState v-else reason="NO_DATA" hint="没有其他高优先级待办" />
+          </SectionState>
+        </el-card>
+
+        <!-- 第三层：经营阶段 + 阻断 + 真实经营摘要 -->
+        <el-card class="mb16" shadow="never">
+          <template #header><span class="card-title">当前经营状况</span></template>
+          <div class="stage-line">
+            <el-tag size="small" type="primary">{{ stage.label }}</el-tag>
+            <span class="hint">{{ stage.hint }}</span>
+          </div>
+          <div v-if="blockers.available && blockers.items.length" class="blocker-list">
+            <el-alert v-for="(b, i) in blockers.items" :key="i" type="warning" :closable="false" show-icon
+              :title="`${b.product || '商品'} · ${b.store || '店铺'}：${b.message}`" />
+          </div>
+          <el-alert v-else-if="!blockers.available" type="info" :closable="false" show-icon
+            :title="`阻断信息：${blockers.reason}（未知，不作为“无阻断”处理）`" />
+          <div class="summary">
+            <div v-for="s in summary" :key="s.label" class="summary__cell">
+              <div class="summary__label">{{ s.label }}</div>
+              <div class="summary__value" :class="{ 'summary__value--missing': s.missing }">{{ s.value }}</div>
+            </div>
+          </div>
+        </el-card>
+      </el-col>
+
+      <!-- 右侧：经营阶段唯一推荐入口（画像不同入口不同） -->
+      <el-col :span="8">
+        <el-card class="mb16" shadow="never">
+          <template #header><span class="card-title">唯一推荐入口</span></template>
+          <p class="hint">{{ entry.hint }}</p>
+          <el-button type="primary" class="block" @click="go(entry.recommended.path)">{{ entry.recommended.text }}</el-button>
+          <ol class="guide-steps">
+            <li v-for="step in entry.steps" :key="step.key">
+              <span>{{ step.text }}</span>
+              <el-button link type="primary" size="small" @click="go(step.path)">前往</el-button>
+            </li>
+          </ol>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <!-- 第四层：可展开的 AI 执行历史（不与待办抢主位） -->
+    <el-collapse class="mb16">
+      <el-collapse-item :title="`AI 执行历史（近 24 小时 · ${ai.count ?? '—'}）`">
+        <SectionState :state="aiState" @retry="fetchAll" empty-hint="近 24 小时没有已完成的 AI 运行">
+          <el-table :data="ai.items" size="small">
+            <el-table-column prop="title" label="运行" show-overflow-tooltip />
+            <el-table-column prop="finished_at" label="完成时间" width="180" />
+            <el-table-column label="状态" width="110">
+              <template #default="{ row }"><StatusBadge :status="row.status" /></template>
+            </el-table-column>
+          </el-table>
+        </SectionState>
+      </el-collapse-item>
+      <el-collapse-item title="完整经营数据（BI 明细 · 近 30 天）">
+        <template v-if="biDetail">
+          <el-row :gutter="16" class="mb16">
+            <el-col :span="16"><div ref="trendRef" class="chart-box" /></el-col>
+            <el-col :span="8"><div ref="pieRef" class="chart-box" /></el-col>
+          </el-row>
+          <el-table :data="biDetail.top_products || []" size="small">
+            <el-table-column type="index" width="50" />
+            <el-table-column prop="title" label="热销商品" show-overflow-tooltip />
+            <el-table-column prop="units" label="销量" width="90" />
+            <el-table-column label="销售额" width="120">
+              <template #default="{ row }">{{ row.revenue == null ? '—' : `$${Number(row.revenue).toFixed(2)}` }}</template>
+            </el-table-column>
+          </el-table>
+        </template>
+        <EmptyState v-else reason="NO_DATA" hint="经营明细需财务读权限，或暂无数据（缺失不显示为 0）" />
+      </el-collapse-item>
+    </el-collapse>
   </div>
 </template>
 
 <script setup>
 /**
- * 今日经营工作台（UX-C）：消费只读 BFF `/workbench/*`，按顺序回答 6 问。
- * 只读红线：本页只发 GET；partial=true 时用横幅 + sources/signals 明示数据完整度。
- * 待办按来源域分组（TaskCard 直达后端 route.path 深链，J2 断链归零）。
+ * 经营工作台（R3-2B §1 四层优先级）：
+ *   第一层 唯一主任务 → 第二层 ≤3 高优待办 → 第三层 阶段/阻断/经营摘要 → 第四层 可展开 AI 历史 + BI 明细。
+ * 顶部小型计数条（待我处理/等待外部/被阻断）。画像不同入口不同（确定性规则）。
+ * 只读红线：本页只发 GET；partial/源失败用横幅与「—」明示，绝不把错误当空或 0。
+ * 排序/计数/入口/阶段全部在 shared/workspaceHomeView.js 纯函数中，组件只消费。
  */
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -150,14 +157,15 @@ import StatusBadge from '../../components/StatusBadge.vue'
 import SectionState from '../../components/SectionState.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ErrorState from '../../components/ErrorState.vue'
-import MetricCard from '../../components/MetricCard.vue'
 import TaskCard from '../../components/TaskCard.vue'
 import PartialBanner from '../../features/home/PartialDataBanner.vue'
 import { fetchOverview, fetchTodo } from '../../api/domains/workbench'
 import { fetchTrends as fetchBiTrends } from '../../api/domains/bi'
+import { isEmptySection, missingSources, sectionState } from '../../composables/workbenchTodo'
 import {
-  isEmptySection, missingSources, resolvePersona, sectionState,
-} from '../../composables/workbenchTodo'
+  aiActivity, blockerSummary, businessStage, businessSummary, entryPlan, pickHighPriority, pickPrimaryTask,
+  resolveEntryProfile, taskCounters, taskLink,
+} from '../../shared/workspaceHomeView'
 
 const router = useRouter()
 
@@ -177,7 +185,6 @@ async function fetchAll() {
     const [ov, td] = await Promise.all([fetchOverview(), fetchTodo()])
     overview.value = ov || {}
     todo.value = td || {}
-    // 次级 BI 明细：仅当 BFF 判定具备 bi 读权限时加载（避免越权 403 噪声）
     if (overview.value.sources?.bi === 'ok') await loadBiDetail()
   } catch (e) {
     const detail = e?.response?.data?.detail
@@ -196,97 +203,56 @@ async function loadBiDetail() {
     renderTrend(data?.sales_trend || [])
     renderPie(data?.category_dist || [])
   } catch {
-    biDetail.value = null // 次级信息：加载失败不阻断主流程
+    biDetail.value = null
   }
 }
 
-// ── 纯函数派生 ──────────────────────────────────────────────────────────
-
+// ── 派生（全部经 shared/workspaceHomeView 纯函数） ──────────────────────
 const missingSourceNames = computed(() => missingSources(overview.value.sources))
-const persona = computed(() => resolvePersona(overview.value.signals))
+const counters = computed(() => taskCounters(todo.value, overview.value))
 
-const PERSONA_LABELS = {
-  A: '新手起步 · 选品 → 连店 → 上线', B: '货源经营 · 选品与上架', C: '工厂协同 · 数据与匹配',
-  D: '成长期店铺 · 规模经营', F: '团队协作 · 权限治理', GENERIC: '通用工作台',
-}
-const personaLabel = computed(() => PERSONA_LABELS[persona.value] || PERSONA_LABELS.GENERIC)
+const entry = computed(() => entryPlan(resolveEntryProfile(overview.value.signals)))
+const stage = computed(() => businessStage(overview.value.signals, overview.value))
+const blockers = computed(() => blockerSummary(overview.value))
+const summary = computed(() => businessSummary(overview.value))
+const ai = computed(() => aiActivity(overview.value))
 
-const PERSONA_HINTS = {
-  A: '先完成一次「选品 → 连店 → 上线」，再看经营指标。', B: '聚焦货源机会与采集/标准化进度。',
-  C: '聚焦工厂数据完整度与需求匹配结果。', D: '聚焦店铺同步、订单履约与店铺表现。',
-  F: '聚焦成员权限、授权到期与审计。', GENERIC: '信号不足，先按通用路径了解系统。',
-}
-const personaHint = computed(() => PERSONA_HINTS[persona.value] || PERSONA_HINTS.GENERIC)
+/** 待办条目（附加稳定 key 与深链 return_to）。 */
+const taskEntries = computed(() => {
+  const items = Array.isArray(todo.value.items) ? todo.value.items : []
+  return items.map((item, index) => ({
+    ...item,
+    key: `${item.type || 'x'}:${item.route?.path || ''}:${index}`,
+    link: taskLink(item.route, '/app/tasks'),
+    raw: item,
+  }))
+})
+const primaryTask = computed(() => pickPrimaryTask(taskEntries.value))
+const highPriority = computed(() => pickHighPriority(taskEntries.value, 3))
 
-// V9 路径（契约 §3.2）
-const PERSONA_STEPS = {
-  A: [
-    { text: '第 1 步：选品（商品发现）', path: '/app/market/discovery' },
-    { text: '第 2 步：连接销售店铺', path: '/app/channels/shops' },
-    { text: '第 3 步：创建上线流程', path: '/app/launch' },
-  ],
-  B: [
-    { text: '查看货源机会与选品', path: '/app/market/discovery' },
-    { text: '处理采集 / 标准化待办', path: '/app/products' },
-    { text: '核对供应商匹配', path: '/app/supply/suppliers' },
-  ],
-  C: [
-    { text: '补全工厂供给数据', path: '/app/supply/suppliers' },
-    { text: '查看需求匹配结果', path: '/app/supply/suppliers' },
-  ],
-  D: [
-    { text: '同步销售店铺', path: '/app/channels/shops' },
-    { text: '处理待履约订单', path: '/app/orders' },
-    { text: '查看店铺表现', path: '/app/analytics/bi' },
-  ],
-  F: [
-    { text: '管理成员与权限', path: '/app/settings/team' },
-    { text: '检查授权与到期', path: '/app/settings/ai' },
-  ],
-  GENERIC: [
-    { text: '浏览商品池', path: '/app/products' },
-    { text: '绑定销售店铺', path: '/app/channels/shops' },
-    { text: '创建工作流 / 上线流程', path: '/app/launch' },
-  ],
-}
-const personaSteps = computed(() => PERSONA_STEPS[persona.value] || PERSONA_STEPS.GENERIC)
-
-const metrics = computed(() => {
-  const m = overview.value.sections?.metrics
-  if (!m) return []
-  const money = (v) => `$${Number(v || 0).toFixed(2)}`
-  const rate = (v) => `${Number(v || 0).toFixed(1)}%`
-  return [
-    { label: 'GMV（销售口径）', value: money(m.gmv), color: 'var(--color-primary)' },
-    { label: '订单数（销售口径）', value: m.orders ?? '—', color: 'var(--color-text)' },
-    { label: '贡献利润（销售口径）', value: money(m.contribution_profit), color: 'var(--color-success)' },
-    { label: '净收入（销售口径）', value: money(m.net_revenue), color: 'var(--color-text)' },
-    { label: '退款率（销售口径）', value: rate(m.refund_rate), color: 'var(--color-warning)' },
-    { label: '广告花费（广告口径）', value: money(m.ad_spend), color: 'var(--color-warning)' },
-    { label: 'ROI（广告口径）', value: m.roi ?? '—', color: 'var(--color-danger)' },
-    { label: '币种', value: m.currency || '—', color: 'var(--color-text-secondary)' },
-  ]
+const todoState = computed(() => {
+  const hasTodoSource = todo.value && Object.keys(todo.value).length > 0
+  if (loading.value && !hasTodoSource) return 'loading'
+  if (error.value) return 'error'
+  return 'ready'
+})
+const aiState = computed(() => {
+  if (loading.value && !ai.value.items?.length) return 'loading'
+  // 源失败 → 部分可用；确实无数据 → ready（渲染空态文案，缺失不当 0）
+  return (overview.value.sources || {}).workflow === 'failed' ? 'partial' : 'ready'
 })
 
-const topToday = computed(() => overview.value.sections?.top_today || [])
-const humanItems = computed(() => topToday.value.filter((i) => i.type === 'action' || i.type === 'review'))
-const nextActions = computed(() => overview.value.next_actions || [])
-
-function stateOf(section, sourceKey) {
-  const src = overview.value.sources || {}
-  const empty = isEmptySection(section)
-  if (loading.value && empty) return 'loading'
-  if (empty && src[sourceKey] === 'skipped') return 'nopermission'
-  const st = sectionState(section, overview.value.partial, { [sourceKey]: src[sourceKey] })
-  return st === 'partial' ? 'ready' : st // 整体部分可用照常渲染，缺失由顶部横幅表达
+function severityLabel(sev) {
+  return { high: '高', mid: '中', low: '低' }[sev] || '低'
 }
-
+function severityTag(sev) {
+  return { high: 'danger', mid: 'warning', low: 'info' }[sev] || 'info'
+}
 function go(path) {
   if (path) router.push(path)
 }
 
-// ── 次级 BI 明细图表 ────────────────────────────────────────────────────
-
+// ── BI 次级图表 ────────────────────────────────────────────────────────
 function renderTrend(rows) {
   if (!trendRef.value) return
   const chart = echarts.init(trendRef.value)
@@ -325,13 +291,25 @@ onUnmounted(() => charts.forEach((c) => c.dispose()))
 .between { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .card-title { font-size: 16px; font-weight: 600; }
 .scope { color: var(--color-text-secondary); font-size: var(--font-size-xs); }
-.scope-note { margin-top: 8px; color: var(--color-text-secondary); font-size: var(--font-size-xs); }
 .hint { margin: 0 0 8px; color: var(--color-text-secondary); font-size: var(--font-size-sm); }
-.guide-steps { margin: 0; padding-left: 20px; }
+.counters { display: flex; gap: 40px; }
+.counter { text-align: center; }
+.counter__num { font-size: 24px; font-weight: 600; }
+.counter__num--warn { color: var(--color-warning); }
+.counter__label { color: var(--color-text-secondary); font-size: var(--font-size-xs); margin-top: 2px; }
+.main-task { display: flex; align-items: center; gap: 12px; }
+.main-task__title { flex: 1; font-size: 16px; font-weight: 600; }
+.main-task--empty { justify-content: space-between; }
+.task-list { display: flex; flex-direction: column; }
+.stage-line { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.blocker-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.summary { display: flex; gap: 24px; margin-top: 8px; }
+.summary__label { color: var(--color-text-secondary); font-size: var(--font-size-xs); }
+.summary__value { font-size: 18px; font-weight: 600; }
+.summary__value--missing { color: var(--color-text-disabled); font-weight: 400; }
+.guide-steps { margin: 12px 0 0; padding-left: 20px; }
 .guide-steps li { margin: 4px 0; }
-.metric-inline { margin-bottom: 8px; }
-.metric-inline b { font-size: 18px; color: var(--color-primary); }
-.next-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.block { width: 100%; }
 .chart-box { height: 280px; }
 .mb12 { margin-bottom: 12px; }
 .mb16 { margin-bottom: 16px; }
