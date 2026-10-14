@@ -173,6 +173,8 @@
 
       <!-- 素材核验（ReviewIn：shop_id/expected_version/decision/evidence_ref/reason，需合规审批权） -->
       <el-dialog v-model="verifyDialog" title="素材核验" width="480px">
+        <el-alert v-if="verifyError" :type="verifyError.includes('无权限') ? 'error' : 'warning'"
+          :closable="false" show-icon class="mb12" :title="verifyError" />
         <el-form label-width="110px">
           <el-form-item label="决定">
             <el-select v-model="verifyForm.decision" style="width:100%">
@@ -217,7 +219,7 @@ import {
 } from '../../api/domains/products'
 import { fetchShops } from '../../api/domains/shops'
 import {
-  assetPageItems, assetRowView, buildShopOptions, launchItemView, normalizeChannels, sectionErrorText,
+  assetPageItems, assetRowView, buildShopOptions, launchItemView, normalizeChannels, sectionErrorText, shopContext, verifyErrorKind,
 } from '../../shared/productDetailView'
 
 /** 登记表单类型选项（asset_schema.py asset_type Literal 域）。 */
@@ -271,6 +273,7 @@ const assetForm = reactive({
 })
 const verifyForm = reactive({ decision: 'VERIFIED', evidence_ref: '', reason: '' })
 const verifyingRow = ref(null)
+const verifyError = ref('')
 
 const contentHashGap = computed(() => !isAssetContentHash(assetForm.content_hash))
 
@@ -348,7 +351,7 @@ async function doStandardize() {
   } finally { stdLoading.value = false }
 }
 
-/** 登记素材（AssetIn 字段逐字对齐；expected_version 新素材为 0）。 */
+/** 登记素材（AssetIn 字段逐字对齐；expected_version 新素材为 0；market/platform 由目标店铺上下文推导）。 */
 async function doAddAsset() {
   if (!assetShopId.value) return ElMessage.warning('请先选择目标店铺')
   if (!assetForm.asset_key.trim()) return ElMessage.warning('请填写素材键')
@@ -361,6 +364,15 @@ async function doAddAsset() {
   if (needEvidence && !assetForm.rights_evidence_ref.trim()) {
     return ElMessage.warning('授权/许可素材必须提供权利证据引用')
   }
+  // market/platform 必须与目标店铺一致（后端 ASSET_USAGE_MISMATCH 校验）；由店铺上下文推导，不手填、不猜测
+  const ctx = shopContext(
+    channelRows.value.map((c) => c.shop),
+    (shopList.value || {}).items || [],
+    assetShopId.value,
+  )
+  if (!ctx || !ctx.market || !ctx.platform) {
+    return ElMessage.warning('目标店铺缺少市场/平台配置，无法登记素材（后端要求素材适用范围与店铺一致）')
+  }
   await addAsset(route.params.id, {
     shop_id: assetShopId.value,
     asset_key: assetForm.asset_key.trim(),
@@ -371,6 +383,8 @@ async function doAddAsset() {
     rights_status: assetForm.rights_status,
     rights_evidence_ref: assetForm.rights_evidence_ref.trim(),
     source: assetForm.source.trim(),
+    market: ctx.market,
+    platform: ctx.platform,
   })
   ElMessage.success('素材已登记（版本追加，不代表已核验）')
   assetDialog.value = false
@@ -387,6 +401,7 @@ function openVerify(row) {
   verifyForm.decision = 'VERIFIED'
   verifyForm.evidence_ref = ''
   verifyForm.reason = ''
+  verifyError.value = ''
   verifyDialog.value = true
 }
 
@@ -396,6 +411,7 @@ async function doVerify() {
   if (!verifyForm.evidence_ref.trim()) return ElMessage.warning('请填写证据引用')
   if (!verifyForm.reason.trim()) return ElMessage.warning('请填写原因')
   verifying.value = row.id
+  verifyError.value = ''
   try {
     await verifyAsset(route.params.id, row.id, {
       shop_id: assetShopId.value,
@@ -408,7 +424,15 @@ async function doVerify() {
     verifyDialog.value = false
     await loadAssets()
   } catch (e) {
-    ElMessage.error(sectionErrorText(e, '核验提交失败'))
+    // E04：区分 无权限(403)/自审限制(403)/版本冲突(409)；409/422 保留已填内容并提示刷新，不静默吞掉
+    const kind = verifyErrorKind(e, '核验提交失败')
+    verifyError.value = kind.message
+    if (kind.kind === 'no_permission') {
+      ElMessage.error(kind.message)
+      verifyDialog.value = false // 无权限不保留空表单，如实收口
+    } else {
+      ElMessage.warning(kind.message) // 保留输入，等用户刷新后重新确认
+    }
   } finally { verifying.value = null }
 }
 
@@ -423,6 +447,7 @@ onMounted(load)
 </script>
 
 <style scoped>
+.mb12 { margin-bottom: 12px; }
 .mb16 { margin-bottom: 16px; }
 .card-title { font-weight: 600; }
 .between { display: flex; justify-content: space-between; align-items: center; }

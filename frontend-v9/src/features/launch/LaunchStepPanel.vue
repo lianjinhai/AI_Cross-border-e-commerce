@@ -45,8 +45,9 @@
       <div class="sub">可执行动作</div>
       <div class="actions">
         <div v-for="entry in actions" :key="entry.action" class="action">
-          <!-- 不可执行一律 disabled（默认动作按钮语义），权限不足同样不可点；原因旁展示。 -->
-          <NextActionButton :action="entry.action" :executable="entry.executable && canManage"
+          <!-- E10：动作可执行性以后端 available_actions 的 entry.executable 为准（已按当前用户权限
+               计算），不再用通用 canWrite() 一刀切；不可执行一律 disabled 并展示 disabled_reason。 -->
+          <NextActionButton :action="entry.action" :executable="Boolean(entry.executable)"
             :reason="entry.disabled_reason" @run="$emit('run', entry)" />
           <!-- NotConfiguredState 语义已并入 EmptyState 家族（V9 设计系统 §2）：未接入能力显式声明 -->
           <el-alert v-if="isNotConnected(entry)" type="info" :closable="false" class="not-connected"
@@ -55,7 +56,7 @@
           </el-alert>
         </div>
         <span v-if="!actions.length" class="muted">该步骤无可执行动作</span>
-        <span v-if="!canManage" class="muted">只读账号：写操作已隐藏</span>
+        <span v-else-if="!actions.some((a) => a.executable)" class="muted">当前账号对这些动作均无权限：不可点，但原因见上</span>
       </div>
     </template>
     <el-empty v-else description="请选择时间线上的步骤" :image-size="70" />
@@ -72,7 +73,6 @@ import NextActionButton from './NextActionButton.vue'
 const props = defineProps({
   step: { type: Object, default: null },
   professional: { type: Boolean, default: false },
-  canManage: { type: Boolean, default: false },
 })
 defineEmits(['run'])
 

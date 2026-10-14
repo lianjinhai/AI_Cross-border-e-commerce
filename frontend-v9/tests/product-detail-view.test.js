@@ -8,6 +8,8 @@ import {
   progressLabel,
   nextActionLabel,
   sectionErrorText,
+  shopContext,
+  verifyErrorKind,
 } from '../src/shared/productDetailView'
 
 /**
@@ -185,5 +187,50 @@ describe('E06 sectionErrorText — 错误不当空，具体原因透传', () => 
   it('falls back to error.message then caller fallback', () => {
     expect(sectionErrorText(new Error('boom'), 'fallback')).toBe('boom')
     expect(sectionErrorText(null, 'fallback')).toBe('fallback')
+  })
+})
+
+describe('E03 shopContext — 由目标店铺推导 market/platform，不猜测', () => {
+  it('reads market/platform from channel shops first', () => {
+    const ctx = shopContext(
+      [{ id: 11, name: '美国站', platform: 'amazon', market: 'US' }],
+      [],
+      11,
+    )
+    expect(ctx).toEqual({ market: 'US', platform: 'amazon' })
+  })
+
+  it('falls back to shops API when not in channels', () => {
+    const ctx = shopContext([], [{ id: 13, shop_name: '独立站', platform: 'shopify', market: 'DE' }], 13)
+    expect(ctx).toEqual({ market: 'DE', platform: 'shopify' })
+  })
+
+  it('returns null when shop missing or lacks market/platform (no guessing)', () => {
+    expect(shopContext([], [], 99)).toBeNull()
+    expect(shopContext([{ id: 5, name: 'x' }], [], 5)).toBeNull()
+  })
+})
+
+describe('E04 verifyErrorKind — 无权限/自审/版本冲突分因，409 保留输入提示', () => {
+  it('403 合规审批缺权 → no_permission', () => {
+    const err = { response: { status: 403, data: { detail: { code: 'ASSET_PERMISSION_DENIED', message: '需要合规审批权' } } } }
+    expect(verifyErrorKind(err).kind).toBe('no_permission')
+  })
+
+  it('自审限制（403 ASSET_SELF_REVIEW）→ self_review', () => {
+    const err = { response: { status: 403, data: { detail: { code: 'ASSET_SELF_REVIEW', message: '提交人不能核验自己的权利证据' } } } }
+    expect(verifyErrorKind(err).kind).toBe('self_review')
+  })
+
+  it('409 版本冲突 → version_conflict（保留已填内容提示）', () => {
+    const err = { response: { status: 409, data: { detail: { code: 'ASSET_VERSION_CONFLICT', message: '仅可核验当前版本' } } } }
+    const kind = verifyErrorKind(err)
+    expect(kind.kind).toBe('version_conflict')
+    expect(kind.message).toMatch(/刷新/)
+  })
+
+  it('其它错误（404/422）→ other，透传后端原因', () => {
+    const err = { response: { status: 404, data: { detail: { code: 'ASSET_NOT_FOUND', message: '素材不适用于目标店铺' } } } }
+    expect(verifyErrorKind(err, '兜底')).toEqual({ kind: 'other', message: '素材不适用于目标店铺' })
   })
 })

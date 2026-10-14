@@ -70,14 +70,16 @@ describe('E05 addAsset / verifyAsset — 请求体与后端模型逐字对齐', 
       rights_status: 'OWNED',
       rights_evidence_ref: '',
       source: '供应商目录',
+      market: 'US',
+      platform: 'amazon',
     })
     const [url, body] = last(api.post)
     expect(url).toBe('/products/7/assets')
-    expect(body).toMatchObject({ shop_id: 11, asset_type: 'MAIN_IMAGE', expected_version: 0 })
-    // extra=forbid：不带任何模型外字段
+    expect(body).toMatchObject({ shop_id: 11, asset_type: 'MAIN_IMAGE', expected_version: 0, market: 'US', platform: 'amazon' })
+    // extra=forbid：不带任何模型外字段（market/platform 是 AssetRegistration 必填，随登记体携带）
     expect(Object.keys(body).sort()).toEqual([
-      'asset_key', 'asset_type', 'content_hash', 'expected_version', 'rights_evidence_ref',
-      'rights_status', 'shop_id', 'source', 'uri',
+      'asset_key', 'asset_type', 'content_hash', 'expected_version', 'market',
+      'platform', 'rights_evidence_ref', 'rights_status', 'shop_id', 'source', 'uri',
     ])
   })
 

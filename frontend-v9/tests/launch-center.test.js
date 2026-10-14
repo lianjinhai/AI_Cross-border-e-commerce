@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }))
 vi.mock('../src/shared/api/client', () => ({ default: { get: mocks.get, post: mocks.post } }))
 
 const {
-  NOT_CONNECTED, PLATFORM_STATUS, actionPayload, blockerText, buildReturnTo, detailPath, emptyStateReason,
+  NOT_CONNECTED, PLATFORM_STATUS, actionPayload, actionReceiptView, blockerText, buildReturnTo, detailPath, emptyStateReason,
   errorEnvelope, evidenceText, executeAction, executionStatusMeta, groupStepsBySequence, guidedSummary,
   isSafeReturnTo, isUncertainError, listLaunches, listQuery, loadContext, needsDoubleConfirm,
   newIdempotencyKey, nextActionText, notConnected, ownerText, parallelReadySteps, parseReturnTo,
@@ -250,6 +250,34 @@ describe('动作载荷与二次确认（AC-15.5/15.7）', () => {
   it('409 保留输入：revisionConflict 回填最新版本', () => {
     const err = { response: { data: { detail: { code: 'REVISION_CONFLICT', message: '流程已更新', current_revision: 12 } } } }
     expect(revisionConflict(err)).toBe(12)
+  })
+})
+
+describe('E10 actionReceiptView — 动作完成回执（改变/仍缺/下一步），只从 DTO 取数', () => {
+  it('有 next_action 可执行时：仍缺无、下一步为动作名', () => {
+    const view = actionReceiptView({
+      action: 'ADD_MATERIAL', status: 'EXECUTED', revision: 7,
+      step: { step_code: 'ASSETS', step_status: 'COMPLETED' },
+      launch: { next_action: { action: 'SUBMIT_PLATFORM', executable: true }, blocked_summary: [] },
+    })
+    expect(view.changed).toBe('步骤 ASSETS → COMPLETED')
+    expect(view.stillMissing).toBe('无')
+    expect(view.nextAction).toMatch(/SUBMIT_PLATFORM/)
+  })
+
+  it('next_action 不可执行时：仍缺取原因', () => {
+    const view = actionReceiptView({
+      action: 'CONFIRM_ACTIVATION', revision: 9,
+      launch: { next_action: { action: 'NONE', executable: false, reason: '缺少合规核验' }, blocked_summary: [] },
+    })
+    expect(view.stillMissing).toBe('缺少合规核验')
+  })
+
+  it('无 launch 时降级：不臆造，仍缺读无、下一步读暂无待办动作', () => {
+    const view = actionReceiptView({ action: 'CANCEL', status: 'EXECUTED', revision: 3 })
+    expect(view.revision).toBe(3)
+    expect(view.stillMissing).toBe('无')
+    expect(view.nextAction).toBe('暂无待办动作')
   })
 })
 

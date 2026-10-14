@@ -161,6 +161,20 @@ export function buildShopOptions(channelsShops = [], extraShops = []) {
   return options
 }
 
+/**
+ * 由目标 shop_id 反查其 market/platform（E03 登记必填字段来源）。
+ * 渠道 shop 优先，其次 shops API；均未命中返回 null（禁止猜测，前端不得代填）。
+ * @returns {{market:string,platform:string}|null}
+ */
+export function shopContext(channelsShops = [], extraShops = [], shopId) {
+  for (const raw of [...channelsShops, ...extraShops]) {
+    if (raw?.id === shopId && (raw.market || raw.platform)) {
+      return { market: raw.market || '', platform: raw.platform || '' }
+    }
+  }
+  return null
+}
+
 /** 错误体归一：后端 detail 对象 {code,message} / axios error → 可读原因（E06 用）。 */
 export function sectionErrorText(error, fallback) {
   const detail = error?.response?.data?.detail
@@ -168,4 +182,26 @@ export function sectionErrorText(error, fallback) {
     return detail.message || detail.code || fallback
   }
   return error?.message || fallback
+}
+
+/**
+ * E04 核验错误分类：区分 无权限(403 ASSET_PERMISSION_DENIED/需合规审批)、自审限制(403 ASSET_SELF_REVIEW)、
+ * 版本冲突(409 ASSET_VERSION_CONFLICT，须保留输入提示刷新)、其余(如 404/422)。
+ * @returns {{kind:'no_permission'|'self_review'|'version_conflict'|'other', message:string}}
+ */
+export function verifyErrorKind(error, fallback = '核验提交失败') {
+  const status = error?.response?.status
+  const detail = error?.response?.data?.detail
+  const code = typeof detail === 'object' ? detail.code : ''
+  // 先判具体 403 子码（自审限制），再落到泛化无权限
+  if (code === 'ASSET_SELF_REVIEW') {
+    return { kind: 'self_review', message: '提交人不能核验自己的权利证据（自审限制）：需由他人复核' }
+  }
+  if (status === 403 || code === 'ASSET_PERMISSION_DENIED') {
+    return { kind: 'no_permission', message: '缺少合规审批权（compliance:approve）：无权限时核验入口应不可用，请向拥有审批权的成员申请' }
+  }
+  if (status === 409 || code === 'ASSET_VERSION_CONFLICT') {
+    return { kind: 'version_conflict', message: '素材版本已变化（仅可核验当前版本）：请刷新素材列表后重新确认，已填内容已保留' }
+  }
+  return { kind: 'other', message: sectionErrorText(error, fallback) }
 }

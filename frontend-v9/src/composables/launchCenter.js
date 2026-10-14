@@ -356,3 +356,28 @@ export function revisionConflict(error) {
   const envelope = errorEnvelope(error)
   return envelope.code === 'REVISION_CONFLICT' ? envelope.current_revision : null
 }
+
+/**
+ * 动作完成回执视图（E10）：只从后端详情 DTO 取数，不臆造。
+ * result = POST /launch/{id}/actions/{action} 响应 {revision, action, status, step, receipt, launch}。
+ * 「什么改变了」取 step 迁移；「仍缺什么」取 next_action.reason 或 blocked_summary；
+ * 「下一步」取 next_action（next_action_summary）文案。launch 缺失时降级为仅 revision/status。
+ */
+export function actionReceiptView(result = {}) {
+  const launch = result.launch || {}
+  const next = launch.next_action || launch.next_best_action || {}
+  const blockers = (launch.blocked_summary || [])
+    .map((b) => b.message || b.code).filter(Boolean)
+  return {
+    action: result.action || '',
+    status: result.status || '',
+    revision: result.revision ?? null,
+    changed: result.step?.step_code
+      ? `步骤 ${result.step.step_code} → ${result.step.step_status || '—'}`
+      : '流程状态已刷新',
+    stillMissing: next.executable === false
+      ? (next.reason || '存在未满足条件')
+      : (blockers.length ? blockers.join('；') : '无'),
+    nextAction: nextActionText(next),
+  }
+}

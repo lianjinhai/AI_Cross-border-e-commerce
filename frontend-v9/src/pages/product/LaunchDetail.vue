@@ -19,7 +19,14 @@
           </el-col>
           <el-col :span="14">
             <LaunchStepPanel :step="activeStep" :professional="mode === 'PROFESSIONAL'"
-              :can-manage="canManage" @run="openAction" />
+              @run="openAction" />
+            <!-- 动作完成回执（E10）：什么改变了 / 仍缺什么 / 下一步 -->
+            <el-alert v-if="lastReceipt" type="success" :closable="false" show-icon class="mt12"
+              :title="`动作 ${lastReceipt.action} 已执行（版本 ${lastReceipt.revision}）`">
+              <div class="receipt-line"><span class="muted">改变了</span> {{ lastReceipt.changed }}</div>
+              <div class="receipt-line"><span class="muted">仍缺</span> {{ lastReceipt.stillMissing }}</div>
+              <div class="receipt-line"><span class="muted">下一步</span> {{ lastReceipt.nextAction }}</div>
+            </el-alert>
             <!-- 动作失败原因直出 + 重试（验收条目） -->
             <el-alert v-if="lastError" type="error" :closable="false" show-icon class="mt12"
               :title="`动作执行失败：${lastError.message}`">
@@ -70,8 +77,7 @@ import LaunchTimeline from '../../features/launch/LaunchTimeline.vue'
 import LaunchStepPanel from '../../features/launch/LaunchStepPanel.vue'
 import LaunchActionDialog from '../../features/launch/LaunchActionDialog.vue'
 import LaunchExperienceToggle from '../../features/launch/LaunchExperienceToggle.vue'
-import { canWrite } from '../../permissions/permissions'
-import { errorEnvelope, loadDetail, loadEvents, loadSteps, syncLaunch } from '../../composables/launchCenter'
+import { errorEnvelope, actionReceiptView, loadDetail, loadEvents, loadSteps, syncLaunch } from '../../composables/launchCenter'
 
 const route = useRoute()
 const router = useRouter()
@@ -90,9 +96,11 @@ const dialogVisible = ref(false)
 const activeActionEntry = ref({})
 const lastError = ref(null)
 const lastActionEntry = ref(null)
+const lastReceipt = ref(null)
 
 const effectiveMode = computed(() => detail.value.effective_experience_mode || 'GUIDED')
-const canManage = computed(() => canWrite())
+// E10：动作可执行性由后端 available_actions（已按当前用户权限计算）决定，
+// 不再用通用 canWrite() 一刀切；模式切换只改信息密度，不改业务权限。
 const revision = computed(() => Number(detail.value.expected_revision ?? detail.value.revision ?? 0))
 const activeStep = computed(() => steps.value.find((s) => s.step_code === activeCode.value) || null)
 
@@ -154,8 +162,10 @@ async function doSync() {
   } finally { syncing.value = false }
 }
 
-async function reloadAfterAction() {
+async function reloadAfterAction(result) {
   lastError.value = null
+  // E10：动作完成回执（什么改变了/仍缺什么/下一步）+ 刷新合法动作对齐 run.revision
+  lastReceipt.value = actionReceiptView(result || {})
   await loadAll()
 }
 
@@ -173,5 +183,7 @@ onMounted(loadAll)
 .mt16 { margin-top: 16px; }
 .card-title { font-weight: 600; }
 .retry-line { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
+.receipt-line { font-size: 13px; margin-top: 4px; }
+.receipt-line .muted { display: inline-block; min-width: 56px; color: var(--color-text-secondary); }
 .muted { color: var(--color-text-secondary); font-size: 12px; }
 </style>
