@@ -1,0 +1,66 @@
+============================= test session starts =============================
+platform win32 -- Python 3.11.6, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\74488\AppData\Local\Programs\Python\Python311\python.exe
+rootdir: F:\Desktop\个人文件\软件开发计划\AI-电商ERP\backend
+configfile: pytest.ini
+plugins: anyio-4.5.2, asyncio-1.4.0, django-4.12.0, mock-3.15.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 2 items
+
+tests/test_qa_r31c_j1_e2e.py::test_j1_full_closed_loop PASSED            [ 50%]
+tests/test_qa_r31c_j1_e2e.py::test_j1_cross_shop_isolation PASSED        [100%]
+tests/test_qa_r31c_j1_e2e.py::test_j1_cross_shop_isolation ERROR         [100%]
+
+=================================== ERRORS ====================================
+______________ ERROR at teardown of test_j1_cross_shop_isolation ______________
+
+    @pytest.fixture(scope="session", autouse=True)
+    def _fresh_db():
+        """会话开始时删除测试库文件，结束时释放连接池并再次删除。
+    
+        删除失败（Windows 下仍有连接持有文件）不视为测试失败：下次会话开始时
+        会再删一次，且 pytest 用的是独立测试库，不影响业务库。
+        """
+        _remove_db_files()
+        yield
+        from app.db import engine
+    
+        engine.dispose()  # 先释放连接池，Windows 才能删除文件
+>       _remove_db_files()
+
+tests\conftest.py:143: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\conftest.py:75: in _remove_db_files
+    pathlib.Path(str(_DB_FILE) + suffix).unlink(missing_ok=True)
+D:\workbuddy\resources\app.asar.unpacked\cli\vendor\shim\sitecustomize.py:1168: in _safe_path_unlink
+    _try_trash(abs_path)
+D:\workbuddy\resources\app.asar.unpacked\cli\vendor\shim\sitecustomize.py:981: in _try_trash
+    _platform_trash(abs_path)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+abs_path = 'F:\\Desktop\\个人文件\\软件开发计划\\AI-电商ERP\\backend\\test_qa_r31c.db'
+
+    def _platform_trash(abs_path):
+        path = _get_short_path(os.path.abspath(abs_path))
+        # pFrom 需要双 null 终止的字符串（SHFileOperationW 规范）
+        buf = create_unicode_buffer(path, len(path) + 2)
+        fileop = _SHFILEOPSTRUCTW()
+        fileop.wFunc = _FO_DELETE
+        fileop.pFrom = LPCWSTR(addressof(buf))
+        fileop.fFlags = _FOF_FLAGS
+        result = _shell32.SHFileOperationW(byref(fileop))
+        if result:
+>           raise OSError("SHFileOperationW 失败: 0x%x" % result)
+E           OSError: SHFileOperationW 失败: 0x2
+
+D:\workbuddy\resources\app.asar.unpacked\cli\vendor\shim\sitecustomize.py:146: OSError
+-------------------------- Captured stderr teardown ---------------------------
+[safe-delete][SAFE_DELETE_FAIL_CLOSED] {"target": "F:\\Desktop\\个人文件\\软件开发计划\\AI-电商ERP\\backend\\test_qa_r31c.db", "reason": "trash-failed", "detail": "SHFileOperationW 失败: 0x2"}
+============================== warnings summary ===============================
+C:\Users\74488\AppData\Local\Programs\Python\Python311\Lib\site-packages\fastapi\testclient.py:1
+  C:\Users\74488\AppData\Local\Programs\Python\Python311\Lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+ERROR tests/test_qa_r31c_j1_e2e.py::test_j1_cross_shop_isolation - OSError: S...
+==================== 2 passed, 1 warning, 1 error in 4.85s ====================
