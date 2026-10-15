@@ -16,6 +16,16 @@ describe('isSafeReturnTo', () => {
     expect(isSafeReturnTo('/launch/12')).toBe(true)
   })
 
+  it('R3-3：放行 AppShell 站内 /app 前缀路由（含带筛选 query）', () => {
+    expect(isSafeReturnTo('/app')).toBe(true)
+    expect(isSafeReturnTo('/app/tasks')).toBe(true)
+    expect(isSafeReturnTo('/app/tasks?view=blocked&store=%E7%BE%8E%E5%9B%BD%E7%AB%99')).toBe(true)
+    expect(isSafeReturnTo('/app/products/7')).toBe(true)
+    expect(isSafeReturnTo('/app/launch/4?return_to=/app/tasks')).toBe(true)
+    // 形近不越界：/application 不是 /app 前缀路径
+    expect(isSafeReturnTo('/application')).toBe(false)
+  })
+
   it('拒绝站外 / 协议相对 / 目录穿越 / 形近路径', () => {
     expect(isSafeReturnTo('//evil.com')).toBe(false)
     expect(isSafeReturnTo('https://x')).toBe(false)
@@ -43,7 +53,7 @@ describe('launchCenter 重新导出保持公共 API 稳定', () => {
     expect(launchCenter.RETURN_WHITELIST).toEqual(RETURN_WHITELIST)
   })
 
-  it('白名单已扩为 4 条上线可挂接路径', () => {
-    expect([...RETURN_WHITELIST].sort()).toEqual(['/launch', '/listings', '/products', '/shops'])
+  it('白名单为上线可挂接路径 + /app 站内前缀（R3-3）', () => {
+    expect([...RETURN_WHITELIST].sort()).toEqual(['/app', '/launch', '/listings', '/products', '/shops'])
   })
 })

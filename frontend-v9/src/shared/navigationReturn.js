@@ -6,10 +6,16 @@
  * 现扩为上线流程可挂接的专业页集合；`launchCenter.js` 通过「重新导出」保持其公共 API 不变
  * （既有签名 / 行为 / 测试零改动）。
  *
+ * R3-3 修复（根因）：AppShell 内所有业务路由实际挂在 `/app` 前缀下
+ * （如 `/app/tasks`、`/app/products/7`、`/app/launch/4`），而旧白名单只列了
+ * **不带前缀**的 `/launch` 等 → `isSafeReturnTo('/app/...')` 恒为 false，
+ * 导致「商品详情 → 上线」等站内回跳被静默丢弃（J2 只能用本地兜底绕过 /app/tasks）。
+ * 现加入 `/app` 一条，放行全部站内路由；站外 / 协议相对 / 目录穿越仍在白名单前拦截。
+ *
  * 纯模块、零依赖，供数据层 composable 与通用组件（如 PageHeader）共用。
  */
 
-export const RETURN_WHITELIST = ['/launch', '/listings', '/products', '/shops']
+export const RETURN_WHITELIST = ['/app', '/launch', '/listings', '/products', '/shops']
 
 /** 站内白名单校验：仅放行白名单前缀路径；拒绝站外 / 协议相对 / 目录穿越 / 反斜杠。 */
 export function isSafeReturnTo(path) {
