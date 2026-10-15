@@ -2,7 +2,7 @@
   <div class="page">
     <PageHeader :title="`上线流程 #${runId}`" subtitle="步骤导航 · AI 建议 · 动作失败原因与重试">
       <template #actions>
-        <el-button size="small" @click="router.back()">返回</el-button>
+        <el-button size="small" @click="goBack">{{ returnTo ? '返回待办' : '返回' }}</el-button>
         <el-button size="small" :loading="syncing" @click="doSync">同步状态</el-button>
         <LaunchExperienceToggle v-model="mode" :effective="effectiveMode" />
       </template>
@@ -78,10 +78,21 @@ import LaunchStepPanel from '../../features/launch/LaunchStepPanel.vue'
 import LaunchActionDialog from '../../features/launch/LaunchActionDialog.vue'
 import LaunchExperienceToggle from '../../features/launch/LaunchExperienceToggle.vue'
 import { errorEnvelope, actionReceiptView, loadDetail, loadEvents, loadSteps, syncLaunch } from '../../composables/launchCenter'
+import { safeReturnToTasks } from '../../shared/taskCenterView'
 
 const route = useRoute()
 const router = useRouter()
 const runId = Number(route.params.id)
+
+/** J2 闭环：从待办点入时带 return_to=/app/tasks?...，规范化后回跳；否则维持浏览器返回（R3-2 行为）。 */
+const returnTo = computed(() => {
+  const v = route.query.return_to
+  return typeof v === 'string' ? safeReturnToTasks(v) : ''
+})
+function goBack() {
+  if (returnTo.value) router.push(returnTo.value)
+  else router.back()
+}
 
 const detail = ref({})
 const steps = ref([])

@@ -2,6 +2,7 @@
   <div class="page">
     <PageHeader title="合规工作台" subtitle="发现与商品 · 合规审批与复核">
       <template #actions>
+        <el-button v-if="returnTo" size="small" @click="goBackToTasks">返回待办</el-button>
         <el-tag v-if="!isOwner" size="small" type="warning">当前角色无审批权限</el-tag>
         <el-tag v-else size="small" type="info">待接入</el-tag>
       </template>
@@ -57,6 +58,7 @@
  * 经 SectionState 渲染。
  */
 import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '../../components/PageHeader.vue'
 import SectionState from '../../components/SectionState.vue'
 import StatusBadge from '../../components/StatusBadge.vue'
@@ -64,8 +66,21 @@ import DataQualityBanner from '../../components/DataQualityBanner.vue'
 import { fetchCandidates } from '../../api/domains/knowledge'
 import { envTag } from '../../shared/dataLabels'
 import { hasPermission } from '../../shared/workspace'
+import { safeReturnToTasks } from '../../shared/taskCenterView'
 
 const envBanner = envTag()
+
+const route = useRoute()
+const router = useRouter()
+
+/** J2 闭环：从待办点入时带 return_to=/app/tasks?...，规范化后回跳（无则隐藏按钮）。 */
+const returnTo = computed(() => {
+  const v = route.query.return_to
+  return typeof v === 'string' ? safeReturnToTasks(v) : ''
+})
+function goBackToTasks() {
+  router.push(returnTo.value || '/app/tasks')
+}
 
 const isOwner = computed(() => hasPermission('compliance:approve') ?? false)
 

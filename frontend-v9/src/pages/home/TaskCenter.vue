@@ -47,6 +47,21 @@
     <PartialBanner v-if="unavailable.length" class="mb16" :missing="unavailable" />
     <ErrorState v-if="error" class="mb16" :message="error" @retry="fetchAll" />
 
+    <!-- 来源状态三态：加载失败 / 未接入 / 0 条 / 正常（后端仅来源摘要，逐条明细未接入） -->
+    <div v-if="activeCode !== 'ERROR'" class="source-strip" data-testid="todo-source-status">
+      <span class="source-strip__title">来源状态</span>
+      <span
+        v-for="s in sourceStatus"
+        :key="s.type"
+        class="source-strip__item"
+        :class="`source-strip__item--${s.state}`"
+        :title="s.state === 'ok' ? '已接入，但仅来源分组摘要（无逐条明细）' : s.note"
+      >
+        <b>{{ s.label }}</b>&nbsp;{{ s.note }}
+      </span>
+      <span class="source-strip__hint">后端仅来源分组摘要，逐条明细未接入 → 只能「去来源页处理」</span>
+    </div>
+
     <SectionState :code="activeCode" @action="onStateAction" @retry="fetchAll" :error="error">
       <div v-if="activeCode === 'ready'" class="task-center__body">
         <div class="task-center__scroll">
@@ -57,6 +72,7 @@
               <span class="task-title">{{ row.title }}</span>
               <el-badge v-if="row.count" :value="row.count" type="primary" class="ml8" />
               <el-badge v-else-if="row.mergedCount > 1" :value="`x${row.mergedCount}`" type="info" class="ml8" />
+              <el-tag v-if="!row.detailAvailable" size="small" type="warning" effect="plain" class="ml8">明细未接入</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="商品 / 对象" min-width="130" show-overflow-tooltip>
@@ -77,9 +93,11 @@
           <el-table-column label="来源" width="140" show-overflow-tooltip>
             <template #default="{ row }">{{ row.sources.join('、') }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="90" fixed="right">
+          <el-table-column label="操作" width="120" fixed="right">
             <template #default="{ row }">
-              <el-button v-if="row.link" link type="primary" size="small" @click="openTask(row)">处理</el-button>
+              <el-button v-if="row.link" link type="primary" size="small" @click="openTask(row)">
+                {{ row.detailAvailable ? '处理' : '去来源页处理' }}
+              </el-button>
               <span v-else class="muted">无入口</span>
             </template>
           </el-table-column>
@@ -109,7 +127,7 @@ import PartialBanner from '../../features/home/PartialDataBanner.vue'
 import { fetchOverview, fetchTodo } from '../../api/domains/workbench'
 import { deriveWorkbenchCounts } from '../../shared/workbenchContext'
 import {
-  TASK_VIEWS, buildTaskHref, filterTasks, filtersFromQuery, normalizeTasks, queryFromFilters, viewCounts,
+  TASK_VIEWS, buildTaskHref, filterTasks, filtersFromQuery, normalizeTasks, queryFromFilters, sourceStatusRows, viewCounts,
 } from '../../shared/taskCenterView'
 
 const route = useRoute()
@@ -132,6 +150,8 @@ const visibleTasks = computed(() => filterTasks(normalized.value.tasks, filters.
  * 实际行数。三方「待我处理/等待外部/被阻断」由此保证一致。
  */
 const canonical = computed(() => deriveWorkbenchCounts(overview.value))
+/** 来源状态三态（R3-3 J2 诚实降级）：加载失败 / 未接入 / 0 条 / 正常，如实展示。 */
+const sourceStatus = computed(() => sourceStatusRows(todo.value))
 const tabCounts = computed(() => {
   const vc = viewCounts(normalized.value.tasks)
   return {
@@ -233,6 +253,18 @@ onMounted(fetchAll)
 .ml8 { margin-left: 8px; }
 .muted { color: var(--color-text-disabled); font-size: var(--font-size-xs); }
 .gap-note { margin-top: 8px; color: var(--color-text-secondary); font-size: var(--font-size-xs); }
+.source-strip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  margin-bottom: 16px; padding: 8px 12px;
+  background: var(--color-info-bg); border-radius: var(--radius-base, 6px);
+}
+.source-strip__title { font-weight: var(--font-weight-medium, 600); color: var(--color-text); }
+.source-strip__item { display: inline-flex; align-items: center; gap: 4px; font-size: var(--font-size-xs); padding: 2px 8px; border-radius: 4px; }
+.source-strip__item--ok { background: var(--color-success-bg); color: var(--color-success); }
+.source-strip__item--empty { background: var(--color-info-bg); color: var(--color-text-secondary); }
+.source-strip__item--skipped { background: var(--color-warning-bg, #fff7e6); color: var(--color-warning); }
+.source-strip__item--failed { background: var(--color-danger-bg, #fef0f0); color: var(--color-danger); }
+.source-strip__hint { color: var(--color-text-secondary); font-size: var(--font-size-xs); }
 .mb16 { margin-bottom: 16px; }
 /* 窄屏：表格横向滚动，不挤压竖排；容器不横向溢出 */
 .task-center__scroll { width: 100%; overflow-x: auto; }

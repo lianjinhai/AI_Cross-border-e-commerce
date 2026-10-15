@@ -2,6 +2,7 @@
   <div class="page">
     <PageHeader title="Listing 工作台" subtitle="生成 → 编辑预览 → 合规 → 发布 → 回执（单页分步流）">
       <template #actions>
+        <el-button v-if="returnTo" size="small" @click="goBackToTasks">返回待办</el-button>
         <el-button v-if="canWrite()" type="primary" size="small" @click="openFlow(null)">AI 生成 Listing</el-button>
       </template>
     </PageHeader>
@@ -67,19 +68,33 @@
  * Listing 工作台（UX-C）：单页分步流（ListingFlow，无路由断点）+ 列表 + 保存视图筛选。
  * PublicationReceipts 常驻于分步流「回执」步骤；发布审批队列常驻列表页。
  */
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '../../components/PageHeader.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ListingFlow from '../../features/listings/ListingFlow.vue'
 import PublishActions from '../../features/listings/PublishActions.vue'
 import { canWrite } from '../../permissions/permissions'
 import { fetchListings } from '../../api/domains/listings'
+import { safeReturnToTasks } from '../../shared/taskCenterView'
 
 const PLATFORMS = [
   { value: 'tiktok', label: 'TikTok Shop' },
   { value: 'amazon', label: 'Amazon' },
   { value: 'shopee', label: 'Shopee' },
 ]
+
+const route = useRoute()
+const router = useRouter()
+
+/** J2 闭环：从待办点入时带 return_to=/app/tasks?...，规范化后回跳（无则隐藏按钮）。 */
+const returnTo = computed(() => {
+  const v = route.query.return_to
+  return typeof v === 'string' ? safeReturnToTasks(v) : ''
+})
+function goBackToTasks() {
+  router.push(returnTo.value || '/app/tasks')
+}
 
 const items = ref([])
 const total = ref(0)

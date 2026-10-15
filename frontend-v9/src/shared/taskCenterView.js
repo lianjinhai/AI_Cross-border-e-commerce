@@ -90,6 +90,8 @@ function fromInProgress(rows) {
       link: safeInternalPath(`/app/launch/${row?.id}`),
       ref: row?.id ?? null,
       source: 'overview.in_progress',
+      // 上线流程行携带真实 item 级明细（product/store/next_action）→ 可直达处理。
+      detailAvailable: true,
       gaps: [row?.owner == null ? '责任人未提供' : null].filter(Boolean),
     }
   })
@@ -124,6 +126,8 @@ function fromTodo(items) {
       link: taskLink(item?.route, '/app/tasks'),
       ref: item?.ref ?? null,
       source: 'workbench.todo',
+      // 后端仅给「来源分组摘要」（无 item 级明细）→ 诚实标为不可直达处理，只能去来源页。
+      detailAvailable: false,
       gaps: ['明细实例（对象/店铺/责任人）未提供，按来源摘要展示'],
     }
   })
@@ -146,6 +150,7 @@ function fromAiDone(items) {
     link: '',
     ref: row?.id ?? null,
     source: 'overview.ai_done',
+    detailAvailable: false,
     gaps: [],
   }))
 }
@@ -267,4 +272,52 @@ export function buildTaskHref(link, returnTo) {
   if (back) params.set('return_to', back) // set → 覆盖重复项，保证唯一
   const qs = params.toString()
   return qs ? `${path}?${qs}` : path
+}
+
+/**
+ * 来源状态三态（R3-3 J2 诚实降级）：区分「加载失败 / 未接入 / 0 条 / 正常」，
+ * 如实展示后端 `GET /workbench/todo.sources` 的真实状态（ok/skipped/failed）。
+ * 后端只透出来源分组摘要、无子源明细 → 即便 ok 也须提示「明细未接入」。
+ *
+ * @param {{counts?:object, sources?:object}} todo /workbench/todo 响应
+ * @returns {Array<{type,label,count,state,note}>}
+ *   state: 'failed'（加载失败）| 'skipped'（未接入）| 'empty'（0 条）| 'ok'（正常）
+ */
+export function sourceStatusRows(todo = {}) {
+  const counts = todo?.counts || {}
+  const sources = todo?.sources || {}
+  const rows = [
+    { type: 'launch', label: '上线流程' },
+    { type: 'action', label: '待审批动作' },
+    { type: 'alert', label: '风险告警' },
+    { type: 'review', label: '人工复核' },
+  ]
+  return rows.map(({ type, label }) => {
+    const src = sources[type]
+    const count = Number(counts[type]) || 0
+    let state
+    let note
+    if (src === 'failed') { state = 'failed'; note = '加载失败' }
+    else if (src === 'skipped') { state = 'skipped'; note = '未接入' }
+    else if (count === 0) { state = 'empty'; note = '0 条' }
+    else { state = 'ok'; note = `${count} 条` }
+    return { type, label, count, state, note }
+  })
+}
+
+/**
+ * J2 回跳安全校验（不依赖全局 RETURN_WHITELIST，其不含 /app/tasks）：仅接受回
+ * 待办中心的路径（`/app/tasks[?...]`），拒绝站外 / 协议相对 / 目录穿越。
+ *  landing 页（Approvals / RiskAlerts / Listings / LaunchDetail）统一用本函数把
+ * `route.query.return_to` 规范化，确保「处理后返回」落回正确的待办筛选上下文。
+ * @param {string} returnTo 原始 return_to（来自待办中心）
+ * @param {string} fallback 非法时的回退（默认待办中心首页）
+ * @returns {string} 合法则返回原值，否则回退 fallback
+ */
+export function safeReturnToTasks(returnTo, fallback = '/app/tasks') {
+  if (typeof returnTo !== 'string' || !returnTo) return fallback
+  if (returnTo.includes('//') || returnTo.includes('\\') || returnTo.includes('..')) return fallback
+  const base = returnTo.split('?')[0].split('#')[0]
+  if (!base.startsWith('/app/tasks')) return fallback
+  return returnTo
 }

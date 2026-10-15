@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   TASK_VIEWS, buildTaskHref, dedupeKey, dedupeTasks, filterTasks, filtersFromQuery, normalizeTasks,
-  queryFromFilters, viewCounts,
+  queryFromFilters, safeReturnToTasks, sourceStatusRows, viewCounts,
 } from '../src/shared/taskCenterView'
 import { UNKNOWN } from '../src/shared/workspaceHomeView'
 
@@ -171,5 +171,59 @@ describe('对象字段渲染 / 筛选 / 稳定 id / return_to（R3-2B 缺陷回�
     expect(u.searchParams.getAll('return_to')).toEqual(['/app/tasks?view=todo&store=美国站'])
     expect(buildTaskHref('/app/launch', '//evil.com')).toBe('/app/launch')
     expect(buildTaskHref('', '/app/tasks')).toBe('')
+  })
+})
+
+/**
+ * R3-3 J2 诚实降级：来源状态三态（加载失败 / 未接入 / 0 条 / 正常）+ 回跳安全。
+ */
+describe('sourceStatusRows（来源状态三态，R3-3 J2）', () => {
+  it('ok 计数>0 → 正常；ok 计数=0 → 0 条；skipped → 未接入；failed → 加载失败', () => {
+    const rows = sourceStatusRows({
+      counts: { launch: 3, action: 0, alert: 0, review: 1 },
+      sources: { launch: 'ok', action: 'ok', alert: 'skipped', review: 'failed' },
+    })
+    const by = Object.fromEntries(rows.map((r) => [r.type, r]))
+    expect(by.launch.state).toBe('ok'); expect(by.launch.note).toBe('3 条')
+    expect(by.action.state).toBe('empty'); expect(by.action.note).toBe('0 条')
+    expect(by.alert.state).toBe('skipped'); expect(by.alert.note).toBe('未接入')
+    expect(by.review.state).toBe('failed'); expect(by.review.note).toBe('加载失败')
+  })
+
+  it('缺失 sources 不报错，缺类型按 0 条计（不当 0 掩盖）', () => {
+    const rows = sourceStatusRows({ counts: {}, sources: {} })
+    const by = Object.fromEntries(rows.map((r) => [r.type, r]))
+    expect(by.launch.state).toBe('empty')
+    expect(rows).toHaveLength(4)
+  })
+})
+
+describe('detailAvailable（明细可达性，R3-3 J2）', () => {
+  const { tasks } = normalizeTasks({ todo: SAMPLE_TODO, overview: SAMPLE_OVERVIEW })
+
+  it('in_progress 上线流程携带 item 级明细 → 可直达处理', () => {
+    expect(tasks.find((t) => t.id === 'launch:41')?.detailAvailable).toBe(true)
+  })
+
+  it('todo 来源摘要无 item 级明细 → 只能去来源页处理（不得伪造）', () => {
+    const launch = tasks.find((t) => t.kind === 'launch' && t.view === 'todo')
+    expect(launch.detailAvailable).toBe(false)
+    // 仍保留可继续动作：跳到来源页
+    expect(launch.link).toBeTruthy()
+  })
+})
+
+describe('safeReturnToTasks（J2 回跳安全校验）', () => {
+  it('放行 /app/tasks（含 query/筛选），否则回退默认待办页', () => {
+    expect(safeReturnToTasks('/app/tasks?view=blocked&store=美国站')).toBe('/app/tasks?view=blocked&store=美国站')
+    expect(safeReturnToTasks('/app/tasks')).toBe('/app/tasks')
+    expect(safeReturnToTasks('')).toBe('/app/tasks')
+  })
+
+  it('拒绝站外 / 穿越 / 非待办路径（不依赖全局白名单，避免扩大共享导航事实）', () => {
+    expect(safeReturnToTasks('//evil.com')).toBe('/app/tasks')
+    expect(safeReturnToTasks('/app/launch/4')).toBe('/app/tasks')
+    expect(safeReturnToTasks('/app/tasks/../x')).toBe('/app/tasks')
+    expect(safeReturnToTasks('//evil.com', '/app/tasks?view=todo')).toBe('/app/tasks?view=todo')
   })
 })

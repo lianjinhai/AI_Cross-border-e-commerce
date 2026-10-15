@@ -2,6 +2,7 @@
   <div class="page">
     <PageHeader title="风险巡检" subtitle="AI 主动巡检（只告警不执行） · 每条告警可「去处理」直达对应域">
       <template #actions>
+        <el-button v-if="returnTo" size="small" @click="goBackToTasks">返回待办</el-button>
         <el-select v-model="filterLevel" size="small" style="width: 110px" @change="load">
           <el-option label="全部级别" value="" />
           <el-option label="高" value="high" />
@@ -67,7 +68,8 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from '../../shared/ui'
 import PageHeader from '../../components/PageHeader.vue'
 import FormSection from '../../components/FormSection.vue'
@@ -80,8 +82,21 @@ import {
   fetchAlerts, ackAlert, fetchAlertRules, updateAlertRule, scanAlerts,
 } from '../../api/domains/alerts'
 import { alertTarget } from '../../features/optimization/alertTargets'
+import { safeReturnToTasks } from '../../shared/taskCenterView'
 
 const writable = can('ai:write')
+
+const route = useRoute()
+const router = useRouter()
+
+/** J2 闭环：从待办点入时带 return_to=/app/tasks?...，规范化后回跳（无则隐藏按钮）。 */
+const returnTo = computed(() => {
+  const v = route.query.return_to
+  return typeof v === 'string' ? safeReturnToTasks(v) : ''
+})
+function goBackToTasks() {
+  router.push(returnTo.value || '/app/tasks')
+}
 
 const items = ref([])
 const rules = ref([])
