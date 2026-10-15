@@ -48,7 +48,7 @@
     <ErrorState v-if="error" class="mb16" :message="error" @retry="fetchAll" />
 
     <!-- 来源状态三态：加载失败 / 未接入 / 0 条 / 正常（后端仅来源摘要，逐条明细未接入） -->
-    <div v-if="activeCode !== 'ERROR'" class="source-strip" data-testid="todo-source-status">
+    <div v-if="activeCode !== 'ERROR' && !loading" class="source-strip" data-testid="todo-source-status">
       <span class="source-strip__title">来源状态</span>
       <span
         v-for="s in sourceStatus"
