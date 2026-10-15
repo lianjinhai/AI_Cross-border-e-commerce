@@ -17,6 +17,8 @@
  * - 后端缺口（独立"销售准备任务"写端点）由页面显式标注，不在本报告外掩盖。
  */
 
+import { tagInfo } from './dataLabels'
+
 /** J0 链路标识（写入路由 query.journey）。 */
 export const J0_JOURNEY_KEY = 'j0'
 
@@ -163,20 +165,18 @@ export function credibilityTag(source = '') {
   if (s === 'manual' || s === 'operator') return 'MANUAL_UNVERIFIED'
   if (s === 'builtin' || s === 'demo') return 'DEMO'
   if (s === 'official' || s === 'verified') return 'OFFICIAL_VERIFIED'
+  if (s === 'ai' || s === 'estimated' || s === 'model') return 'AI_ESTIMATED'
+  if (s === 'contract' || s === 'contract_test') return 'CONTRACT_TEST'
   return 'UNKNOWN'
 }
 
-/** 可信度标签中文（便于 UI 直接渲染，纯函数可测）。 */
+/**
+ * 可信度标签中文 —— **复用单一事实源** `dataLabels.tagInfo`，不再本地复制一份文案
+ * （原先本地 MAP 漏 AI_ESTIMATED / CONTRACT_TEST，导致「模型估算」无法标注）。
+ * 未知码回 `UNKNOWN`「数据未知」，不猜测。
+ */
 export function credibilityLabel(code = 'UNKNOWN') {
-  const MAP = {
-    OFFICIAL_VERIFIED: '官方已核验',
-    API_UNVERIFIED: '平台API待业务验证',
-    MANUAL_UNVERIFIED: '人工录入未核验',
-    EXTERNAL_IMPORT: '外部导入',
-    DEMO: '演示数据',
-    UNKNOWN: '数据未知',
-  }
-  return MAP[code] || MAP.UNKNOWN
+  return tagInfo(code).label
 }
 
 /** 缺值占位符（不当 0）。 */

@@ -128,6 +128,11 @@ describe('credibilityTag / credibilityLabel（可信度标签映射）', () => {
     expect(credibilityTag('manual')).toBe('MANUAL_UNVERIFIED')
     expect(credibilityTag('builtin')).toBe('DEMO')
     expect(credibilityTag('official')).toBe('OFFICIAL_VERIFIED')
+    // R3-3 修复：补「模型估算 / 合同测试」，否则 AI 估算无法被标注
+    expect(credibilityTag('ai')).toBe('AI_ESTIMATED')
+    expect(credibilityTag('estimated')).toBe('AI_ESTIMATED')
+    expect(credibilityTag('model')).toBe('AI_ESTIMATED')
+    expect(credibilityTag('contract')).toBe('CONTRACT_TEST')
   })
 
   it('未识别来源回落 UNKNOWN', () => {
@@ -135,9 +140,13 @@ describe('credibilityTag / credibilityLabel（可信度标签映射）', () => {
     expect(credibilityTag('whatever')).toBe('UNKNOWN')
   })
 
-  it('标签码到中文', () => {
-    expect(credibilityLabel('DEMO')).toBe('演示数据')
+  it('标签码到中文复用 dataLabels 单一事实源', () => {
+    // 文案取自 shared/dataLabels.DATA_TAGS（不本地复制第二套）
+    expect(credibilityLabel('DEMO')).toBe('演示')
     expect(credibilityLabel('UNKNOWN')).toBe('数据未知')
+    // 关键：AI_ESTIMATED 不再回落到「数据未知」
+    expect(credibilityLabel('AI_ESTIMATED')).toBe('AI估算')
+    expect(credibilityLabel('NOPE')).toBe('数据未知')
   })
 })
 
