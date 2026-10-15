@@ -1,5 +1,6 @@
 <template>
   <div class="page">
+    <JourneyJ0Bar />
     <PageHeader title="店铺授权" subtitle="授权向导 · 状态徽标统一 · 失败原因直出">
       <template #actions>
         <el-button size="small" @click="mappingDialog = true">类目映射设置</el-button>
@@ -96,6 +97,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from '../../shared/ui'
 import PageHeader from '../../components/PageHeader.vue'
+import JourneyJ0Bar from '../../components/JourneyJ0Bar.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ShopAuthWizard from '../../features/shops/ShopAuthWizard.vue'
 import { can, canAdmin, canWrite } from '../../permissions/permissions'

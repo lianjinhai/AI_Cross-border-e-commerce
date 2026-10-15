@@ -1,5 +1,6 @@
 <template>
   <div class="page">
+    <JourneyJ0Bar />
     <PageHeader
       title="供应商库"
       subtitle="私域供应链伙伴 · AI 评分 · 补货预警 · 货源匹配"
@@ -149,6 +150,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from '../../shared/ui'
 import PageHeader from '../../components/PageHeader.vue'
+import JourneyJ0Bar from '../../components/JourneyJ0Bar.vue'
 import FormSection from '../../components/FormSection.vue'
 import DataTable from '../../components/DataTable.vue'
 import EmptyState from '../../components/EmptyState.vue'

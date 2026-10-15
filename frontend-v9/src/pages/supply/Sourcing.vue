@@ -1,5 +1,6 @@
 <template>
   <div class="page">
+    <JourneyJ0Bar />
     <PageHeader
       title="货源发现"
       subtitle="1688 / 私域工厂 / 手动供应商三来源 · 筛选 SKU / 成本币种 / MOQ / 交期"
@@ -22,8 +23,8 @@
         />
       </template>
       <template #actions>
-        <el-button @click="router.push('/app/supply/suppliers')">供应商库</el-button>
-        <el-button @click="router.push('/app/supply/matching')">货源匹配</el-button>
+        <el-button @click="goSupply('/app/supply/suppliers')">供应商库</el-button>
+        <el-button @click="goSupply('/app/supply/matching')">货源匹配</el-button>
       </template>
     </PageHeader>
 
@@ -95,8 +96,9 @@
  * 筛选：SKU / 成本币种 / MOQ / 交期（纯函数 shared/sourcingView.js）。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '../../components/PageHeader.vue'
+import JourneyJ0Bar from '../../components/JourneyJ0Bar.vue'
 import SectionState from '../../components/SectionState.vue'
 import DataTable from '../../components/DataTable.vue'
 import DataQualityBanner from '../../components/DataQualityBanner.vue'
@@ -104,8 +106,17 @@ import { fetchSuppliers } from '../../api/domains/suppliers'
 import {
   SOURCING_TABS, splitSourcingTab, filterSourcing,
 } from '../../shared/sourcingView'
+import { isJourneyActive, buildJourneyQuery } from '../../shared/journeyJ0View'
 
+const route = useRoute()
 const router = useRouter()
+
+/** J0 链路内跳转：保留 journey + productId 上下文，避免断链。 */
+const journeyQuery = computed(() =>
+  isJourneyActive(route.query) ? buildJourneyQuery({ productId: route.query.productId }) : {})
+function goSupply(path) {
+  router.push({ path, query: journeyQuery.value })
+}
 const CURRENCIES = ['CNY', 'USD', 'EUR']
 
 const activeTab = ref('manual')

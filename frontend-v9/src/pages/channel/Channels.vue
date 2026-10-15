@@ -1,11 +1,12 @@
 <template>
   <div class="page">
+    <JourneyJ0Bar />
     <PageHeader
       title="渠道推荐"
       subtitle="平台能力墙 · 目标市场 / 真实能力 / 验证等级 / 接入前提"
     >
       <template #actions>
-        <el-button @click="router.push('/app/channels/shops')">店铺管理</el-button>
+        <el-button @click="goShops">店铺管理</el-button>
       </template>
     </PageHeader>
 
@@ -102,20 +103,27 @@
  * 11 态：所有区块经 SectionState（本页为内容态；无数据异常时不渲染自写空态）。
  */
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '../../components/PageHeader.vue'
+import JourneyJ0Bar from '../../components/JourneyJ0Bar.vue'
 import BusinessStatus from '../../components/BusinessStatus.vue'
 import DataQualityBanner from '../../components/DataQualityBanner.vue'
 import { allPlatformCards } from '../../api/domains/platformCapabilities'
+import { isJourneyActive, buildJourneyQuery } from '../../shared/journeyJ0View'
 
+const route = useRoute()
 const router = useRouter()
+
 const cards = allPlatformCards()
 
 const prereqDrawer = ref(false)
 const prereqCard = ref(null)
 
+/** J0 链路内跳到店铺管理，保留 journey + productId。 */
 function goShops() {
-  router.push('/app/channels/shops')
+  const q = isJourneyActive(route.query)
+    ? buildJourneyQuery({ productId: route.query.productId }) : {}
+  router.push({ path: '/app/channels/shops', query: q })
 }
 
 function viewPrerequisites(card) {

@@ -1,5 +1,6 @@
 <template>
   <div class="page">
+    <JourneyJ0Bar />
     <PageHeader title="商品发现" subtitle="市场趋势 · 机会评分 · 一键选品落池">
       <template #actions>
         <el-button v-if="canWrite" size="small" @click="trendImportDialog = true">导入真实趋势</el-button>
@@ -152,14 +153,20 @@
  * （J1 断链归零）+ 趋势 CSV 导入向导。转池逻辑见 composables/discoveryTransfer.js。
  */
 import { onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from '../../shared/ui'
 import PageHeader from '../../components/PageHeader.vue'
+import JourneyJ0Bar from '../../components/JourneyJ0Bar.vue'
 import { canWrite } from '../../permissions/permissions'
 import {
   expandKeywords, fetchPerformance, fetchScores, fetchTrendSource, fetchTrends,
   importTrends, pickCandidates, scanTrends,
 } from '../../api/domains/discovery'
 import { candidateToProductPayload, transferCandidates } from '../../composables/discoveryTransfer'
+import { isJourneyActive, buildJourneyQuery } from '../../shared/journeyJ0View'
+
+const route = useRoute()
+const router = useRouter()
 
 const trends = ref([])
 const keyword = ref('')
@@ -244,7 +251,13 @@ async function transferOne(item, index) {
   transferring.value = index
   try {
     const { created, failed } = await transferCandidates([item])
-    if (created.length) ElMessage.success(`已转入商品池：${created[0].title || `#${created[0].id}`}`)
+    if (created.length) {
+      ElMessage.success(`已转入商品池：${created[0].title || `#${created[0].id}`}`)
+      // J0 链路：把新建的商品主档 id 透传进 query，下游步骤共享同一对象上下文
+      if (isJourneyActive(route.query) && created[0].id != null) {
+        router.replace({ query: { ...route.query, productId: String(created[0].id) } })
+      }
+    }
     if (failed.length) ElMessage.error(failed[0].reason)
   } finally { transferring.value = null }
 }

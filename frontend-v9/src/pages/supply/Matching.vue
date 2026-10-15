@@ -1,5 +1,6 @@
 <template>
   <div class="page">
+    <JourneyJ0Bar />
     <PageHeader
       title="货源匹配"
       subtitle="左商品要求 · 中央供应候选对比 · 右总成本/毛利假设/风险/缺项"
@@ -16,7 +17,7 @@
         </el-select>
       </template>
       <template #actions>
-        <el-button @click="router.push('/app/pricing')">定价与利润试算</el-button>
+        <el-button @click="goPricing">定价与利润试算</el-button>
       </template>
     </PageHeader>
 
@@ -147,6 +148,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '../../components/PageHeader.vue'
+import JourneyJ0Bar from '../../components/JourneyJ0Bar.vue'
 import SectionState from '../../components/SectionState.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import MoneyValue from '../../components/MoneyValue.vue'
@@ -156,9 +158,17 @@ import { fetchOffers } from '../../api/domains/suppliers'
 import {
   compareCandidates, costAndGrossAssumption, profitLabel,
 } from '../../shared/matchingView'
+import { isJourneyActive, buildJourneyQuery } from '../../shared/journeyJ0View'
 
 const route = useRoute()
 const router = useRouter()
+
+/** J0 链路内跳转：保留 journey + productId 上下文。 */
+const journeyQuery = computed(() =>
+  isJourneyActive(route.query) ? buildJourneyQuery({ productId: route.query.productId }) : {})
+function goPricing() {
+  router.push({ path: '/app/pricing', query: journeyQuery.value })
+}
 
 const productOptions = ref([])
 const productId = ref(null)

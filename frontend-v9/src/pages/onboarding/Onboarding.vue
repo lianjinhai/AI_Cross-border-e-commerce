@@ -55,11 +55,15 @@
         </div>
       </template>
 
-      <!-- ── ONB-03 经营路径（静态清单 + 明示"引导清单（非 AI 自动规划）"，API_GAP §7#11） ── -->
-      <template v-else>
-        <h3 class="onboarding__card-title">你的经营路径</h3>
-        <DataQualityBanner tag="MANUAL_UNVERIFIED" detail="引导清单（非 AI 自动规划），按顺序完成即可起步" />
-        <el-card class="mb16" shadow="never">
+    <!-- ── ONB-03 经营路径（静态清单 + 明示"引导清单（非 AI 自动规划）"，API_GAP §7#11） ── -->
+    <template v-else>
+      <h3 class="onboarding__card-title">你的经营路径</h3>
+      <DataQualityBanner tag="MANUAL_UNVERIFIED" detail="引导清单（非 AI 自动规划），按顺序完成即可起步" />
+      <el-alert type="success" :closable="false" class="mb12"
+        title="零基础经营准备向导"
+        description="想一步步把生意跑通？沿「研究商品方向 → 选择货源 → 查看成本/风险 → 准备销售渠道 → 建立商品销售准备」走，系统会替你记住当前商品对象，每步都有下一步，不会有死端。" />
+      <el-button type="primary" class="mb16" @click="startJourney">按向导一步步准备 →</el-button>
+      <el-card class="mb16" shadow="never">
           <ol class="onboarding__guide">
             <li v-for="(item, i) in pathItems" :key="i">
               <span>{{ item.label }}</span>
@@ -184,6 +188,8 @@ function next() { goToStep(Math.min(3, step.value + 1)) }
 function prev() { goToStep(Math.max(1, step.value - 1)) }
 function finish() { router.push('/app') }
 function go(path) { if (path) router.push(path) }
+/** 进入 J0 零基础经营准备向导（链路首步：研究商品方向）。 */
+function startJourney() { router.push({ path: '/app/market/discovery', query: { journey: 'j0' } }) }
 
 onMounted(() => {
   if (step.value === 2) loadStep2()
@@ -199,4 +205,5 @@ watch(step, (n) => { if (n === 2 && !shopItems.value.length) loadStep2() })
 .onboarding__guide { margin: 0; padding-left: 20px; }
 .onboarding__guide li { margin: 6px 0; display: flex; justify-content: space-between; align-items: center; }
 .onboarding__footer { margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px; }
+.mb12 { margin-bottom: 12px; }
 </style>

@@ -1,5 +1,6 @@
 <template>
   <div class="page">
+    <JourneyJ0Bar />
     <PageHeader title="商品候选池" subtitle="发现与商品 · 候选商品聚合">
       <template #filters>
         <el-select v-model="sourceFilter" size="small" placeholder="来源" clearable style="width:140px">
@@ -13,6 +14,27 @@
         <el-tag size="small" type="info">API_GAP · 候选端点未核</el-tag>
       </template>
     </PageHeader>
+
+    <!-- J0 建立商品销售准备任务面板（仅末步 candidates 且 journey=j0 时显示） -->
+    <el-card v-if="journeyActive" class="j0-prepare mb16" shadow="never">
+      <template #header><span class="j0-prepare__title">建立商品销售准备任务</span></template>
+      <el-alert type="info" :closable="false" class="mb12"
+        title="真实含义：为所选商品建立商品主档（POST /products）"
+        description="系统暂无独立的「销售准备任务」写端点（后端缺口，见交付报告），因此本向导以「商品主档」作为统一的准备载体——它才是后续上架/销售真正依赖的真实对象。不会伪造任务或自动建单。" />
+      <div v-if="productId" class="j0-prepare__row">
+        <span>已带入对象：</span>
+        <el-tag size="small" type="success">商品主档 #{{ productId }} 已建立</el-tag>
+        <EntityLink object-type="product" :object-id="productId" :return-to="`/app/market/candidates?journey=j0&productId=${productId}`" />
+        <span class="j0-prepare__hint">（在「研究商品方向」转入商品池即已创建该主档）</span>
+      </div>
+      <el-alert v-else type="warning" :closable="false" class="mb12"
+        title="尚未选定商品"
+        description="请先在「研究商品方向」把候选转入商品池建立商品主档，再回到本步确认准备完成。" />
+      <div class="j0-prepare__next">
+        <el-button v-if="!productId" size="small" @click="goDiscovery">返回：研究商品方向</el-button>
+        <span class="j0-prepare__hint">下一步真实动作：进入上线中心准备上架（独立工作流模块，本向导不强制）。</span>
+      </div>
+    </el-card>
 
     <DataQualityBanner v-if="envBanner" :tag="envBanner.tag" detail="本环境数据为演示/测试" />
 
@@ -63,15 +85,26 @@
  * 来源字段用 dataLabels 的 8 种标签如实标注可信度。每页 11 态全区块经 SectionState。
  */
 import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import PageHeader from '../../components/PageHeader.vue'
 import SectionState from '../../components/SectionState.vue'
 import EntityLink from '../../components/EntityLink.vue'
+import JourneyJ0Bar from '../../components/JourneyJ0Bar.vue'
 import DataQualityBanner from '../../components/DataQualityBanner.vue'
 import { fetchProducts } from '../../api/domains/products'
 import { tagInfo, envTag, DATA_TAGS } from '../../shared/dataLabels'
+import { isJourneyActive } from '../../shared/journeyJ0View'
+
+const route = useRoute()
+const router = useRouter()
 
 const envBanner = envTag()
+const journeyActive = computed(() => isJourneyActive(route.query))
+const productId = computed(() => route.query.productId || '')
+function goDiscovery() {
+  router.push({ path: '/app/market/discovery', query: { journey: 'j0' } })
+}
 
 const code = ref('LOADING')
 const error = ref('')
@@ -141,4 +174,9 @@ onMounted(fetchAll)
 
 <style scoped>
 .mb16 { margin-bottom: 16px; }
+.j0-prepare__title { font-weight: 600; }
+.j0-prepare__row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.j0-prepare__next { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.j0-prepare__hint { color: var(--color-text-secondary); font-size: 12px; }
+.mb12 { margin-bottom: 12px; }
 </style>

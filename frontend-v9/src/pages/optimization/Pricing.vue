@@ -1,5 +1,6 @@
 <template>
   <div class="page">
+    <JourneyJ0Bar />
     <PageHeader title="动态定价" subtitle="利润计算与 BI / 到岸成本同口径 · AI 建议价批量采纳">
       <template #actions>
         <el-button v-if="writable" :loading="sugLoading" @click="suggest">AI 动态定价（按商品）</el-button>
@@ -32,7 +33,7 @@
       </el-descriptions>
       <div class="links">
         <router-link to="/app/analytics/bi">查看 BI 统一口径 →</router-link>
-        <router-link to="/app/analytics/landed-cost">维护到岸成本配置 →</router-link>
+        <router-link :to="costJourneyTo('/app/analytics/landed-cost')">维护到岸成本配置 →</router-link>
       </div>
     </FormSection>
 
@@ -93,13 +94,24 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from '../../shared/ui'
 import PageHeader from '../../components/PageHeader.vue'
+import JourneyJ0Bar from '../../components/JourneyJ0Bar.vue'
 import FormSection from '../../components/FormSection.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import { can } from '../../permissions/permissions'
 import { fetchPricingRecords, calcProfit, suggestPrice } from '../../api/domains/pricing'
 import { fetchProduct, updateProduct } from '../../api/domains/products'
+import { isJourneyActive, buildJourneyQuery } from '../../shared/journeyJ0View'
+
+const route = useRoute()
+/** J0 链路内跳到同属「成本/风险」步的到岸成本页，保留 journey + productId。 */
+function costJourneyTo(path) {
+  return isJourneyActive(route.query)
+    ? { path, query: buildJourneyQuery({ productId: route.query.productId }) }
+    : { path }
+}
 
 const writable = can('finance:write')
 

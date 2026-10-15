@@ -1,11 +1,12 @@
 <template>
   <div class="page">
+    <JourneyJ0Bar />
     <PageHeader
       title="到岸成本配置"
       subtitle="关税 / 物流路由 / 平台费率 / 目的国合规 四组配置 · 试算口径与定价页一致"
     >
       <template #actions>
-        <router-link to="/app/pricing"><el-button plain>前往动态定价</el-button></router-link>
+        <router-link :to="costJourneyTo('/app/pricing')"><el-button plain>前往动态定价</el-button></router-link>
       </template>
     </PageHeader>
 
@@ -95,13 +96,24 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from '../../shared/ui'
 import PageHeader from '../../components/PageHeader.vue'
+import JourneyJ0Bar from '../../components/JourneyJ0Bar.vue'
 import FormSection from '../../components/FormSection.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import { can } from '../../permissions/permissions'
 import { dutyRates, logisticsRoutes, platformFees, complianceRules, calcLandedCost } from '../../api/domains/crossBorder'
 import { fetchProducts } from '../../api/domains/products'
+import { isJourneyActive, buildJourneyQuery } from '../../shared/journeyJ0View'
+
+const route = useRoute()
+/** J0 链路内跳到同属「成本/风险」步的动态定价页，保留 journey + productId。 */
+function costJourneyTo(path) {
+  return isJourneyActive(route.query)
+    ? { path, query: buildJourneyQuery({ productId: route.query.productId }) }
+    : { path }
+}
 
 const writable = can('finance:write')
 
