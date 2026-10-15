@@ -2,7 +2,7 @@
   <div class="page">
     <PageHeader :title="`上线流程 #${runId}`" subtitle="步骤导航 · AI 建议 · 动作失败原因与重试">
       <template #actions>
-        <el-button size="small" @click="goBack">{{ returnTo ? '返回待办' : '返回' }}</el-button>
+        <el-button size="small" @click="goBack">{{ returnLabel }}</el-button>
         <el-button size="small" :loading="syncing" @click="doSync">同步状态</el-button>
         <LaunchExperienceToggle v-model="mode" :effective="effectiveMode" />
       </template>
@@ -11,6 +11,11 @@
     <SectionState :state="detailState" :error="error" @retry="loadAll">
       <template #default>
         <LaunchStatusSummary :launch="detail" :guided="mode === 'GUIDED'" class="mb16" />
+
+        <!-- J1 诚实红线：WAITING_EXTERNAL 显式标注「等待外部平台回执」，绝不写成已上线。 -->
+        <WaitingExternalState v-if="detail.execution_status === 'WAITING_EXTERNAL'" owner="平台"
+          :since="detail.updated_at || detail.created_at || ''"
+          hint="等待外部平台回执，流程尚未上线，请勿视为已发布" class="mb16" />
 
         <el-row :gutter="16">
           <!-- GUIDED 侧边步骤导航（PROFESSIONAL 用完整时间线） -->
@@ -77,18 +82,27 @@ import LaunchTimeline from '../../features/launch/LaunchTimeline.vue'
 import LaunchStepPanel from '../../features/launch/LaunchStepPanel.vue'
 import LaunchActionDialog from '../../features/launch/LaunchActionDialog.vue'
 import LaunchExperienceToggle from '../../features/launch/LaunchExperienceToggle.vue'
-import { errorEnvelope, actionReceiptView, loadDetail, loadEvents, loadSteps, syncLaunch } from '../../composables/launchCenter'
+import { errorEnvelope, actionReceiptView, isSafeReturnTo, loadDetail, loadEvents, loadSteps, syncLaunch } from '../../composables/launchCenter'
+import WaitingExternalState from '../../features/launch/WaitingExternalState.vue'
 import { safeReturnToTasks } from '../../shared/taskCenterView'
 
 const route = useRoute()
 const router = useRouter()
 const runId = Number(route.params.id)
 
-/** J2 闭环：从待办点入时带 return_to=/app/tasks?...，规范化后回跳；否则维持浏览器返回（R3-2 行为）。 */
+/**
+ * 回跳目标规范化（J1/J2 共用着陆页）：
+ * - 待办中心来源（/app/tasks…）走 J2 的 safeReturnToTasks；
+ * - 商品 / 上线中心 / Listing / 店铺等来源走通用白名单（navigationReturn.isSafeReturnTo）；
+ * - 均非法则维持浏览器返回（R3-2 行为），保证「返回不丢上下文」。
+ */
 const returnTo = computed(() => {
   const v = route.query.return_to
-  return typeof v === 'string' ? safeReturnToTasks(v) : ''
+  if (typeof v !== 'string' || !v) return ''
+  if (v.startsWith('/app/tasks')) return safeReturnToTasks(v)
+  return isSafeReturnTo(v) ? v : ''
 })
+const returnLabel = computed(() => (returnTo.value && returnTo.value.startsWith('/app/tasks')) ? '返回待办' : '返回')
 function goBack() {
   if (returnTo.value) router.push(returnTo.value)
   else router.back()

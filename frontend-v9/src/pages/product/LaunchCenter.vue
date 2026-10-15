@@ -2,6 +2,7 @@
   <div class="page">
     <PageHeader title="上线中心" subtitle="创建上线向导 · 保存视图 · 空态分因">
       <template #actions>
+        <el-button v-if="sourceReturn" size="small" @click="router.push(sourceReturn)">返回来源</el-button>
         <el-button v-if="canWrite()" type="primary" size="small" @click="openWizard">创建上线流程</el-button>
       </template>
     </PageHeader>
@@ -93,9 +94,10 @@ import { canWrite } from '../../permissions/permissions'
 import { fetchProducts } from '../../api/domains/products'
 import {
   EXECUTION_STATUS, buildReturnTo, createLaunch, detailPath, emptyStateReason, errorEnvelope,
-  executionStatusMeta, guidedSummary, listLaunches, listQuery, loadContext,
+  executionStatusMeta, guidedSummary, isSafeReturnTo, listLaunches, listQuery, loadContext,
   nextActionText, parseReturnTo, progressText,
 } from '../../composables/launchCenter'
+import { launchWizardStartStep } from '../../shared/productDetailView'
 
 const router = useRouter()
 const route = useRoute()
@@ -116,6 +118,11 @@ const creating = ref(false)
 
 const contextShops = computed(() => context.value?.shops || [])
 const usableShops = computed(() => contextShops.value.filter((s) => s.usable))
+// J1：从商品详情深链进入时，记录可安全回跳的来源（白名单校验，避免丢商品上下文）。
+const sourceReturn = computed(() => {
+  const from = route.query.from
+  return isSafeReturnTo(from) ? from : ''
+})
 const wizardProductTitle = computed(() => {
   const p = products.value.find((x) => x.id === wizard.productId)
   return p ? `#${p.id} ${p.title}` : '—'
@@ -169,9 +176,12 @@ function openDetail(row) {
 }
 
 async function openWizard() {
-  wizard.productId = null
-  wizard.shopId = null
-  wizardStep.value = 0
+  // J1 深链预填：携带 product_id/shop_id 时跳过「选商品」步，上下文不丢。
+  const deepProduct = route.query.product_id ? Number(route.query.product_id) : null
+  const deepShop = route.query.shop_id ? Number(route.query.shop_id) : null
+  wizard.productId = deepProduct
+  wizard.shopId = deepShop
+  wizardStep.value = launchWizardStartStep(deepProduct)
   wizardVisible.value = true
   if (!products.value.length) {
     try { products.value = (await fetchProducts({ page: 1 })).items || [] } catch { products.value = [] }
@@ -185,7 +195,9 @@ async function doCreate() {
     const run = await createLaunch({ productId: wizard.productId, shopId: wizard.shopId })
     ElMessage.success('上线流程已创建')
     wizardVisible.value = false
-    router.push(`/app/launch/${run.id}`)
+    // J1：回跳目标优先用来源（商品详情）；否则还原列表筛选，保证返回不丢上下文。
+    const returnTo = sourceReturn.value || buildReturnTo({ ...filters })
+    router.push(detailPath(run.id, returnTo))
   } catch (e) {
     const envelope = errorEnvelope(e)
     // 已有同商品同店铺流程：给直达入口，不重复创建。

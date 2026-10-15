@@ -3,6 +3,9 @@
     <PageHeader :title="product.title || '商品详情'" subtitle="标准化信息 · 渠道只读 · 素材核验">
       <template #actions>
         <el-button size="small" @click="router.back()">返回</el-button>
+        <el-button v-if="canWrite()" size="small" type="success" @click="goCreateLaunch">
+          创建上线流程
+        </el-button>
         <el-button v-if="canWrite()" type="primary" size="small" :loading="stdLoading" @click="doStandardize">
           重新标准化
         </el-button>
@@ -57,10 +60,14 @@
                 <span class="channel-progress">{{ ch.active.progress }}</span>
                 <span class="channel-next">下一步：{{ ch.active.nextAction }}</span>
                 <el-button size="small" link type="primary"
-                  @click="router.push(`/app/launch/${ch.active.id}`)">查看上线流程</el-button>
+                  @click="goLaunchDetail(ch.active.id)">查看上线流程</el-button>
               </div>
             </template>
-            <div v-else class="channel-row channel-muted">该店铺当前没有活跃上线流程</div>
+            <div v-else class="channel-row channel-muted">
+              <span>该店铺当前没有活跃上线流程</span>
+              <el-button v-if="canWrite()" size="small" link type="success"
+                @click="goCreateLaunch(ch.shop.id)">上线此商品</el-button>
+            </div>
             <template v-if="ch.history.length">
               <el-collapse class="channel-history">
                 <el-collapse-item :title="`历史轮次（${ch.history.length}）`">
@@ -219,7 +226,7 @@ import {
 } from '../../api/domains/products'
 import { fetchShops } from '../../api/domains/shops'
 import {
-  assetPageItems, assetRowView, buildShopOptions, launchItemView, normalizeChannels, sectionErrorText, shopContext, verifyErrorKind,
+  assetPageItems, assetRowView, buildLaunchDeepLink, buildShopOptions, launchItemView, normalizeChannels, sectionErrorText, shopContext, verifyErrorKind,
 } from '../../shared/productDetailView'
 
 /** 登记表单类型选项（asset_schema.py asset_type Literal 域）。 */
@@ -441,6 +448,23 @@ function onAssetShopChange() {
   assetRows.value = []
   assetError.value = ''
   loadAssets()
+}
+
+/** J1 深链：跳上线中心创建向导，携带 product_id（与可选 shop_id），并记下回跳来源。 */
+function goCreateLaunch(shopId = null) {
+  const link = buildLaunchDeepLink(product.value?.id, {
+    shopId,
+    from: `/app/products/${product.value?.id}`,
+  })
+  router.push(link)
+}
+
+/** J1 查看上线流程：带 return_to 回跳来源，保证从详情进流程详情后仍能明确返回本商品。 */
+function goLaunchDetail(launchId) {
+  router.push({
+    path: `/app/launch/${launchId}`,
+    query: { return_to: `/app/products/${product.value?.id}` },
+  })
 }
 
 onMounted(load)

@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   assetPageItems,
   assetRowView,
+  buildLaunchDeepLink,
   buildShopOptions,
   launchItemView,
+  launchWizardStartStep,
   normalizeChannels,
   progressLabel,
   nextActionLabel,
@@ -232,5 +234,40 @@ describe('E04 verifyErrorKind — 无权限/自审/版本冲突分因，409 保�
   it('其它错误（404/422）→ other，透传后端原因', () => {
     const err = { response: { status: 404, data: { detail: { code: 'ASSET_NOT_FOUND', message: '素材不适用于目标店铺' } } } }
     expect(verifyErrorKind(err, '兜底')).toEqual({ kind: 'other', message: '素材不适用于目标店铺' })
+  })
+})
+
+describe('J1 buildLaunchDeepLink — 商品→上线向导深链携带上下文', () => {
+  it('携带 product_id 与来源（from），不丢商品上下文', () => {
+    expect(buildLaunchDeepLink(7, { from: '/app/products/7' })).toEqual({
+      path: '/app/launch',
+      query: { product_id: '7', from: '/app/products/7' },
+    })
+  })
+
+  it('带 shop_id 时一并下传（按店铺预选）', () => {
+    expect(buildLaunchDeepLink(7, { shopId: 11, from: '/app/products/7' })).toEqual({
+      path: '/app/launch',
+      query: { product_id: '7', shop_id: '11', from: '/app/products/7' },
+    })
+  })
+
+  it('缺 product_id / from 时不写入空键', () => {
+    expect(buildLaunchDeepLink(null)).toEqual({ path: '/app/launch', query: {} })
+    expect(buildLaunchDeepLink(7, { shopId: null, from: '' })).toEqual({
+      path: '/app/launch', query: { product_id: '7' },
+    })
+  })
+})
+
+describe('J1 launchWizardStartStep — 深链跳过「选商品」步', () => {
+  it('携带 product_id 时跳过选商品步（从商品详情进）', () => {
+    expect(launchWizardStartStep(7)).toBe(1)
+    expect(launchWizardStartStep('11')).toBe(1)
+  })
+
+  it('未携带商品时从选商品步开始（正常从上线中心进）', () => {
+    expect(launchWizardStartStep(null)).toBe(0)
+    expect(launchWizardStartStep('')).toBe(0)
   })
 })

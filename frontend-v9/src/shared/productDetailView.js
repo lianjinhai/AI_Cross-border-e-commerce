@@ -205,3 +205,25 @@ export function verifyErrorKind(error, fallback = '核验提交失败') {
   }
   return { kind: 'other', message: sectionErrorText(error, fallback) }
 }
+
+/**
+ * J1 深链：从商品详情跳到「上线中心」创建向导，携带商品/目标店铺上下文，避免重新搜索。
+ * 仅组装 path + query，不触碰路由实例（组件负责 push）；字段只带后端 LaunchCreateIn
+ * 认的 product_id / shop_id，外加 `from` 作为回跳来源（白名单由调用方 isSafeReturnTo 校验）。
+ * @returns {{path:string, query:object}}
+ */
+export function buildLaunchDeepLink(productId, { shopId = null, from = '' } = {}) {
+  const query = {}
+  if (productId != null && productId !== '') query.product_id = String(productId)
+  if (shopId != null && shopId !== '') query.shop_id = String(shopId)
+  if (from) query.from = String(from)
+  return { path: '/app/launch', query }
+}
+
+/**
+ * J1 向导起点：已携带 product_id 时跳过「选商品」步，直接进「选店铺/确认」，上下文不丢。
+ * @returns {0|1} 0=从未带商品（正常从上线中心进入）；1=已带商品（从商品详情深链进入）。
+ */
+export function launchWizardStartStep(productId) {
+  return (productId != null && productId !== '') ? 1 : 0
+}
