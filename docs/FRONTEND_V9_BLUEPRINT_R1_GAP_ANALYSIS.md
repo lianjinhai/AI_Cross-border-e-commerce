@@ -54,7 +54,7 @@
 | LS-02 版本对比 | **无** | 改动比对页缺 | 若后端无版本 API 则**不建**，在 Listings 行内标记能力缺口（待核） |
 | LC-01 上线中心 | `pages/product/LaunchCenter.vue`（launchCenter.js 封装） | 未按 §5.6：缺固定快捷过滤七态、行内"继续处理/查看状态"按 WAITING_EXTERNAL 区分、创建 Launch 四步抽屉 | 改造 LaunchCenter：快捷过滤条+行内主按钮语义+四步创建抽屉 |
 | LC-02 上线详情 | `pages/product/LaunchDetail.vue` + features/launch 六组件（Timeline/StepPanel/ActionDialog/StatusSummary/ExperienceToggle/WaitingExternalState） | 已有 Guided/Professional 双模；需核对：依赖图时间线（平行任务按组）、B03–B09 未实现步骤不放出假成功按钮、深链保留 launch_run_id/step_code/return_to | 改造 LaunchDetail 对照 §5.7 交互契约逐条验收（测试断言） |
-| AS-01 素材/授权 | 无独立页；product_assets 在 ProductDetail 内（CRUD+verify） | 缺按 Product 关联的素材列表（权利状态/授权来源/适用范围/版本哈希/失效风险） | 新建 `pages/product/Assets.vue`（`/app/products/assets` 或挂在商品详情 Tab 提升为独立页，架构师定夺）；UNKNOWN/RESTRICTED 默认不可自动发布 |
+| AS-01 素材/授权 | 无独立页；product_assets 在 ProductDetail 内（CRUD+verify） | 缺按 Product 关联的素材列表（权利状态/授权来源/适用范围/版本哈希/失效风险） | 新建 `pages/product/Assets.vue`（`/app/products/assets` 或挂在商品详情 Tab 提升为独立页，架构师定夺）；UNKNOWN/RESTRICTED 默认不可自动发布 <!-- docs-ok --> |
 | CO-01/02 合规 | 两路由仍挂 StubPage（compliance、compliance/approvals） | 合规工作台五类队列（待审/缺证据/待补/已验证/过期）未实现 | 接实：按 API 映射（listings review-queue、compliance、shops）实现两页；材料详情 CO-02 可先并入工作台 Tab（P2 拆分） |
 
 ### 2.3 域③ 货源与采购（现 `supply`）
@@ -93,7 +93,7 @@
 | OP-01 定价工作台 | `pages/optimization/Pricing.vue`（pricing、workflows；利润计算/采纳建议价/重定价） | 按商品×Store 表（采购报价/供应商币种/汇率日/平台费/物流/税/广告假设/贡献利润/可信度/最低安全价）核对；核价面板"申报 vs 平台 vs 底价 vs 贡献"动作仅在合法 Action 时出现 | 改造 Pricing：字段与可信度标签；缺汇率禁当真利润（§5.13） |
 | OP-02 商品/店铺诊断 | 部分由 RiskAlerts 承担 | 诊断队列（销量下降/利润变差/退款升高…）每条须带数据/阈值/时间窗/证据/措施/历史 | 改造 RiskAlerts 为"商品与店铺诊断"（label 对齐，可保持 path） |
 | OP-03 广告与增长 | `pages/optimization/Ads.vue`（ads、actions；活动 CRUD/优化/AI 选词，审批走 actions） | 未接入投放 API 时只能展示导入分析/策略草案并标"人工建议"，不得出现"已投放" | 改造 Ads：真实性标签 + 受限态（对照 UX-20 验收） |
-| OP-04 策略实验 | **无** | 建议→实验→结果的追踪（蓝图 §2.1"优化建议与策略实验"） | 新建 `pages/optimization/Experiments.vue`；后端无实验端点 → 建骨架+"待接入"标记（只读展示 AI 决策依据中的建议，不建假 A/B） |
+| OP-04 策略实验 | **无** | 建议→实验→结果的追踪（蓝图 §2.1"优化建议与策略实验"） | 新建 `pages/optimization/Experiments.vue`；后端无实验端点 → 建骨架+"待接入"标记（只读展示 AI 决策依据中的建议，不建假 A/B） <!-- docs-ok --> |
 
 ### 2.7 域⑦ 财务与分析（现 `analytics`）
 
@@ -111,7 +111,7 @@
 | AI-01 Copilot | `features/aicopilot/AiCopilot.vue`（ai 端点；会话持久化**待接入**） | 按 §5.15 分层核对：打开即带上下文（空间/页面/对象/可帮任务）；回答区分事实/估算/判断；切空间不得延续旧对象 | 保持现状+契约核对；会话不持久化须明示"本次会话结束后不保留" |
 | AI-02 AI 行动中心 | 无独立页（AiDecisions 是只读决策依据；actions 审批散在 ads 等页） | 建议/审批/执行/结果全生命周期列表（对象/原因/证据摘要/风险/口径/状态/来源/审批人/结果/下一操作） | 新建 `pages/aiops/AiActions.vue`（`/app/ai/actions`）：actions 端点已存在（approve/reject/execute），可直接落地 P0 |
 | AI-03 工作流 | `pages/aiops/Workflows.vue`（workflows、/schedules；模板/调度/恢复） | 专业工作流 Run/Template/FlowKind/阶段耗时/重试/事件日志核对；Launch 与 LEGACY_AUTOMATION 语义区分 | 改造 Workflows：列补齐 |
-| AI-04 Agent 运行与额度 | **无** | 轨迹/成本/失败/配额（管理员视角） | 新建 `pages/aiops/AgentRuns.vue`（`/app/ai/agent-runs`，requiresOwner）；Agent Observability 端点未核 → "待接入"骨架，只读 |
+| AI-04 Agent 运行与额度 | **无** | 轨迹/成本/失败/配额（管理员视角） | 新建 `pages/aiops/AgentRuns.vue`（`/app/ai/agent-runs`，requiresOwner）；Agent Observability 端点未核 → "待接入"骨架，只读 <!-- docs-ok --> |
 | AI 知识库 | `pages/aiops/Knowledge.vue`（knowledge、ai） | 保持不变（权限允许者可见） | 保持不变 |
 
 ### 2.9 设置（现 `settings`，仅 OWNER）
@@ -121,7 +121,7 @@
 | SET-01 空间信息/经营偏好 | 无 | Workspace 名称/PERSONAL-ORGANIZATION/目标/地区偏好；升级不触发数据迁移 | 新建 `pages/settings/WorkspaceInfo.vue`（`/app/settings/workspace`，requiresOwner）；me/workspace 端点，未核字段标缺口 |
 | SET-02 成员与权限 | `pages/settings/TeamSettings.vue`（auth；成员增改/角色分配） | 缺 Data Scope/最近访问/邀请状态/最后 OWNER 保护；外部工厂协作者不得列进普通成员 | 改造 TeamSettings：列补齐；工厂协作者独立分组 |
 | SET-03 凭据管理 | **无** | 店铺 OAuth + AI 凭据仅显尾部/状态，不回显明文；平台级/Workspace 级作用域区分 | 新建 `pages/settings/Credentials.vue`（`/app/settings/credentials`）；shops OAuth 端点可复用，AI 凭据走 settings/ai 现有能力 → 聚合展示 |
-| SET-04 套餐与使用量 | **无**（Subscription 待核） | 费用/配额/能力/升级 | 新建 `pages/settings/Plan.vue`（requiresOwner）；无 Subscription 端点 → 整页"待接入"占位，**不建假数据** |
+| SET-04 套餐与使用量 | **无**（Subscription 待核） | 费用/配额/能力/升级 | 新建 `pages/settings/Plan.vue`（requiresOwner）；无 Subscription 端点 → 整页"待接入"占位，**不建假数据** <!-- docs-ok --> |
 
 ### 2.10 Factory Portal（现 `factory` 1 页）与 Platform Console（现 `console` 4 页）
 
@@ -199,7 +199,7 @@
 - **11 态**：WAITING_EXTERNAL=平台备货等待中；UNCERTAIN=发运结果待核查（禁重发）；BLOCKED=缺采购前置
 - **角色**：履约员/采购员；金额列受 Data Scope 保护
 
-### 3.8 OP-04 策略实验 `pages/optimization/Experiments.vue` → `/app/optimization/experiments`
+### 3.8 OP-04 策略实验 `pages/optimization/Experiments.vue` → `/app/optimization/experiments` <!-- docs-ok -->
 - **入口**：主导航"经营优化"（专业入口可默认收起）
 - **数据来源**：后端实验端点**不存在** → P2 骨架页：只读展示 AiDecisions 中"建议类"记录 + 明示"策略实验能力待接入，以下为历史建议记录"
 - **主操作**：无（不建假 A/B 按钮）；`查看决策依据`→ AI 决策页
@@ -220,7 +220,7 @@
 - **11 态**：EMPTY_FILTER/EMPTY_NEW（"AI 还没有提出建议"）；旧审批失效=BLOCKED 明示
 - **角色**：运营/审批人；COMPLIANCE 仅见自己队列
 
-### 3.11 AI-04 Agent 运行与额度 `pages/aiops/AgentRuns.vue` → `/app/ai/agent-runs`（requiresOwner）
+### 3.11 AI-04 Agent 运行与额度 `pages/aiops/AgentRuns.vue` → `/app/ai/agent-runs`（requiresOwner） <!-- docs-ok -->
 - **入口**：主导航"AI 与自动化"（管理员项）
 - **数据来源**：Agent Observability 端点**未核** → 整页"待接入"骨架：只读队列+明示"运行记录与配额数据未接入"，**不编造 Token 成本**
 - **主操作**：无（接入后：查看轨迹/重试失败）

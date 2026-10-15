@@ -27,6 +27,17 @@
 | R3-0 现状/契约冻结 | ✅ 完成（2026-10-14）：4 份矩阵（页面归属/后端能力/任务契约/AppShell 基线）+ R3 总蓝图落盘；E01–E12 坐实；4+1 入口设计 | 见 `FRONTEND_R3_*.md` + `UI_REFACTOR_BLUEPRINT_R3.md` | docs |
 | R3-1A 基础数据与路由修复 | ✅ 完成（2026-10-14，QA 回归发现 1 项已转 R3-1B 修复）：E01/E02/E05/E06/E09 + E03/E04 骨架；channels 路由唯一化；素材 shop_id 守卫；442/442 测试 + build + 浏览器实证 | ProductDetail/productDetailView/router + 3 新测试 | 777df4b |
 | R3-1B 真实操作与权限修复 | ✅ 完成（2026-10-14）：E03 登记补 market/platform（shopContext 推导，content_hash 无上传服务时拒绝提交不假哈希）；E04 核验 403/409/自审/通过/拒绝分类；E10 Launch 按 available_actions.executable 渲染 + disabled_reason + 回执 + 409 保留输入；452/452 测试 + build + 浏览器实证 | ProductDetail/LaunchStepPanel/LaunchDetail/launchCenter/productDetailView + 3 测试 | 2fbabdf |
+| R3-1C J1 端到端验证 | ✅ 完成（2026-10-14，QA）：隔离库 J1 闭环（商品→渠道→Launch→素材→核验→刷新→动作）+ 跨店隔离；七条要求全过 | `backend/tests/test_qa_r31c_j1_e2e.py` + `docs/evidence/R3-1C/` | ce2211e |
+| R3-2A 4+1 入口收敛 | ✅ 完成（2026-10-14）：8 域 26 项→4+1 入口（我的生意/我的商品/我的订单/我的收益/全部工具，tools 折叠覆盖 23 叶子）；顶栏 Workspace/计数条；471 测试(+19)+build+截图；path/302 零变更 | workspace-navigation/filter/types/ShellSidebar/ShellContextBar/workbenchContext + 2 测试 | 0286598 |
+| R3-2B 目标驱动工作台 | ✅ 完成（2026-10-14，待 QA 统一回归）：四层优先级（1 主任务/≤3 待办/阶段阻断摘要/可展开 AI+BI）+ 统一待办（8 项事实/去重含 store/闭环 5 项）；501 测试(+49)+build+截图 | WorkspaceHome/TaskCenter/workspaceHomeView/taskCenterView + 2 测试 | 1496927 |
+| R3-2 统一 QA | ⚠️ PASS with notes（2026-10-14）：12 类情形隔离库取证、30 秒主线 1474ms；抓到 4+1 源码缺陷（对象渲染/筛选恒 0/return_to 重复/稳定id 下标/移动端溢出）+ 测试 SAMPLE 失真根因 | docs/evidence/R3-2-QA/ | QA |
+| R3-2B 缺陷修复 | ✅ 完成（2026-10-14）：bug1-5 修复（displayName 归一化/筛选/URLSearchParams 合并/业务键 id）+ 测试 SAMPLE 对齐后端对象形状 + 3 条回归证明 + 三方计数口径统一（deriveWorkbenchCounts）+ 390/768 响应式；510 测试 | taskCenterView/workspaceHomeView/TaskCenter/AppShellCore + 回归测试 | 3380e1e |
+| R3-2 QA 第 2 轮（收口） | ✅ **判定 PASS**（2026-10-14）：bug1–5 回归证明（旧 FAIL/新 PASS）+ 10 项核验取真实浏览器/API 证据（三方计数一致 2/0/1；return_to 单一带筛选上下文；被阻断视图真实明细；390/768 无溢出；无权限正确限制；单商品双店不合并）。**修复 3 项验证脚本缺陷**（代理 502 / Vite 绑 IPv6 致就绪探针失败 / 标签与空视图） | `docs/evidence/R3-2-QA/ROUND2_CONCLUSION.md` + `BACKEND_DEPENDENCY_GAPS.md` | QA |
+| R3-3 J0 零基础经营准备链路 | ✅ 完成（2026-10-15）：5 步链路（研究方向→货源→成本风险→渠道→销售准备）+ `journey=j0`/`productId` 上下文透传 + 起点识别 + 可信度标签 + 缺值「—」；无内部术语（无 Listing/工作流）；新组件 JourneyJ0Bar | journeyJ0View/journeyJ0Bar + market/supply/channel/pricing/landed-cost/onboarding（13 文件） | b2914c8 |
+| R3-3 J1 商品→上线链路断点 | ✅ 完成（2026-10-15）：详情页发起上线（携带 product_id/shop_id）、上线中心深链预填+「返回来源」、上线详情 `WAITING_EXTERNAL` 显式「等待外部平台回执，未上线」、返回兼容三来源；R3-1 项未重做 | ProductDetail/LaunchCenter/LaunchDetail + productDetailView（+4 测试） | dbc3127 |
+| R3-3 J2 待办闭环与诚实降级 | ✅ 完成（2026-10-15）：来源状态三态条（加载失败/未接入/0条/正常）、待办摘要行显式「明细未接入 → 去来源页处理」、4 个落点页补「返回待办」、返回后重拉刷新计数且保留 query 筛选 | TaskCenter/taskCenterView + Approvals/RiskAlerts/Listings/LaunchDetail（+6 测试） | e2cc003, 4490f95 |
+| R3-3 共享回跳白名单修复 | ✅ 完成（2026-10-15，**lead 亲修根因**）：`RETURN_WHITELIST` 纳入 `/app` —— 此前 `/app/*` 恒 false，站内 `return_to` 被静默丢弃（J1 商品回跳、PageHeader 均失效）；站外/协议相对/穿越仍拦截 | navigationReturn + navigation-return.test.js（+1 测试） | a1ee90b |
+| R3-3 J0 可信度标签对齐 | ✅ 完成（2026-10-15，**lead 亲修**）：`credibilityLabel` 改为复用 `dataLabels.tagInfo` 单一事实源；补 `AI_ESTIMATED`（模型估算）/`CONTRACT_TEST`，修复「模型估算无法标注」 | journeyJ0View + journey-j0-view.test.js | a31bd1c |
 
 ## §2 UX-B 交付事实（commit 1dd1526）
 
@@ -57,8 +68,8 @@
 
 | 指标 | 基线 | 来源 |
 |---|---|---|
-| frontend-v9 npm test | 186 用例 / 14 文件全绿 | UX-B（总调度+QA 双重复现） |
-| frontend-v9 npm run build | 成功（1756 modules） | UX-B |
+| frontend-v9 npm test | 552 用例 / 46 文件全绿（R3-3 后；UX-B 时为 186/14） | R3-3（lead 实测；`vite build` 同时通过） |
+| frontend-v9 npm run build | 成功（R3-3 后实测 27.86s，含 J0/J1/J2 全部改动） | R3-3（lead 实测） |
 | 旧 frontend npm test | 77（docs/baseline.json） | 不回归红线 |
 | backend pytest | 646（docs/baseline.json） | 不回归红线 |
 | docs 门禁 | total=0 | 每次提交前 |
@@ -74,6 +85,8 @@
 
 - 2026-10-13：UX-A 冻结（f690fea + 契约 aed39e8）；UX-B 完成并过 QA（1dd1526 + 2128b60）；契约 P2 修订（e18bd58）；UX-C/D 并行交付（7dd4f69 + c142577）；路由合并（2e0ecd8）；契约回写七处真实端点偏离（dd7c055）；UX-E 双线交付（3c8c655 + 9f4eb68 + eda8729，代客 token 还原根治）；UX-F 终验完成（ACCEPTANCE v2，0c2b597，判定 PASS 可切换）。
 - 2026-10-14：蓝图 R1 全站补齐（dac556a，83 文件，417 测试 + build）。**运行入口专项核查**：查实「用户看不到 V9 变化」根因 = `config.py` 写死 `frontend/dist`、`Dockerfile` 只构建旧前端，V9 构建产物从未被任何运行入口部署。已加 `ERP_FRONTEND_DIST` 可切换（默认仍旧，可回退）+ `/api/build-info` + `VITE_API_PROXY_TARGET`，起 8001(V9 静态)/5174(V9 dev) 独立验收入口。产出 `FRONTEND_V9_RUNTIME_VERIFICATION.md` 与 `FRONTEND_V9_VISUAL_ACCEPTANCE.md`。
+- 2026-10-14（R3-2 收口）：R3-2A `0286598` / R3-2B `1496927` / 修复 `3380e1e` 完成。**QA 第 2 轮判定 PASS**：修复 Round2 验证脚本三处缺陷后（代理劫持 127.0.0.1 致 502；Vite `--host localhost` 仅绑 IPv6 致就绪探针失败；驱动标签 `受阻` 未命中 + 在空视图点「处理」），真实浏览器补齐全量 12 类情形与 10 项核验证据，结论见 `docs/evidence/R3-2-QA/ROUND2_CONCLUSION.md`；后端依赖缺口 G1–G5 只登记不改（`BACKEND_DEPENDENCY_GAPS.md`）。
+- 2026-10-15（R3-3 三路径交付）：三条经营路径**并行交付**，均严格限定文件归属、未触碰 workbench WIP 与共享路由/AppShell/权限：**J0** `b2914c8`（零基础 5 步链路 + 上下文透传，无内部术语）、**J1** `dbc3127`（商品→上线断点 B1–B5 + WAITING_EXTERNAL 诚实标注）、**J2** `e2cc003`+`4490f95`（待办来源三态条 + 明细未接入诚实降级 + 返回待办闭环）。Lead 亲修两处**根因级**问题：`a1ee90b` 共享回跳白名单纳入 `/app`（此前 `/app/*` return_to 被静默丢弃，J1 商品回跳与 PageHeader 均失效）、`a31bd1c` J0 可信度标签复用 `dataLabels` 单一事实源（补 AI_ESTIMATED/CONTRACT_TEST，修复「模型估算」无法标注）。**实测**：`vite build` 通过、552 用例 / 46 文件全绿。**待办**：R3-3 尚需独立验证（含真实浏览器）后方可给阶段判定；J0 执行者因 429 限流中断（其提交已在限流前完成）。
 
 ## §7 运行入口与正式接管（2026-10-14 核查）
 

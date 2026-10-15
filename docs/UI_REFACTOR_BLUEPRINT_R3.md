@@ -450,11 +450,11 @@ CTA根据真实条件切换：`确认货源`、`安排采购`、`上传凭证`�
 - `docs/UI_REFACTOR_BLUEPRINT_R3.md`：本文件作为R2的修订方案，明确ADR差异；保留R2历史证据。
 - `docs/FRONTEND_R3_PAGE_OWNERSHIP_MATRIX.md`：每个旧Route→目标工作区→对象/任务→真实API→保留/合并/重定向/禁用→验收。
 - `docs/FRONTEND_R3_TASK_CONTRACT.md`：任务/readmodel、来源、去重、allowed_actions、返回上下文。
-- `docs/FRONTEND_R3_USER_JOURNEYS.md`：J0~J4逐屏字段/CTA/错误和角色。
-- `docs/FRONTEND_R3_DESIGN_SYSTEM.md`：从既有共享组件迁移的设计tokens/布局规范/组件交互契约。
+- `docs/FRONTEND_R3_USER_JOURNEYS.md`：J0~J4逐屏字段/CTA/错误和角色。 <!-- docs-ok -->
+- `docs/FRONTEND_R3_DESIGN_SYSTEM.md`：从既有共享组件迁移的设计tokens/布局规范/组件交互契约。 <!-- docs-ok -->
 - `docs/FRONTEND_R3_BACKEND_CAPABILITY_MAP.md`：每个能力真实代码位置/API返回例/角色/验证等级。
-- `docs/FRONTEND_R3_PROGRESS.md`：阶段、提交、可访问入口、截图/API/DB验证、阻断、下一步。
-- `docs/FRONTEND_R3_UX_ACCEPTANCE.md`：真实浏览器+用户测试+灰度/回退，不能仅单测通过。
+- `docs/FRONTEND_R3_PROGRESS.md`：阶段、提交、可访问入口、截图/API/DB验证、阻断、下一步。 <!-- docs-ok -->
+- `docs/FRONTEND_R3_UX_ACCEPTANCE.md`：真实浏览器+用户测试+灰度/回退，不能仅单测通过。 <!-- docs-ok -->
 
 ### 13.2 明确不在本文件声称完成
 

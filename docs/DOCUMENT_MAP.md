@@ -123,6 +123,10 @@ V9.0 全站前端重设计项目的产品与架构冻结文档；UX-A 一次性�
 | docs/FRONTEND_R3_TASK_CONTRACT.md | R3-0 冻结（2026-10-14） | R3-0~R3-6 阶段、J0–J4 旅程、数据可信度契约、验收门槛 |
 | docs/FRONTEND_R3_APP_SHELL_DESIGN_BASELINE.md | R3-0 冻结（2026-10-14） | 统一 AppShell 设计基线、4+1 导航、动作权限渲染、工作台首屏 |
 | docs/FRONTEND_V9_ACCEPTANCE.md | v2（UX-F 终验） | 20 条质量标准判定 + 7 旅程走查 + 缺陷遗留 + 切换建议 |
+| docs/FRONTEND_V9_BLUEPRINT_R1_GAP_ANALYSIS.md | R1 增量规约（2026-10-14） | 蓝图 R1 与 frontend-v9 现状比对，输出增量设计规约 |
+| docs/FRONTEND_V9_BLUEPRINT_R1_TASK_BREAKDOWN.md | R1 任务分解（2026-10-14） | 导航重组 + 新增页面文件级任务分解 |
+| docs/FRONTEND_V9_RUNTIME_VERIFICATION.md | 专项核查（2026-10-14） | 「前端已开发但用户看不到变化」根因核查与修复（ERP_FRONTEND_DIST / build-info） |
+| docs/FRONTEND_V9_VISUAL_ACCEPTANCE.md | 视觉验收基线（2026-10-14） | 同屏同角色可比较数据下，旧前端 vs V9 逐项视觉对照与验收方法 |
 
 ---
 

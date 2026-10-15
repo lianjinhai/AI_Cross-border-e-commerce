@@ -171,10 +171,10 @@ routes 数组中 `meta.domain` 须随新域 label 调整（仅文本，不影响
 
 | 蓝图 ID | 路由 path | 组件文件路径 | 挂载路由文件 | 备注 | P |
 |---|---|---|---|---|---|
-| AS-01 | `/app/products/assets` | `src/pages/product/Assets.vue` | `routes-uxd.js` | product_assets 提升独立页；UNKNOWN/RESTRICTED 默认不可自动发布 | P2 |
-| OP-04 | `/app/optimization/experiments` | `src/pages/optimization/Experiments.vue` | `routes-uxd.js` | 实验端点不存在(§7#14)→ 只读历史建议+待接入 | P2 |
-| AI-04 | `/app/ai/agent-runs` | `src/pages/aiops/AgentRuns.vue` | `routes-uxe-b.js`（requiresOwner） | Agent Observability 未核(§7#12)→ 整页占位 | P2 |
-| SET-04 | `/app/settings/plan` | `src/pages/settings/Plan.vue` | `routes-uxe-b.js`（requiresOwner） | Subscription 未核(§7#9)→ 整页占位 | P2 |
+| AS-01 | `/app/products/assets` | `src/pages/product/Assets.vue` | `routes-uxd.js` | product_assets 提升独立页；UNKNOWN/RESTRICTED 默认不可自动发布 | P2 <!-- docs-ok --> |
+| OP-04 | `/app/optimization/experiments` | `src/pages/optimization/Experiments.vue` | `routes-uxd.js` | 实验端点不存在(§7#14)→ 只读历史建议+待接入 | P2 <!-- docs-ok --> |
+| AI-04 | `/app/ai/agent-runs` | `src/pages/aiops/AgentRuns.vue` | `routes-uxe-b.js`（requiresOwner） | Agent Observability 未核(§7#12)→ 整页占位 | P2 <!-- docs-ok --> |
+| SET-04 | `/app/settings/plan` | `src/pages/settings/Plan.vue` | `routes-uxe-b.js`（requiresOwner） | Subscription 未核(§7#9)→ 整页占位 | P2 <!-- docs-ok --> |
 | FP-01 | `/factory`(重定向目标) | `src/pages/factory/FactoryHome.vue` | `routes-uxe-a.js` factoryChildren | 待办未核→"暂无任务"空态 | P2 |
 | FP-04 | `/factory/stocking` | `src/pages/factory/StockingTasks.vue` | `routes-uxe-a.js` factoryChildren | task projection 待接入(§7#5)→ 只读队列 | P2 |
 | FP-05 | `/factory/fulfillment` | `src/pages/factory/FulfillmentHistory.vue` | `routes-uxe-a.js` factoryChildren | /factory/orders、settlements 待接入(§7#3)→ 占位 | P2 |
@@ -220,7 +220,7 @@ routes 数组中 `meta.domain` 须随新域 label 调整（仅文本，不影响
 - **slots**：无
 - **逻辑要点**：切换时同步清 localStorage `v9_selected_shop` + 旧 Context（复用 `shared/workspace.js clearWorkspaceContext`）；顶栏"切换中，旧数据已失效"视觉态（epoch 比对）；"新建空间"项 → `create`
 - **依赖 API 域 / 纯函数**：`shared/workspace.js`（switchWorkspace / clearWorkspaceContext / getWorkspaceEpoch / loadWorkspaces）
-- **纯函数下沉**：`src/shared/workspaceSwitcher.js`（新建：`buildSwitcherOptions(workspaces, creating)` 纯函数 + `clearOnSwitch()` 调用约定）→ 测试 `tests/shared/workspace-switcher.test.js`
+- **纯函数下沉**：`src/shared/workspaceSwitcher.js`（新建：`buildSwitcherOptions(workspaces, creating)` 纯函数 + `clearOnSwitch()` 调用约定）→ 测试 `tests/shared/workspace-switcher.test.js` <!-- docs-ok -->
 - **P 级**：P0
 
 #### C.1.2 `src/components/StoreSwitcher.vue`（扩展，P1）
@@ -229,7 +229,7 @@ routes 数组中 `meta.domain` 须随新域 label 调整（仅文本，不影响
 - **events**：`update:modelValue`（既有）；**新增** `guideConnect(shopId)`（跳 CH-01 `/app/channels`）
 - **slots**：无
 - **逻辑要点**：StoreScope 语义对齐——仅销售店铺，**禁止 source 类型当销售过滤**；"全部/特定"两态持久化键沿用 `v9_selected_shop`；未接店铺引导项
-- **纯函数下沉**：`src/shared/storeScope.js`（新建：`filterSalesShops(shops)` 剔除 source 类型 + `resolveScopeKey()` 读写约定）→ 测试 `tests/shared/store-scope.test.js`
+- **纯函数下沉**：`src/shared/storeScope.js`（新建：`filterSalesShops(shops)` 剔除 source 类型 + `resolveScopeKey()` 读写约定）→ 测试 `tests/shared/store-scope.test.js` <!-- docs-ok -->
 - **P 级**：P1（差距分析 §5.1 列既有扩展；因 CH-01 新增页依赖，归包 1 完成基础、包 2 接入）
 
 #### C.1.3 `src/components/EvidencePanel.vue`（扩展，P0）
@@ -238,7 +238,7 @@ routes 数组中 `meta.domain` 须随新域 label 调整（仅文本，不影响
 - **events**：`viewDecision(decisionId)`（既有深链行为 emit 化，可选）
 - **slots**：`#body`（自定义证据区）
 - **逻辑要点**：未核验默认**中性样式**（非绿色），`verified=true` 才显绿色"官方已核验"
-- **纯函数下沉**：`src/shared/evidence.js`（新建：`evidenceTone({verified, source})` 返回 tone 码 + `expiryLabel(expiresAt)`）→ 测试 `tests/shared/evidence.test.js`
+- **纯函数下沉**：`src/shared/evidence.js`（新建：`evidenceTone({verified, source})` 返回 tone 码 + `expiryLabel(expiresAt)`）→ 测试 `tests/shared/evidence.test.js` <!-- docs-ok -->
 - **P 级**：P0
 
 ### C.2 全新组件（6 个）+ SectionState 11 态化
@@ -250,7 +250,7 @@ routes 数组中 `meta.domain` 须随新域 label 调整（仅文本，不影响
 - **events**：`expand()`（展开 note）
 - **slots**：`#note`（自定义说明区）
 - **规则**：外部等待=WAITING_EXTERNAL **中性色**（禁红色误报）；PRO 模式才显 raw；未知码回落 info
-- **依赖纯函数**：`src/shared/businessStatus.js`（新建：`statusTone(code)` + `shouldShowRaw(mode, code)` + `mapBusinessStatus(raw)` 原始→标准态码映射）→ 测试 `tests/shared/business-status.test.js`
+- **依赖纯函数**：`src/shared/businessStatus.js`（新建：`statusTone(code)` + `shouldShowRaw(mode, code)` + `mapBusinessStatus(raw)` 原始→标准态码映射）→ 测试 `tests/shared/business-status.test.js` <!-- docs-ok -->
 - **P 级**：P0
 
 #### C.2.2 `src/components/NextActionPanel.vue`（全新，P0）
@@ -258,7 +258,7 @@ routes 数组中 `meta.domain` 须随新域 label 调整（仅文本，不影响
 - **events**：`select(action)`、`confirm(action)`
 - **slots**：`#reason`（业务不可执行原因+补救入口）
 - **规则**：恰一个 primary；无权限=不渲染并显只读解释；业务不可执行=reason+补救入口；技术未接通=灰化+"暂不支持"；`confirm=true` 走 AsyncActionDialog
-- **依赖纯函数**：`src/shared/nextAction.js`（新建：`pickPrimaryAction(actions)` 恰一 primary 校验 + `renderPolicy(action, permission)` 三态判定）→ 测试 `tests/shared/next-action.test.js`
+- **依赖纯函数**：`src/shared/nextAction.js`（新建：`pickPrimaryAction(actions)` 恰一 primary 校验 + `renderPolicy(action, permission)` 三态判定）→ 测试 `tests/shared/next-action.test.js` <!-- docs-ok -->
 - **P 级**：P0
 
 #### C.2.3 `src/components/AsyncActionDialog.vue`（全新，P0）
@@ -266,7 +266,7 @@ routes 数组中 `meta.domain` 须随新域 label 调整（仅文本，不影响
 - **events**：`submit(payload)`、`done(result)`、`uncertain(payload)`
 - **slots**：`#context`（影响对象/Store/金额币种/前置条件/审批人展示）
 - **规则**：状态机 提交中→成功/失败/409(状态已变→刷新,不丢输入)/超时(UNCERTAIN:"结果待核查")；超时后只允许"重新查询状态"，**禁盲重试副作用**
-- **依赖纯函数**：`src/shared/asyncAction.js`（新建：`classifyResult(response)` 成功/失败/409/超时分类 + `nextState(current, event)` 状态机 + `buildIdempotencyKey(object)`）→ 测试 `tests/shared/async-action.test.js`
+- **依赖纯函数**：`src/shared/asyncAction.js`（新建：`classifyResult(response)` 成功/失败/409/超时分类 + `nextState(current, event)` 状态机 + `buildIdempotencyKey(object)`）→ 测试 `tests/shared/async-action.test.js` <!-- docs-ok -->
 - **P 级**：P0
 
 #### C.2.4 `src/components/MoneyValue.vue`（全新，P0）
@@ -274,7 +274,7 @@ routes 数组中 `meta.domain` 须随新域 label 调整（仅文本，不影响
 - **events**：无
 - **slots**：`#note`（估算/已结算说明）
 - **规则**：必显币种 + 汇率基准日 + 估算/已结算标签；**缺值不渲染 0**（显"—"）；缺 fxDate 显"汇率未知"
-- **依赖纯函数**：`src/shared/money.js`（新建：`renderMoney(props)` 返回展示串 + `isMissing(value)` 判定 + `moneyTag(estimated, settled)`）→ 测试 `tests/shared/money.test.js`
+- **依赖纯函数**：`src/shared/money.js`（新建：`renderMoney(props)` 返回展示串 + `isMissing(value)` 判定 + `moneyTag(estimated, settled)`）→ 测试 `tests/shared/money.test.js` <!-- docs-ok -->
 - **P 级**：P0
 
 #### C.2.5 `src/components/EntityLink.vue`（全新，P0）
@@ -282,7 +282,7 @@ routes 数组中 `meta.domain` 须随新域 label 调整（仅文本，不影响
 - **events**：`navigate(path)`（可拦截测试）
 - **slots**：`#label`（自定义链接文案）
 - **规则**：生成站内白名单深链（`workspace_context + object_type + object_id + store_id? + workflow_run_id? + step_code? + return_to + return_filters`，蓝图 §6.3）；`return_to` 限站内白名单；无权限对象点击→`/403`（不渲染敏感数据）
-- **依赖纯函数**：`src/shared/entityLink.js`（新建：`buildEntityLink(props)` 生成 path + `isWhitelistedPath(p)` 白名单校验）→ 测试 `tests/shared/entity-link.test.js`
+- **依赖纯函数**：`src/shared/entityLink.js`（新建：`buildEntityLink(props)` 生成 path + `isWhitelistedPath(p)` 白名单校验）→ 测试 `tests/shared/entity-link.test.js` <!-- docs-ok -->
 - **P 级**：P0
 
 #### C.2.6 `src/components/DataQualityBanner.vue`（全新，P0）
@@ -290,7 +290,7 @@ routes 数组中 `meta.domain` 须随新域 label 调整（仅文本，不影响
 - **events**：`navigate(link)`
 - **slots**：`#detail`
 - **规则**：八类标签：`官方平台已核验 / 平台API已返回待业务验证 / 人工录入未核验 / 外部导入 / 合同测试 / 演示 / AI估算 / 数据未知`；**合同测试/演示环境须常显**（部署层注入，非页面各自判断）
-- **依赖纯函数**：`src/shared/dataLabels.js`（新建，见 §D.2）→ 测试 `tests/shared/data-labels.test.js`
+- **依赖纯函数**：`src/shared/dataLabels.js`（新建，见 §D.2）→ 测试 `tests/shared/data-labels.test.js` <!-- docs-ok -->
 - **P 级**：P0
 
 #### C.2.7 `src/components/SectionState.vue`（既有，扩展 11 态化，P0）
@@ -299,7 +299,7 @@ routes 数组中 `meta.domain` 须随新域 label 调整（仅文本，不影响
 - **新增 props**：`code`（11 态码透传，String，见 §D.1）、`actionText`（主行动文案，String）、`onAction`（函数，主行动回调）
 - **events**：`retry`（既有）、**新增** `action`（主行动触发，payload=`code`）
 - **逻辑要点**：`code` 传入时优先于 `state`；经 `shared/pageStates.js` 字典渲染文案（杜绝页面自写空态）；外部等待中性色
-- **依赖纯函数**：`src/shared/pageStates.js`（新建，见 §D.1）+ `stateToCode(state)` 兼容映射 → 测试 `tests/shared/page-states.test.js`
+- **依赖纯函数**：`src/shared/pageStates.js`（新建，见 §D.1）+ `stateToCode(state)` 兼容映射 → 测试 `tests/shared/page-states.test.js` <!-- docs-ok -->
 - **P 级**：P0
 
 > 全新 6 + 扩展 1（SectionState）= 差距分析 §5 列 10 个（含 3 既有扩展：WorkspaceSwitcher/StoreSwitcher/EvidencePanel + 6 全新 + SectionState 11 态化）。StoreSwitcher 为 P1 归包 1 基础 + 包 2 接入。
@@ -344,7 +344,7 @@ export function stateCopy(code, overrides = {}) {
 ```
 
 - **tone 语义**：`neutral`（外部等待/不确定）显中性灰，**不用红色**；`warning` 橙；`danger` 仅 ERROR/失败；`info` 蓝。
-- 测试：`tests/shared/page-states.test.js`（断言 11 键齐全 / `stateToCode` 映射 / `stateCopy` override 不污染字典）。
+- 测试：`tests/shared/page-states.test.js`（断言 11 键齐全 / `stateToCode` 映射 / `stateCopy` override 不污染字典）。 <!-- docs-ok -->
 
 ### D.2 `src/shared/dataLabels.js`（新建，P0）
 
@@ -378,7 +378,7 @@ export function envTag() {
 }
 ```
 
-- 测试：`tests/shared/data-labels.test.js`（8 标签齐全 / `moneyLabel` 缺 fxDate 显"汇率未知" / `envTag` 三态）。
+- 测试：`tests/shared/data-labels.test.js`（8 标签齐全 / `moneyLabel` 缺 fxDate 显"汇率未知" / `envTag` 三态）。 <!-- docs-ok -->
 
 ### D.3 受影响页面清单（需补 11 态）
 
@@ -408,7 +408,7 @@ export function envTag() {
 - `src/shared/businessStatus.js`、`src/shared/nextAction.js`、`src/shared/asyncAction.js`、`src/shared/money.js`、`src/shared/entityLink.js`、`src/shared/evidence.js`、`src/shared/workspaceSwitcher.js`、`src/shared/storeScope.js`（§C 纯函数下沉，10 个）
 - `src/components/BusinessStatus.vue`、`NextActionPanel.vue`、`AsyncActionDialog.vue`、`MoneyValue.vue`、`EntityLink.vue`、`DataQualityBanner.vue`（§C.2 全新 6 个）
 - `src/pages/onboarding/Onboarding.vue`（ONB-01/02/03 三屏合一，§B.1）
-- 测试：`tests/shared/page-states.test.js`、`data-labels.test.js`、`business-status.test.js`、`next-action.test.js`、`async-action.test.js`、`money.test.js`、`entity-link.test.js`、`evidence.test.js`、`workspace-switcher.test.js`、`store-scope.test.js`（新建 `tests/shared/` 目录）
+- 测试：`tests/shared/page-states.test.js`、`data-labels.test.js`、`business-status.test.js`、`next-action.test.js`、`async-action.test.js`、`money.test.js`、`entity-link.test.js`、`evidence.test.js`、`workspace-switcher.test.js`、`store-scope.test.js`（新建 `tests/shared/` 目录） <!-- docs-ok -->
 
 **修改文件（9 个）：**
 - `src/shared/navigation/workspace-navigation.js`（11→8 域 + settings 下沉 + ★新增子项，§A）
@@ -432,7 +432,7 @@ export function envTag() {
 - `src/pages/compliance/Compliance.vue`（CO-01，替换 stub）
 - `src/pages/compliance/Approvals.vue`（CO-02，替换 stub）
 
-**测试要求**：包 1 至少 **12 个新测试**（10 个 `tests/shared/` 纯函数 + `tests/navigation.test.js` 增 persona 断言 + 新增 `tests/workbench-tasks.test.js` 待办聚合）。StoreSwitcher 扩展（P1）也落包 1 基础：`src/components/StoreSwitcher.vue` + `tests/shared/store-scope.test.js`。
+**测试要求**：包 1 至少 **12 个新测试**（10 个 `tests/shared/` 纯函数 + `tests/navigation.test.js` 增 persona 断言 + 新增 `tests/workbench-tasks.test.js` 待办聚合）。StoreSwitcher 扩展（P1）也落包 1 基础：`src/components/StoreSwitcher.vue` + `tests/shared/store-scope.test.js`。 <!-- docs-ok -->
 
 **预估文件数**：新建 21 + 修改 9 + 路由内联 = 约 **30 文件**。
 
@@ -456,8 +456,8 @@ export function envTag() {
 - `src/pages/settings/Credentials.vue`（SET-03，§B.2）
 - `src/api/domains/platformCapabilities.js`（CH-01/SU-04 静态目录+能力未核，§7#8 标记层）
 - `src/shared/fulfillmentQueue.js`（OR-03 备货/代发/采购分列纯函数）
-- `src/shared/reconcile.js`（FN-02 对账差异/未归因纯函数）
-- 测试：`tests/fulfillment.test.js`、`tests/reconcile.test.js`、`tests/ai-actions.test.js`
+- `src/shared/reconcile.js`（FN-02 对账差异/未归因纯函数） <!-- docs-ok -->
+- 测试：`tests/fulfillment.test.js`、`tests/reconcile.test.js`、`tests/ai-actions.test.js` <!-- docs-ok -->
 
 **修改文件（既有页面改造，§B.4 非首页部分）：**
 - `src/pages/product/Products.vue`（PR-01 专业表格，§B.4）
@@ -493,15 +493,15 @@ export function envTag() {
 - `src/pages/factory/StockingTasks.vue`（FP-04，§B.3）
 - `src/pages/factory/FulfillmentHistory.vue`（FP-05，§B.3）
 - `src/pages/factory/Capability.vue`（FP-03，由 FactoryProducts 拆出，§B.3）
-- `src/pages/aiops/AgentRuns.vue`（AI-04，§B.3）
-- `src/pages/optimization/Experiments.vue`（OP-04，§B.3）
-- `src/pages/settings/Plan.vue`（SET-04，§B.3）
+- `src/pages/aiops/AgentRuns.vue`（AI-04，§B.3） <!-- docs-ok -->
+- `src/pages/optimization/Experiments.vue`（OP-04，§B.3） <!-- docs-ok -->
+- `src/pages/settings/Plan.vue`（SET-04，§B.3） <!-- docs-ok -->
 - `src/pages/console/Adapters.vue`（PC-03，§B.3）
 - `src/pages/console/Rules.vue`（PC-04，§B.3）
 - `src/pages/console/AiResources.vue`（PC-05，§B.3）
-- `src/pages/product/Assets.vue`（AS-01 素材独立页，§B.3，可选挂 Tab）
+- `src/pages/product/Assets.vue`（AS-01 素材独立页，§B.3，可选挂 Tab） <!-- docs-ok -->
 - 纯函数：`src/shared/factoryTasks.js`（FP-04 只读队列 + 待接入判定）
-- 测试：`tests/factory-tasks.test.js`、`tests/agent-runs.test.js`、`tests/console-pc.test.js`
+- 测试：`tests/factory-tasks.test.js`、`tests/agent-runs.test.js`、`tests/console-pc.test.js` <!-- docs-ok -->
 
 **修改文件：**
 - `src/pages/factory/FactoryProducts.vue`（拆为 FP-02 catalog + 保留，path `/factory/products`→`/factory/catalog` 302 查表同步，§2.10）
@@ -558,12 +558,12 @@ graph LR
 | 6 | 平台备货申请 | ① 占位 + 引导 | `src/pages/fulfillment/Fulfillment.vue` 备货区（包 2） | "平台备货待接入，请人工在平台处理" |
 | 7 | 1688 货源 API | ② Tab 内提示 | `src/pages/supply/Sourcing.vue` 1688 Tab（包 2） | "1688 未接入，手动添加供应商可用" |
 | 8 | Platform Adapter Registry 读端点 | ① 能力字段标记 | `src/pages/channel/Channels.vue`（包 2）+ `src/pages/console/Adapters.vue`（包 3） | 验证等级一律"协议未验收 / 尚未验证"，证据时间必显 |
-| 9 | Subscription/套餐 | ① 整页占位 | `src/pages/settings/Plan.vue`（包 3） | "套餐与使用量待接入" |
+| 9 | Subscription/套餐 | ① 整页占位 | `src/pages/settings/Plan.vue`（包 3） | "套餐与使用量待接入" <!-- docs-ok --> |
 | 10 | 预测模型端点 | ① 分区占位（数据质量区先行） | `src/pages/analytics/Forecast.vue` 预测区（包 2） | "预测数据待接入，以下数据质量可先行修复" |
 | 11 | Business Path / 经营路径 | ① 静态清单 + 明示 | `src/pages/onboarding/Onboarding.vue` ONB-03（包 1） | "引导清单（非 AI 自动规划）" |
-| 12 | Agent Observability | ① 整页占位 | `src/pages/aiops/AgentRuns.vue`（包 3） | "Agent 运行记录与配额数据未接入"；不编造 Token 成本 |
+| 12 | Agent Observability | ① 整页占位 | `src/pages/aiops/AgentRuns.vue`（包 3） | "Agent 运行记录与配额数据未接入"；不编造 Token 成本 <!-- docs-ok --> |
 | 13 | Product Candidate 读端点 | ② 降级实现 + 标记 | `src/pages/market/Candidates.vue`（包 1） | 降级 products+来源筛选，角标 "API_GAP"；无货源也能保存机会 |
-| 14 | 策略实验端点 | ① 只读历史 + 占位 | `src/pages/optimization/Experiments.vue`（包 3） | "策略实验能力待接入，以下为历史建议记录" |
+| 14 | 策略实验端点 | ① 只读历史 + 占位 | `src/pages/optimization/Experiments.vue`（包 3） | "策略实验能力待接入，以下为历史建议记录" <!-- docs-ok --> |
 | 15 | Listing 版本 API | ③ 隐藏入口（不建页） | `src/pages/product/Listings.vue` 行内（包 2，PR/LC 改造顺带） | "版本对比未支持"（LS-02 不建页） |
 | 16 | 广告投放真实 API | ② 只读分析 + 标签 | `src/pages/optimization/Ads.vue`（包 2，OP-03 改造） | 无投放控制 UI；导入分析/策略草案 + "人工建议"标签，不出现"已投放" |
 
