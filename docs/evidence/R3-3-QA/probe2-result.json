@@ -1,0 +1,32 @@
+{
+  "newbie_discovery": {
+    "label": "newbie /app/market/discovery",
+    "href": "http://127.0.0.1:5193/app/market/discovery",
+    "appHtml": "<section data-v-b3b580f6=\"\" class=\"el-container shell shell--workspace\"><aside data-v-b3b580f6=\"\" class=\"el-aside shell_",
+    "appLen": 54738,
+    "textLen": 661,
+    "hasBar": false,
+    "errs": [],
+    "httpErrors": []
+  },
+  "newbie_discovery_j0": {
+    "label": "newbie discovery?journey=j0",
+    "href": "http://127.0.0.1:5193/app/market/discovery?journey=j0",
+    "appHtml": "<section data-v-b3b580f6=\"\" class=\"el-container shell shell--workspace\"><aside data-v-b3b580f6=\"\" class=\"el-aside shell_",
+    "appLen": 55577,
+    "textLen": 757,
+    "hasBar": true,
+    "errs": [],
+    "httpErrors": []
+  },
+  "owner_discovery_j0": {
+    "label": "owner discovery?journey=j0",
+    "href": "http://127.0.0.1:5193/app/market/discovery?journey=j0",
+    "appHtml": "<section data-v-b3b580f6=\"\" class=\"el-container shell shell--workspace\"><aside data-v-b3b580f6=\"\" class=\"el-aside shell_",
+    "appLen": 55576,
+    "textLen": 756,
+    "hasBar": true,
+    "errs": [],
+    "httpErrors": []
+  }
+}

@@ -3,7 +3,7 @@
     <PageHeader :title="product.title || '商品详情'" subtitle="标准化信息 · 渠道只读 · 素材核验">
       <template #actions>
         <el-button size="small" @click="router.back()">返回</el-button>
-        <el-button v-if="canWrite()" size="small" type="success" @click="goCreateLaunch">
+        <el-button v-if="canWrite()" size="small" type="success" @click="goCreateLaunch()">
           创建上线流程
         </el-button>
         <el-button v-if="canWrite()" type="primary" size="small" :loading="stdLoading" @click="doStandardize">
@@ -450,10 +450,18 @@ function onAssetShopChange() {
   loadAssets()
 }
 
-/** J1 深链：跳上线中心创建向导，携带 product_id（与可选 shop_id），并记下回跳来源。 */
+/**
+ * J1 深链：跳上线中心创建向导，携带 product_id（与可选 shop_id），并记下回跳来源。
+ *
+ * 事件对象守卫（R3-3 真实浏览器验证发现）：模板若写成 `@click="goCreateLaunch"`
+ * 会把 PointerEvent 当 shopId 传进来，深链退化为 `shop_id=[object PointerEvent]`，
+ * 上线中心再把 `Number('[object PointerEvent]')` 解析成 NaN → 向导店铺为空、创建按钮
+ * 永久禁用（链路断在这里）。此处只接受正整数，事件对象/字符串一律忽略。
+ */
 function goCreateLaunch(shopId = null) {
+  const sid = Number.isInteger(shopId) ? shopId : null
   const link = buildLaunchDeepLink(product.value?.id, {
-    shopId,
+    shopId: sid,
     from: `/app/products/${product.value?.id}`,
   })
   router.push(link)

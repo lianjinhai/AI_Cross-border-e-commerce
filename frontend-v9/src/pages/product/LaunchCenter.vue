@@ -2,6 +2,7 @@
   <div class="page">
     <PageHeader title="上线中心" subtitle="创建上线向导 · 保存视图 · 空态分因">
       <template #actions>
+        <el-button v-if="taskReturn" size="small" @click="router.push(taskReturn)">返回待办</el-button>
         <el-button v-if="sourceReturn" size="small" @click="router.push(sourceReturn)">返回来源</el-button>
         <el-button v-if="canWrite()" type="primary" size="small" @click="openWizard">创建上线流程</el-button>
       </template>
@@ -13,7 +14,7 @@
           <el-option v-for="(meta, key) in EXECUTION_STATUS" :key="key" :label="meta.text" :value="key" />
         </el-select>
         <el-select v-model="filters.shop_id" placeholder="店铺" style="width:160px" size="small" clearable filterable @change="reload">
-          <el-option v-for="s in contextShops" :key="s.id" :label="s.shop_name || `#${s.id}`" :value="s.id" />
+          <el-option v-for="s in contextShops" :key="s.id" :label="shopLabel(s)" :value="s.id" />
         </el-select>
         <el-checkbox v-model="filters.mine" size="small" @change="reload">只看我的</el-checkbox>
         <el-checkbox v-model="filters.blocked_only" size="small" @change="reload">只看阻断</el-checkbox>
@@ -24,8 +25,14 @@
       <SectionState :state="listState" :error="error" @retry="load" :empty-hint="emptyHint">
         <el-table :data="items" v-loading="loading" size="small" @row-click="openDetail">
           <el-table-column prop="id" label="ID" width="70" />
-          <el-table-column prop="product_title" label="商品" min-width="160" show-overflow-tooltip />
-          <el-table-column prop="shop_name" label="店铺" width="140" show-overflow-tooltip />
+          <!-- R3-3 修复：列表 DTO 为嵌套 product{title}/store{name}（launch_dto.launch_list_item），
+               旧模板读平铺 product_title/shop_name → 商品/店铺列全空，用户无法辨认这一行是什么商品。 -->
+          <el-table-column label="商品" min-width="160" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.product?.title || row.product_title || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="店铺" width="140" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.store?.name || row.shop_name || '—' }}</template>
+          </el-table-column>
           <el-table-column label="进度" width="90">
             <template #default="{ row }">{{ progressText(row.progress) }}</template>
           </el-table-column>
@@ -62,7 +69,7 @@
         <el-alert v-if="!usableShops.length" type="warning" :closable="false"
           title="没有可用的销售店铺：请先到「店铺授权」完成授权" />
         <el-select v-else v-model="wizard.shopId" filterable placeholder="选择已授权销售店铺" style="width:100%">
-          <el-option v-for="s in usableShops" :key="s.id" :label="s.shop_name || `#${s.id}`" :value="s.id" />
+          <el-option v-for="s in usableShops" :key="s.id" :label="shopLabel(s)" :value="s.id" />
         </el-select>
       </div>
       <el-descriptions v-else :column="1" border size="small">
@@ -98,6 +105,7 @@ import {
   nextActionText, parseReturnTo, progressText,
 } from '../../composables/launchCenter'
 import { launchWizardStartStep } from '../../shared/productDetailView'
+import { safeReturnToTasks } from '../../shared/taskCenterView'
 
 const router = useRouter()
 const route = useRoute()
@@ -118,10 +126,22 @@ const creating = ref(false)
 
 const contextShops = computed(() => context.value?.shops || [])
 const usableShops = computed(() => contextShops.value.filter((s) => s.usable))
+/**
+ * 店铺显示名（R3-3 修复）：`GET /launch/context` 的店铺 DTO 是 `{id, name, platform, …}`
+ * （launch_dto._shop_context），旧代码读 `shop_name`（只存在于 shops 表，DTO 不复用该键）
+ * → 下拉与确认页全部退化显示 "#3"/"#4"，用户无法分辨目标店铺。此处兼容两种键名。
+ */
+const shopLabel = (s) => (s && (s.name || s.shop_name)) || (s ? `#${s.id}` : '—')
 // J1：从商品详情深链进入时，记录可安全回跳的来源（白名单校验，避免丢商品上下文）。
 const sourceReturn = computed(() => {
   const from = route.query.from
   return isSafeReturnTo(from) ? from : ''
+})
+// J2：从待办点入（return_to=/app/tasks…）时给「返回待办」出口；
+// 上线中心的落地页是「来源页」本身，缺这一环会让「待办→来源页」变成只能靠浏览器后退的死端。
+const taskReturn = computed(() => {
+  const v = route.query.return_to
+  return typeof v === 'string' && v.startsWith('/app/tasks') ? safeReturnToTasks(v) : ''
 })
 const wizardProductTitle = computed(() => {
   const p = products.value.find((x) => x.id === wizard.productId)
@@ -129,7 +149,7 @@ const wizardProductTitle = computed(() => {
 })
 const wizardShopName = computed(() => {
   const s = contextShops.value.find((x) => x.id === wizard.shopId)
-  return s ? (s.shop_name || `#${s.id}`) : '—'
+  return s ? shopLabel(s) : '—'
 })
 
 async function load() {
@@ -201,10 +221,13 @@ async function doCreate() {
   } catch (e) {
     const envelope = errorEnvelope(e)
     // 已有同商品同店铺流程：给直达入口，不重复创建。
+    // R3-3：直达既有流程时同样要带上回跳来源/筛选，否则用户从商品详情「创建上线」被去重后
+    // 会停在流程详情、再点「返回」只能靠浏览器后退（商品上下文丢失）。
     if (envelope.existing_launch_id) {
       ElMessage.warning(`该商品与店铺已存在上线流程 #${envelope.existing_launch_id}`)
-      router.push(`/app/launch/${envelope.existing_launch_id}`)
       wizardVisible.value = false
+      const returnTo = sourceReturn.value || buildReturnTo({ ...filters })
+      router.push(detailPath(envelope.existing_launch_id, returnTo))
       return
     }
     ElMessage.error(envelope.message)

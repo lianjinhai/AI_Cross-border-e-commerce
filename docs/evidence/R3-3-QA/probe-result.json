@@ -1,0 +1,461 @@
+{
+  "api": {
+    "login": {
+      "role": "owner",
+      "tenant": 2,
+      "hasToken": true
+    },
+    "overview": {
+      "status": 200,
+      "keys": [
+        "sections",
+        "data_quality",
+        "next_actions",
+        "signals",
+        "generated_at",
+        "partial",
+        "sources"
+      ],
+      "body": {
+        "sections": {
+          "metrics": {
+            "gmv": 195,
+            "orders": 6,
+            "contribution_profit": 93,
+            "net_revenue": 195,
+            "refund_rate": 0,
+            "ad_spend": 0,
+            "roi": null,
+            "metric_scope": "real_only",
+            "currency": "USD"
+          },
+          "in_progress": [
+            {
+              "id": 4,
+              "product": {
+                "id": 26,
+                "title": "瑜伽垫 · 加厚防滑",
+                "sku": "qa-r32-2",
+                "category": "家居"
+              },
+              "store": {
+                "id": 3,
+                "name": "美国站一号店",
+                "platform": "qaj2"
+              },
+              "execution_status": "FAILED",
+              "progress": {
+                "completed": 0,
+                "total": 3
+              },
+              "next_action": {
+                "action": "CANCEL",
+                "step_code": "",
+                "executable": true,
+                "reason": null,
+                "owner": {
+                  "actor": "USER",
+                  "user_id": 4,
+                  "role_hint": "运营"
+                }
+              },
+              "market": "SG"
+            },
+            {
+              "id": 3,
+              "product": {
+                "id": 25,
+                "title": "弹力带 · 家用健身",
+                "sku": "qa-r32-1",
+                "category": "家居"
+              },
+              "store": {
+                "id": 4,
+                "name": "美国站二号店",
+                "platform": "qaj2"
+              },
+              "execution_status": "READY",
+              "progress": {
+                "completed": 0,
+                "total": 3
+              },
+              "next_action": {
+                "action": "CANCEL",
+                "step_code": "",
+                "executable": true,
+                "reason": null,
+                "owner": {
+                  "actor": "USER",
+                  "user_id": 4,
+                  "role_hint": "运营"
+                }
+              },
+              "market": "SG"
+            },
+            {
+              "id": 2,
+              "product": {
+                "id": 25,
+                "title": "弹力带 · 家用健身",
+                "sku": "qa-r32-1",
+                "category": "家居"
+              },
+              "store": {
+                "id": 3,
+                "name": "美国站一号店",
+                "platform": "qaj2"
+              },
+              "execution_status": "READY",
+              "progress": {
+                "completed": 0,
+                "total": 3
+              },
+              "next_action": {
+                "action": "CANCEL",
+                "step_code": "",
+                "executable": true,
+                "reason": null,
+                "owner": {
+                  "actor": "USER",
+                  "user_id": 4,
+                  "role_hint": "运营"
+                }
+              },
+              "market": "SG"
+            }
+          ],
+          "top_today": [
+            {
+              "type": "launch",
+              "title": "待你处理的上线流程",
+              "count": 3,
+              "severity": "high",
+              "due_at": null,
+              "route": {
+                "path": "/launch",
+                "return_to": "/launch?mine=true"
+              },
+              "ref": null
+            },
+            {
+              "type": "action",
+              "title": "待审批的发布动作",
+              "count": 1,
+              "severity": "mid",
+              "due_at": null,
+              "route": {
+                "path": "/listings",
+                "return_to": null
+              },
+              "ref": null
+            },
+            {
+              "type": "alert",
+              "title": "待处理风险告警",
+              "count": 2,
+              "severity": "high",
+              "due_at": null,
+              "route": {
+                "path": "/alerts",
+                "return_to": null
+              },
+              "ref": null
+            },
+            {
+              "type": "review",
+              "title": "待人工复核的 Listing",
+              "count": 1,
+              "severity": "high",
+              "due_at": null,
+              "route": {
+                "path": "/compliance-workbench",
+                "return_to": null
+              },
+              "ref": null
+            }
+          ],
+          "need_human": {
+            "count": 2
+          },
+          "ai_done": {
+            "count": 0,
+            "items": []
+          },
+          "exceptions": {
+            "items": [
+              {
+                "id": 1,
+                "level": "high",
+                "rule_key": "stockout_risk",
+                "title": "弹力带即将断货",
+                "detail": "周需求 120 > 在手库存 60",
+                "subject_type": "product",
+                "subject_id": 25,
+                "status": "open",
+                "created_at": "2026-10-14 07:17:39"
+              },
+              {
+                "id": 2,
+                "level": "mid",
+                "rule_key": "ads_burning",
+                "title": "广告 ROI 过低",
+                "detail": "近 3 天 ROI 0.4 < 阈值 0.5",
+                "subject_type": "shop",
+                "subject_id": 3,
+                "status": "open",
+                "created_at": "2026-10-14 07:17:39"
+              }
+            ],
+            "total": 2,
+            "counts": {
+              "high": 1,
+              "mid": 1,
+              "low": 0,
+              "open": 2
+            }
+          }
+        },
+        "data_quality": {
+          "grade": "low",
+          "commercial_ready": false,
+          "freshness_hours": 97.81,
+          "real_order_count": 6
+        },
+        "next_actions": [
+          {
+            "type": "launch",
+            "title": "待你处理的上线流程",
+            "count": 3,
+            "severity": "high",
+            "due_at": null,
+            "route": {
+              "path": "/launch",
+              "return_to": "/launch?mine=true"
+            },
+            "ref": null
+          },
+          {
+            "type": "action",
+            "title": "待审批的发布动作",
+            "count": 1,
+            "severity": "mid",
+            "due_at": null,
+            "route": {
+              "path": "/listings",
+              "return_to": null
+            },
+            "ref": null
+          },
+          {
+            "type": "alert",
+            "title": "待处理风险告警",
+            "count": 2,
+            "severity": "high",
+            "due_at": null,
+            "route": {
+              "path": "/alerts",
+              "return_to": null
+            },
+            "ref": null
+          },
+          {
+            "type": "review",
+            "title": "待人工复核的 Listing",
+            "count": 1,
+            "severity": "high",
+            "due_at": null,
+            "route": {
+              "path": "/compliance-workbench",
+              "return_to": null
+            },
+            "ref": null
+          }
+        ],
+        "signals": {
+          "has_sales_shop": true,
+          "sales_shop_count": 2,
+          "has_factory": false,
+          "factory_match_count": 0,
+          "has_1688_credential": false,
+          "member_count": 4,
+          "order_count_30d": 6
+        },
+        "generated_at": "2026-10-18T09:06:06Z",
+        "partial": false,
+        "sources": {
+          "bi": "ok",
+          "launch": "ok",
+          "alert": "ok",
+          "workflow": "ok",
+          "review": "ok",
+          "todo": "ok"
+        }
+      }
+    },
+    "todo": {
+      "status": 200,
+      "keys": [
+        "items",
+        "counts",
+        "generated_at",
+        "partial",
+        "sources"
+      ],
+      "body": {
+        "items": [
+          {
+            "type": "launch",
+            "title": "待你处理的上线流程",
+            "count": 3,
+            "severity": "high",
+            "due_at": null,
+            "route": {
+              "path": "/launch",
+              "return_to": "/launch?mine=true"
+            },
+            "ref": null
+          },
+          {
+            "type": "action",
+            "title": "待审批的发布动作",
+            "count": 1,
+            "severity": "mid",
+            "due_at": null,
+            "route": {
+              "path": "/listings",
+              "return_to": null
+            },
+            "ref": null
+          },
+          {
+            "type": "alert",
+            "title": "待处理风险告警",
+            "count": 2,
+            "severity": "high",
+            "due_at": null,
+            "route": {
+              "path": "/alerts",
+              "return_to": null
+            },
+            "ref": null
+          },
+          {
+            "type": "review",
+            "title": "待人工复核的 Listing",
+            "count": 1,
+            "severity": "high",
+            "due_at": null,
+            "route": {
+              "path": "/compliance-workbench",
+              "return_to": null
+            },
+            "ref": null
+          }
+        ],
+        "counts": {
+          "launch": 3,
+          "action": 1,
+          "alert": 2,
+          "review": 1
+        },
+        "generated_at": "2026-10-18T09:06:06Z",
+        "partial": false,
+        "sources": {
+          "launch": "ok",
+          "action": "ok",
+          "alert": "ok",
+          "review": "ok"
+        }
+      }
+    },
+    "newbie": {
+      "role": "owner",
+      "tenant": 3,
+      "user": {
+        "id": 8,
+        "tenant_id": 3,
+        "username": "qa_newbie",
+        "display_name": "新手店主",
+        "role": "owner",
+        "status": "active",
+        "token_version": 0,
+        "created_at": "2026-10-14 07:17:40"
+      }
+    },
+    "newbieContext": {
+      "status": 404,
+      "body": {
+        "detail": "Not Found"
+      }
+    }
+  },
+  "pages": {
+    "newbie_home": {
+      "href": "http://127.0.0.1:5193/app",
+      "appHtmlLen": 55755,
+      "bodyText": "经营工作台\n我的生意\n经营首页\n我的待办\n我的商品\n商品库\n上线中心\n合规报告\n合规工作台\n我的订单\n订单工作台\n发货/代发/备货\n售后退款\n客户消息\n结算与对账\n我的收益\n经营总览与 BI\n真实利润\n到岸成本\n预测与数据质量\n定价与利润试算\n全部工具\nQA 新手租户\n·\n全部店铺\n待我处理\n0\n等待外部\n0\n被阻断\n0\n工作台\n/\n经营首页\nQA 新手租户\n全部店铺\n搜索页面\n所有者\nqa_newbie\n经营工作台\n今天需要你处理 · 唯一主任务优先\n新手起步\n0\n待我处理\n0\n等待外部\n0\n被阻断\n今天最值得完成的一件事\n按 时限 · 风险 · 责任 排序\n先完成「选品 → 连店 → 上线",
+      "title": "经营首页 · AI 电商ERP"
+    },
+    "newbie_j0": {
+      "href": "http://127.0.0.1:5193/app/market/discovery?journey=j0",
+      "appHtmlLen": 7,
+      "bodyText": "",
+      "hasBar": false
+    },
+    "tasks_default": {
+      "href": "http://127.0.0.1:5193/app/tasks",
+      "rows": [
+        [
+          "高\n待你处理的上线流程3\n明细未接入",
+          "—",
+          "—",
+          "跨域待办（后端为来源分组摘要，逐条明细未提供）",
+          "—",
+          "—",
+          "workbench.todo",
+          "去来源页处理"
+        ],
+        [
+          "中\n待审批的发布动作1\n明细未接入",
+          "—",
+          "—",
+          "跨域待办（后端为来源分组摘要，逐条明细未提供）",
+          "—",
+          "—",
+          "workbench.todo",
+          "去来源页处理"
+        ],
+        [
+          "高\n待处理风险告警2\n明细未接入",
+          "—",
+          "—",
+          "跨域待办（后端为来源分组摘要，逐条明细未提供）",
+          "—",
+          "—",
+          "workbench.todo",
+          "去来源页处理"
+        ],
+        [
+          "高\n待人工复核的 Listing1\n明细未接入",
+          "—",
+          "—",
+          "跨域待办（后端为来源分组摘要，逐条明细未提供）",
+          "—",
+          "—",
+          "workbench.todo",
+          "去来源页处理"
+        ]
+      ]
+    },
+    "tasks_store": {
+      "href": "http://127.0.0.1:5193/app/tasks?store=%E7%BE%8E%E5%9B%BD%E7%AB%99%E4%BA%8C%E5%8F%B7%E5%BA%97",
+      "rows": [],
+      "emptyText": "经营工作台\n我的生意\n经营首页\n我的待办\n我的商品\n商品库\n上线中心\n合规报告\n合规工作台\n我的订单\n订单工作台\n发货/代发/备货\n售后退款\n客户消息\n结算与对账\n我的收益\n经营总览与 BI\n真实利润\n到岸成本\n预测与数据质量\n定价与利润试算\n全部工具\nQA 店铺租户\n·\n全部店铺\n待我处理\n2\n等待外部\n0\n被阻断\n1\n工作台\n/\n我的待办\nQA 店铺租户\n全部店铺\n搜索页面\n所有者\nqa_owner\n我的待办\n统一任务列表 · 一条业务事项只出现一次\n全部待办（7）\n等待外部（0）\n被阻断（1）\n已完成（0）\n类型\n期限\n2\n待我处理\n0\n等待外部\n1\n被阻断\n（与顶栏、工作台同口径 · 缺失显示「—」不当 0）\n来源状态\n上线流程\n 3 条\n待审批动作\n 1 条\n风险告警\n 2 条\n人工复核\n 1 条\n后端仅来源分组摘要，逐条明细未接入 → 只能「去来源页处理」\n\n没有匹配结果\n\n当"
+    }
+  },
+  "errors": [
+    "LOG: Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "CONSOLE_warning: [ECharts] Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload.",
+    "CONSOLE_warning: [ECharts] Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload."
+  ]
+}

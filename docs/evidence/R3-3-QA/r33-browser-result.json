@@ -1,0 +1,427 @@
+{
+  "summary": {
+    "total": 22,
+    "passed": 22,
+    "failed": 0,
+    "verdict": "PASS",
+    "failedChecks": [],
+    "notes": [],
+    "checks": [
+      {
+        "name": "A0 真实表单登录成功并离开登录页",
+        "pass": true,
+        "detail": "http://127.0.0.1:5193/app"
+      },
+      {
+        "name": "A1 商品详情渲染、可写角色可见「创建上线流程」、无 [object Object]",
+        "pass": true,
+        "detail": {
+          "url": "http://127.0.0.1:5193/app/products/26",
+          "title": "瑜伽垫 · 加厚防滑"
+        }
+      },
+      {
+        "name": "A2 深链携带 product_id 与 from，且不写入 [object …] 的 shop_id",
+        "pass": true,
+        "detail": {
+          "productId": "26",
+          "shopId": null,
+          "from": "/app/products/26"
+        }
+      },
+      {
+        "name": "A3 上线中心识别来源并提供「返回来源」",
+        "pass": true,
+        "detail": true
+      },
+      {
+        "name": "A4 上线列表商品/店铺列真实有值（不再整列空白）",
+        "pass": true,
+        "detail": [
+          [
+            "5",
+            "瑜伽垫 · 加厚防滑",
+            "美国站二号店",
+            "0/3",
+            "待执行",
+            "CANCEL",
+            "你的商品已完成 0/3；待执行"
+          ],
+          [
+            "4",
+            "瑜伽垫 · 加厚防滑",
+            "美国站一号店",
+            "0/3",
+            "执行失败",
+            "CANCEL",
+            "你的商品已完成 0/3；执行失败"
+          ],
+          [
+            "3",
+            "弹力带 · 家用健身",
+            "美国站二号店",
+            "0/3",
+            "待执行",
+            "CANCEL",
+            "你的商品已完成 0/3；待执行"
+          ]
+        ]
+      },
+      {
+        "name": "A5 深链进入向导时跳过「选商品」步（当前步=选店铺）",
+        "pass": true,
+        "detail": [
+          {
+            "title": "选商品",
+            "active": false
+          },
+          {
+            "title": "选店铺",
+            "active": true
+          },
+          {
+            "title": "确认创建",
+            "active": false
+          }
+        ]
+      },
+      {
+        "name": "A6 直接给店铺选择（不再要求重选商品）",
+        "pass": true,
+        "detail": {
+          "hasProductSelect": false,
+          "hasShopSelect": true
+        }
+      },
+      {
+        "name": "A7 店铺下拉用真实店铺名（可选中「美国站二号店」）",
+        "pass": true,
+        "detail": {
+          "picked": true,
+          "options": [
+            "美国站一号店",
+            "美国站二号店"
+          ]
+        }
+      },
+      {
+        "name": "A8 确认步如实回显所选商品与店铺名",
+        "pass": true,
+        "detail": {
+          "text": "创建上线流程\n选商品\n选店铺\n3\n确认创建\n商品\t#26 瑜伽垫 · 加厚防滑\n店铺\t美国站二号店\n取消\n上一步\n创建",
+          "hasYoga": true,
+          "hasShop": true
+        }
+      },
+      {
+        "name": "A9 创建后进入上线详情且 return_to 指向商品详情",
+        "pass": true,
+        "detail": {
+          "url": "http://127.0.0.1:5193/app/launch/5?return_to=/app/products/26",
+          "returnTo": "/app/products/26",
+          "title": "上线流程 #5",
+          "btns": [
+            "返回上一步",
+            "返回",
+            "同步状态"
+          ],
+          "hasBackBtn": true
+        }
+      },
+      {
+        "name": "A10 详情页出现「返回」按钮（return_to 被白名单接受）",
+        "pass": true,
+        "detail": [
+          "返回上一步",
+          "返回",
+          "同步状态"
+        ]
+      },
+      {
+        "name": "A11 返回后真的回到商品详情（return_to 端到端生效）",
+        "pass": true,
+        "detail": {
+          "backUrl": "http://127.0.0.1:5193/app/products/26",
+          "backTitle": "瑜伽垫 · 加厚防滑"
+        }
+      },
+      {
+        "name": "B1 新手 J0 首步渲染旅程条（第 1/5 步）",
+        "pass": true,
+        "detail": "零基础经营准备 · 第 1/5 步 · 研究商品方向"
+      },
+      {
+        "name": "B2 首步有「下一步」出口（无死端）",
+        "pass": true,
+        "detail": [
+          "下一步：选择货源 →"
+        ]
+      },
+      {
+        "name": "B3 J0 五步可逐步推进且每步都有旅程条（无中断）",
+        "pass": true,
+        "detail": [
+          "零基础经营准备 · 第 1/5 步 · 研究商品方向",
+          "零基础经营准备 · 第 2/5 步 · 选择货源",
+          "零基础经营准备 · 第 3/5 步 · 查看成本/风险",
+          "零基础经营准备 · 第 4/5 步 · 准备销售渠道",
+          "零基础经营准备 · 第 5/5 步 · 建立商品销售准备",
+          "http://127.0.0.1:5193/app?journey=j0"
+        ]
+      },
+      {
+        "name": "B4 逐步推进时 journey=j0 上下文保持",
+        "pass": true,
+        "detail": {
+          "visited": 5,
+          "kept": 5
+        }
+      },
+      {
+        "name": "B5 末步有「完成准备」出口并回到工作台",
+        "pass": true,
+        "detail": {
+          "finishedTo": "http://127.0.0.1:5193/app?journey=j0"
+        }
+      },
+      {
+        "name": "C1 被阻断视图有真实明细行，店铺/商品不为「—」，无 [object Object]",
+        "pass": true,
+        "detail": [
+          [
+            "高\n瑜伽垫 · 加厚防滑 的上线流程",
+            "瑜伽垫 · 加厚防滑",
+            "美国站一号店",
+            "执行受阻",
+            "—",
+            "—",
+            "overview.in_progress",
+            "处理"
+          ]
+        ]
+      },
+      {
+        "name": "C2 处理入口带 return_to=/app/tasks?view=blocked",
+        "pass": true,
+        "detail": {
+          "url": "http://127.0.0.1:5193/app/launch/4?return_to=%2Fapp%2Ftasks%3Fview%3Dblocked",
+          "returnTo": "/app/tasks?view=blocked",
+          "btns": [
+            "返回上一步",
+            "返回待办",
+            "同步状态"
+          ],
+          "hasBackTask": true
+        }
+      },
+      {
+        "name": "C3 落点页提供「返回待办」",
+        "pass": true,
+        "detail": [
+          "返回上一步",
+          "返回待办",
+          "同步状态"
+        ]
+      },
+      {
+        "name": "C4 返回待办后筛选态完整恢复（仍是「被阻断」视图）",
+        "pass": true,
+        "detail": {
+          "url": "http://127.0.0.1:5193/app/tasks?view=blocked",
+          "rowCount": 1,
+          "activeTab": "被阻断（1）"
+        }
+      },
+      {
+        "name": "C5 明细缺失时按店铺筛选给出真实原因（不假装「没有匹配结果」）",
+        "pass": true,
+        "detail": {
+          "url": "http://127.0.0.1:5193/app/tasks?store=%E7%BE%8E%E5%9B%BD%E7%AB%99%E4%BA%8C%E5%8F%B7%E5%BA%97",
+          "hasGapAlert": true,
+          "saysPlainNoMatch": true,
+          "alertText": "当前筛选维度在真实明细接入前不可用\n\n后端仅提供来源分组摘要，未给出逐条待办的店铺，无法按店铺筛选（这不代表该店铺没有待办）"
+        }
+      }
+    ]
+  },
+  "scenarios": {
+    "j1_product_detail": {
+      "url": "http://127.0.0.1:5193/app/products/26",
+      "title": "瑜伽垫 · 加厚防滑",
+      "hasCreate": true,
+      "btns": [
+        "返回",
+        "创建上线流程",
+        "重新标准化",
+        "查看上线流程",
+        "查看上线流程",
+        "登记素材"
+      ],
+      "hasObjectObject": false
+    },
+    "j1_launch_deeplink": {
+      "url": "http://127.0.0.1:5193/app/launch?product_id=26&from=/app/products/26",
+      "productId": "26",
+      "shopId": null,
+      "from": "/app/products/26",
+      "hasReturnSourceBtn": true,
+      "rows": [
+        [
+          "5",
+          "瑜伽垫 · 加厚防滑",
+          "美国站二号店",
+          "0/3",
+          "待执行",
+          "CANCEL",
+          "你的商品已完成 0/3；待执行"
+        ],
+        [
+          "4",
+          "瑜伽垫 · 加厚防滑",
+          "美国站一号店",
+          "0/3",
+          "执行失败",
+          "CANCEL",
+          "你的商品已完成 0/3；执行失败"
+        ],
+        [
+          "3",
+          "弹力带 · 家用健身",
+          "美国站二号店",
+          "0/3",
+          "待执行",
+          "CANCEL",
+          "你的商品已完成 0/3；待执行"
+        ]
+      ]
+    },
+    "j1_wizard": {
+      "open": true,
+      "steps": [
+        {
+          "title": "选商品",
+          "active": false
+        },
+        {
+          "title": "选店铺",
+          "active": true
+        },
+        {
+          "title": "确认创建",
+          "active": false
+        }
+      ],
+      "dialogText": "创建上线流程\n选商品\n2\n选店铺\n3\n确认创建\n选择已授权销售店铺\n取消\n上一步\n下一步",
+      "hasProductSelect": false,
+      "hasShopSelect": true
+    },
+    "j1_confirm": {
+      "text": "创建上线流程\n选商品\n选店铺\n3\n确认创建\n商品\t#26 瑜伽垫 · 加厚防滑\n店铺\t美国站二号店\n取消\n上一步\n创建",
+      "hasYoga": true,
+      "hasShop": true
+    },
+    "j1_launch_detail": {
+      "url": "http://127.0.0.1:5193/app/launch/5?return_to=/app/products/26",
+      "returnTo": "/app/products/26",
+      "title": "上线流程 #5",
+      "btns": [
+        "返回上一步",
+        "返回",
+        "同步状态"
+      ],
+      "hasBackBtn": true
+    },
+    "j1_return": {
+      "backUrl": "http://127.0.0.1:5193/app/products/26",
+      "backTitle": "瑜伽垫 · 加厚防滑"
+    },
+    "j0_step1": {
+      "url": "http://127.0.0.1:5193/app/market/discovery?journey=j0",
+      "hasBar": true,
+      "title": "零基础经营准备 · 第 1/5 步 · 研究商品方向",
+      "goal": "本步目标从市场趋势 / 机会评分里挑出想做的商品，并转入商品池建立商品主档",
+      "nextText": [
+        "下一步：选择货源 →"
+      ],
+      "textLen": 757
+    },
+    "j0_chain": [
+      {
+        "url": "http://127.0.0.1:5193/app/market/discovery?journey=j0",
+        "title": "零基础经营准备 · 第 1/5 步 · 研究商品方向",
+        "productId": null,
+        "journey": "j0"
+      },
+      {
+        "url": "http://127.0.0.1:5193/app/supply/sourcing?journey=j0",
+        "title": "零基础经营准备 · 第 2/5 步 · 选择货源",
+        "productId": null,
+        "journey": "j0"
+      },
+      {
+        "url": "http://127.0.0.1:5193/app/analytics/landed-cost?journey=j0",
+        "title": "零基础经营准备 · 第 3/5 步 · 查看成本/风险",
+        "productId": null,
+        "journey": "j0"
+      },
+      {
+        "url": "http://127.0.0.1:5193/app/channels?journey=j0",
+        "title": "零基础经营准备 · 第 4/5 步 · 准备销售渠道",
+        "productId": null,
+        "journey": "j0"
+      },
+      {
+        "url": "http://127.0.0.1:5193/app/market/candidates?journey=j0",
+        "title": "零基础经营准备 · 第 5/5 步 · 建立商品销售准备",
+        "productId": null,
+        "journey": "j0"
+      },
+      {
+        "finishedTo": "http://127.0.0.1:5193/app?journey=j0"
+      }
+    ],
+    "j2_blocked": {
+      "url": "http://127.0.0.1:5193/app/tasks?view=blocked",
+      "rowCount": 1,
+      "rows": [
+        [
+          "高\n瑜伽垫 · 加厚防滑 的上线流程",
+          "瑜伽垫 · 加厚防滑",
+          "美国站一号店",
+          "执行受阻",
+          "—",
+          "—",
+          "overview.in_progress",
+          "处理"
+        ]
+      ],
+      "activeTab": "被阻断（1）",
+      "hasObjectObject": false
+    },
+    "j2_target": {
+      "openTask": {
+        "clicked": true,
+        "label": "处理"
+      },
+      "url": "http://127.0.0.1:5193/app/launch/4?return_to=%2Fapp%2Ftasks%3Fview%3Dblocked",
+      "returnTo": "/app/tasks?view=blocked",
+      "btns": [
+        "返回上一步",
+        "返回待办",
+        "同步状态"
+      ],
+      "hasBackTask": true
+    },
+    "j2_restored": {
+      "url": "http://127.0.0.1:5193/app/tasks?view=blocked",
+      "rowCount": 1,
+      "activeTab": "被阻断（1）"
+    },
+    "j2_filter_gap": {
+      "url": "http://127.0.0.1:5193/app/tasks?store=%E7%BE%8E%E5%9B%BD%E7%AB%99%E4%BA%8C%E5%8F%B7%E5%BA%97",
+      "hasGapAlert": true,
+      "saysPlainNoMatch": true,
+      "alertText": "当前筛选维度在真实明细接入前不可用\n\n后端仅提供来源分组摘要，未给出逐条待办的店铺，无法按店铺筛选（这不代表该店铺没有待办）"
+    }
+  }
+}

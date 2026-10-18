@@ -1,0 +1,81 @@
+{
+  "/app/market/discovery": {
+    "href": "http://127.0.0.1:5193/app/market/discovery?journey=j0",
+    "appLen": 55577,
+    "textLen": 757,
+    "title": "商品发现",
+    "bar": "零基础经营准备 · 第 1/5 步 · 研究商品方向",
+    "btns": [
+      "下一步：选择货源 →"
+    ],
+    "bodyHead": "经营工作台\n我的生意\n经营首页\n我的待办\n我的商品\n商品库\n上线中心\n合规报告\n合规工作台\n我的订单\n订单工作台\n发货/代发/备货\n售后退款\n客户消息\n结算与对账\n我的收益\n经营总览与 BI\n真实利润\n到岸成本\n预测与数据质量\n定价与利润试",
+    "errs": [],
+    "afterNext": "下一步：选择货源 →",
+    "afterNextHref": "http://127.0.0.1:5193/app/supply/sourcing?journey=j0",
+    "afterNextBar": "零基础经营准备 · 第 2/5 步 · 选择货源"
+  },
+  "/app/supply/sourcing": {
+    "href": "http://127.0.0.1:5193/app/supply/sourcing?journey=j0",
+    "appLen": 48893,
+    "textLen": 569,
+    "title": "货源发现",
+    "bar": "零基础经营准备 · 第 2/5 步 · 选择货源",
+    "btns": [
+      "← 返回：研究商品方向",
+      "下一步：查看成本/风险 →"
+    ],
+    "bodyHead": "经营工作台\n我的生意\n经营首页\n我的待办\n我的商品\n商品库\n上线中心\n合规报告\n合规工作台\n我的订单\n订单工作台\n发货/代发/备货\n售后退款\n客户消息\n结算与对账\n我的收益\n经营总览与 BI\n真实利润\n到岸成本\n预测与数据质量\n定价与利润试",
+    "errs": [],
+    "afterNext": "下一步：查看成本/风险 →",
+    "afterNextHref": "http://127.0.0.1:5193/app/analytics/landed-cost?journey=j0",
+    "afterNextBar": "零基础经营准备 · 第 3/5 步 · 查看成本/风险"
+  },
+  "/app/analytics/landed-cost": {
+    "href": "http://127.0.0.1:5193/app/analytics/landed-cost?journey=j0",
+    "appLen": 58360,
+    "textLen": 1009,
+    "title": "到岸成本配置",
+    "bar": "零基础经营准备 · 第 3/5 步 · 查看成本/风险",
+    "btns": [
+      "← 返回：选择货源",
+      "下一步：准备销售渠道 →"
+    ],
+    "bodyHead": "经营工作台\n我的生意\n经营首页\n我的待办\n我的商品\n商品库\n上线中心\n合规报告\n合规工作台\n我的订单\n订单工作台\n发货/代发/备货\n售后退款\n客户消息\n结算与对账\n我的收益\n经营总览与 BI\n真实利润\n到岸成本\n预测与数据质量\n定价与利润试",
+    "errs": [],
+    "afterNext": "下一步：准备销售渠道 →",
+    "afterNextHref": "http://127.0.0.1:5193/app/channels?journey=j0",
+    "afterNextBar": "零基础经营准备 · 第 4/5 步 · 准备销售渠道"
+  },
+  "/app/channels": {
+    "href": "http://127.0.0.1:5193/app/channels?journey=j0",
+    "appLen": 56812,
+    "textLen": 1294,
+    "title": "渠道推荐",
+    "bar": "零基础经营准备 · 第 4/5 步 · 准备销售渠道",
+    "btns": [
+      "← 返回：查看成本/风险",
+      "下一步：建立商品销售准备 →"
+    ],
+    "bodyHead": "经营工作台\n我的生意\n经营首页\n我的待办\n我的商品\n商品库\n上线中心\n合规报告\n合规工作台\n我的订单\n订单工作台\n发货/代发/备货\n售后退款\n客户消息\n结算与对账\n我的收益\n经营总览与 BI\n真实利润\n到岸成本\n预测与数据质量\n定价与利润试",
+    "errs": [],
+    "afterNext": "下一步：建立商品销售准备 →",
+    "afterNextHref": "http://127.0.0.1:5193/app/channels?journey=j0",
+    "afterNextBar": "零基础经营准备 · 第 4/5 步 · 准备销售渠道"
+  },
+  "/app/market/candidates": {
+    "href": "http://127.0.0.1:5193/app/market/candidates?journey=j0",
+    "appLen": 44127,
+    "textLen": 723,
+    "title": "商品候选池",
+    "bar": "零基础经营准备 · 第 5/5 步 · 建立商品销售准备",
+    "btns": [
+      "← 返回：准备销售渠道",
+      "完成准备，回到工作台"
+    ],
+    "bodyHead": "经营工作台\n我的生意\n经营首页\n我的待办\n我的商品\n商品库\n上线中心\n合规报告\n合规工作台\n我的订单\n订单工作台\n发货/代发/备货\n售后退款\n客户消息\n结算与对账\n我的收益\n经营总览与 BI\n真实利润\n到岸成本\n预测与数据质量\n定价与利润试",
+    "errs": [],
+    "afterNext": "完成准备，回到工作台",
+    "afterNextHref": "http://127.0.0.1:5193/app?journey=j0",
+    "afterNextBar": ""
+  }
+}

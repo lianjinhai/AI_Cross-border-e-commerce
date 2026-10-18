@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  TASK_VIEWS, buildTaskHref, dedupeKey, dedupeTasks, filterTasks, filtersFromQuery, normalizeTasks,
+  TASK_VIEWS, buildTaskHref, dedupeKey, dedupeTasks, filterGapNote, filterTasks, filtersFromQuery, normalizeTasks,
   queryFromFilters, safeReturnToTasks, sourceStatusRows, viewCounts,
 } from '../src/shared/taskCenterView'
 import { UNKNOWN } from '../src/shared/workspaceHomeView'
@@ -225,5 +225,28 @@ describe('safeReturnToTasks（J2 回跳安全校验）', () => {
     expect(safeReturnToTasks('/app/launch/4')).toBe('/app/tasks')
     expect(safeReturnToTasks('/app/tasks/../x')).toBe('/app/tasks')
     expect(safeReturnToTasks('//evil.com', '/app/tasks?view=todo')).toBe('/app/tasks?view=todo')
+  })
+})
+
+describe('filterGapNote（R3-3 诚实降级：明细未接入时的筛选说明）', () => {
+  const { tasks } = normalizeTasks({ todo: SAMPLE_TODO, overview: SAMPLE_OVERVIEW })
+
+  it('按店铺筛选但摘要行无 store 明细 → 明确说「无法筛选」而非「没有匹配」', () => {
+    const note = filterGapNote(tasks, { view: 'todo', store: '美国站' })
+    expect(note).toContain('无法按店铺筛选')
+    expect(note).toContain('不代表该店铺没有待办')
+  })
+
+  it('按商品筛选但摘要行无 object 明细 → 同样给出原因', () => {
+    expect(filterGapNote(tasks, { view: 'todo', product: '弹力带' })).toContain('无法按商品筛选')
+  })
+
+  it('有真实明细的视图（被阻断/in_progress 行带 store）→ 不误报缺口', () => {
+    expect(filterGapNote(tasks, { view: 'blocked', store: '美国站' })).toBe('')
+  })
+
+  it('未使用店铺/商品筛选 → 不提示；空列表 → 不提示', () => {
+    expect(filterGapNote(tasks, { view: 'todo' })).toBe('')
+    expect(filterGapNote([], { view: 'todo', store: '美国站' })).toBe('')
   })
 })

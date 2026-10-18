@@ -1,0 +1,27 @@
+{
+  "before": {
+    "href": "http://127.0.0.1:5193/app/channels?journey=j0",
+    "barCount": 1,
+    "btnCount": 2,
+    "btnText": "下一步：建立商品销售准备 →",
+    "btnDisabled": false,
+    "btnClass": "el-button el-button--primary el-button--small",
+    "hasVueApp": true
+  },
+  "routerPush": {
+    "from": "/app/channels?journey=j0",
+    "to": "http://127.0.0.1:5193/app/market/candidates?journey=j0",
+    "route": "/app/market/candidates?journey=j0"
+  },
+  "domClick": {
+    "href": "http://127.0.0.1:5193/app/market/candidates?journey=j0",
+    "pushStateCalls": [
+      "http://127.0.0.1:5193/app/market/candidates?journey=j0"
+    ],
+    "barTitle": "零基础经营准备 · 第 5/5 步 · 建立商品销售准备"
+  },
+  "overlay": {
+    "topEl": "el-card__body",
+    "insideBar": true
+  }
+}

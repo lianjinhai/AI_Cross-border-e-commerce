@@ -46,6 +46,9 @@
 
     <PartialBanner v-if="unavailable.length" class="mb16" :missing="unavailable" />
     <ErrorState v-if="error" class="mb16" :message="error" @retry="fetchAll" />
+    <!-- 筛选维度不可用（R3-3）：明细缺失时按店铺/商品筛选必然 0 行，必须说明原因，不装作「没有匹配」 -->
+    <el-alert v-if="filterGap" class="mb16" type="warning" :closable="false" show-icon
+      title="当前筛选维度在真实明细接入前不可用" :description="filterGap" />
 
     <!-- 来源状态三态：加载失败 / 未接入 / 0 条 / 正常（后端仅来源摘要，逐条明细未接入） -->
     <div v-if="activeCode !== 'ERROR' && !loading" class="source-strip" data-testid="todo-source-status">
@@ -127,7 +130,7 @@ import PartialBanner from '../../features/home/PartialDataBanner.vue'
 import { fetchOverview, fetchTodo } from '../../api/domains/workbench'
 import { deriveWorkbenchCounts } from '../../shared/workbenchContext'
 import {
-  TASK_VIEWS, buildTaskHref, filterTasks, filtersFromQuery, normalizeTasks, queryFromFilters, sourceStatusRows, viewCounts,
+  TASK_VIEWS, buildTaskHref, filterGapNote, filterTasks, filtersFromQuery, normalizeTasks, queryFromFilters, sourceStatusRows, viewCounts,
 } from '../../shared/taskCenterView'
 
 const route = useRoute()
@@ -144,6 +147,8 @@ const filters = computed(() => filtersFromQuery(route.query))
 const normalized = computed(() => normalizeTasks({ todo: todo.value, overview: overview.value }))
 const unavailable = computed(() => normalized.value.unavailable)
 const visibleTasks = computed(() => filterTasks(normalized.value.tasks, filters.value))
+/** 商铺/商品筛选是否因「逐条明细未接入」而不可用（诚实降级，不把 0 行说成没有待办）。 */
+const filterGap = computed(() => filterGapNote(normalized.value.tasks, filters.value))
 /**
  * 计数口径（R3-2B 语义统一）：等待外部 / 被阻断 直接复用**与顶栏、工作台同一**的
  * `deriveWorkbenchCounts`（值可为 null → 渲染「—」）；「全部待办」/「已完成」按列表

@@ -258,6 +258,28 @@ describe('J1 buildLaunchDeepLink — 商品→上线向导深链携带上下文'
       path: '/app/launch', query: { product_id: '7' },
     })
   })
+
+  // 回归证明（R3-3 真实浏览器发现）：`@click="goCreateLaunch"`（漏括号）会把 PointerEvent
+  // 当 shopId 传入，旧实现 String(event) → `shop_id=[object PointerEvent]` → 上线中心
+  // Number() 得 NaN → 店铺为空、创建按钮永久禁用。修复后必须丢弃任何非 id 值。
+  it('丢弃事件对象等非 id 值，绝不把 [object …] 写进深链', () => {
+    const pointerEvent = { isTrusted: true, type: 'click', target: { id: 3 } }
+    expect(buildLaunchDeepLink(7, { shopId: pointerEvent, from: '/app/products/7' })).toEqual({
+      path: '/app/launch', query: { product_id: '7', from: '/app/products/7' },
+    })
+    expect(buildLaunchDeepLink(pointerEvent, { shopId: pointerEvent })).toEqual({
+      path: '/app/launch', query: {},
+    })
+    expect(buildLaunchDeepLink(7, { shopId: 'abc' }).query).toEqual({ product_id: '7' })
+    expect(buildLaunchDeepLink(7, { shopId: 0 }).query).toEqual({ product_id: '7' })
+    expect(buildLaunchDeepLink(7, { shopId: 3.5 }).query).toEqual({ product_id: '7' })
+  })
+
+  it('数字字符串 id 正常归一为数字（路由 query 场景）', () => {
+    expect(buildLaunchDeepLink('7', { shopId: '11' })).toEqual({
+      path: '/app/launch', query: { product_id: '7', shop_id: '11' },
+    })
+  })
 })
 
 describe('J1 launchWizardStartStep — 深链跳过「选商品」步', () => {
@@ -269,5 +291,10 @@ describe('J1 launchWizardStartStep — 深链跳过「选商品」步', () => {
   it('未携带商品时从选商品步开始（正常从上线中心进）', () => {
     expect(launchWizardStartStep(null)).toBe(0)
     expect(launchWizardStartStep('')).toBe(0)
+  })
+
+  it('传进来的是事件对象时退回「选商品」步（不因 [object Object] 误跳过）', () => {
+    expect(launchWizardStartStep({ isTrusted: true })).toBe(0)
+    expect(launchWizardStartStep('abc')).toBe(0)
   })
 })

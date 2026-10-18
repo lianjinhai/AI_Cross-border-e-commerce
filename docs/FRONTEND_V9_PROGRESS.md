@@ -38,6 +38,7 @@
 | R3-3 J2 待办闭环与诚实降级 | ✅ 完成（2026-10-15）：来源状态三态条（加载失败/未接入/0条/正常）、待办摘要行显式「明细未接入 → 去来源页处理」、4 个落点页补「返回待办」、返回后重拉刷新计数且保留 query 筛选 | TaskCenter/taskCenterView + Approvals/RiskAlerts/Listings/LaunchDetail（+6 测试） | e2cc003, 4490f95 |
 | R3-3 共享回跳白名单修复 | ✅ 完成（2026-10-15，**lead 亲修根因**）：`RETURN_WHITELIST` 纳入 `/app` —— 此前 `/app/*` 恒 false，站内 `return_to` 被静默丢弃（J1 商品回跳、PageHeader 均失效）；站外/协议相对/穿越仍拦截 | navigationReturn + navigation-return.test.js（+1 测试） | a1ee90b |
 | R3-3 J0 可信度标签对齐 | ✅ 完成（2026-10-15，**lead 亲修**）：`credibilityLabel` 改为复用 `dataLabels.tagInfo` 单一事实源；补 `AI_ESTIMATED`（模型估算）/`CONTRACT_TEST`，修复「模型估算无法标注」 | journeyJ0View + journey-j0-view.test.js | a31bd1c |
+| R3-3 独立验证（真实浏览器） | ✅ **判定 PASS**（2026-10-18）：隔离基座（qa_r33.db + :8011 + :5193，`--host 127.0.0.1`、清代理）跑 J1/J0/J2 三链路 **22/22 通过**。**查出并修复 5 个单测抓不到的缺陷**：① `@click="goCreateLaunch"` 把 PointerEvent 当 shopId → `shop_id=[object PointerEvent]`、创建按钮永久禁用；② 上线中心列表读平铺 `product_title/shop_name`（DTO 是嵌套对象）→ 商品/店铺整列空白；③ 店铺名读 `shop_name`（DTO 字段是 `name`）→ 下拉显示 `#3/#4`；④ 去重分支丢 `return_to`；⑤ 明细缺失时按店铺筛选只说「没有匹配结果」→ 改显式说明无法筛选。另给上线中心补「返回待办」。回归证明：还原旧实现 2 项 FAIL → 恢复全绿 | ProductDetail/LaunchCenter/TaskCenter + productDetailView/taskCenterView + 2 测试文件；证据 `docs/evidence/R3-3-QA/VERDICT.md` | 见 §5 记录 |
 
 ## §2 UX-B 交付事实（commit 1dd1526）
 
@@ -68,8 +69,9 @@
 
 | 指标 | 基线 | 来源 |
 |---|---|---|
-| frontend-v9 npm test | 552 用例 / 46 文件全绿（R3-3 后；UX-B 时为 186/14） | R3-3（lead 实测；`vite build` 同时通过） |
-| frontend-v9 npm run build | 成功（R3-3 后实测 27.86s，含 J0/J1/J2 全部改动） | R3-3（lead 实测） |
+| frontend-v9 npm test | 559 用例 / 46 文件全绿（R3-3 独立验证后；UX-B 时为 186/14） | 2026-10-18 lead 实测；`vite build` 同时通过（9.66s） |
+| frontend-v9 npm run build | 成功（2026-10-18 实测 9.66s，含 R3-3 独立验证修复） | 2026-10-18 lead 实测 |
+| R3-3 真实浏览器验收 | 22/22 通过（隔离基座 qa_r33.db + :8011 + :5193） | `docs/evidence/R3-3-QA/VERDICT.md` |
 | 旧 frontend npm test | 77（docs/baseline.json） | 不回归红线 |
 | backend pytest | 646（docs/baseline.json） | 不回归红线 |
 | docs 门禁 | total=0 | 每次提交前 |
@@ -86,7 +88,8 @@
 - 2026-10-13：UX-A 冻结（f690fea + 契约 aed39e8）；UX-B 完成并过 QA（1dd1526 + 2128b60）；契约 P2 修订（e18bd58）；UX-C/D 并行交付（7dd4f69 + c142577）；路由合并（2e0ecd8）；契约回写七处真实端点偏离（dd7c055）；UX-E 双线交付（3c8c655 + 9f4eb68 + eda8729，代客 token 还原根治）；UX-F 终验完成（ACCEPTANCE v2，0c2b597，判定 PASS 可切换）。
 - 2026-10-14：蓝图 R1 全站补齐（dac556a，83 文件，417 测试 + build）。**运行入口专项核查**：查实「用户看不到 V9 变化」根因 = `config.py` 写死 `frontend/dist`、`Dockerfile` 只构建旧前端，V9 构建产物从未被任何运行入口部署。已加 `ERP_FRONTEND_DIST` 可切换（默认仍旧，可回退）+ `/api/build-info` + `VITE_API_PROXY_TARGET`，起 8001(V9 静态)/5174(V9 dev) 独立验收入口。产出 `FRONTEND_V9_RUNTIME_VERIFICATION.md` 与 `FRONTEND_V9_VISUAL_ACCEPTANCE.md`。
 - 2026-10-14（R3-2 收口）：R3-2A `0286598` / R3-2B `1496927` / 修复 `3380e1e` 完成。**QA 第 2 轮判定 PASS**：修复 Round2 验证脚本三处缺陷后（代理劫持 127.0.0.1 致 502；Vite `--host localhost` 仅绑 IPv6 致就绪探针失败；驱动标签 `受阻` 未命中 + 在空视图点「处理」），真实浏览器补齐全量 12 类情形与 10 项核验证据，结论见 `docs/evidence/R3-2-QA/ROUND2_CONCLUSION.md`；后端依赖缺口 G1–G5 只登记不改（`BACKEND_DEPENDENCY_GAPS.md`）。
-- 2026-10-15（R3-3 三路径交付）：三条经营路径**并行交付**，均严格限定文件归属、未触碰 workbench WIP 与共享路由/AppShell/权限：**J0** `b2914c8`（零基础 5 步链路 + 上下文透传，无内部术语）、**J1** `dbc3127`（商品→上线断点 B1–B5 + WAITING_EXTERNAL 诚实标注）、**J2** `e2cc003`+`4490f95`（待办来源三态条 + 明细未接入诚实降级 + 返回待办闭环）。Lead 亲修两处**根因级**问题：`a1ee90b` 共享回跳白名单纳入 `/app`（此前 `/app/*` return_to 被静默丢弃，J1 商品回跳与 PageHeader 均失效）、`a31bd1c` J0 可信度标签复用 `dataLabels` 单一事实源（补 AI_ESTIMATED/CONTRACT_TEST，修复「模型估算」无法标注）。**实测**：`vite build` 通过、552 用例 / 46 文件全绿。**待办**：R3-3 尚需独立验证（含真实浏览器）后方可给阶段判定；J0 执行者因 429 限流中断（其提交已在限流前完成）。
+- 2026-10-18（R3-3 独立验证 → 判定 PASS）：用隔离基座（`qa_r33.db` 每轮由基线还原、后端 `:8011`、dev `:5193`，`--host 127.0.0.1` + 清代理）跑真实 Chrome CDP，三链路 **22/22 通过**，结论与缺口见 `docs/evidence/R3-3-QA/VERDICT.md`。**这一步不是走过场**：单测与 build 全绿的状态下仍查出 5 个用户可见缺陷——① 商品详情「创建上线流程」漏括号把 PointerEvent 当 shopId，深链变成 `shop_id=[object PointerEvent]`、向导创建按钮永久禁用；② 上线中心列表读平铺 `product_title/shop_name` 而 DTO 是嵌套 `product/store` 对象，商品与店铺整列空白；③ 店铺名读 `shop_name` 而 `/launch/context` 字段是 `name`，下拉显示 `#3/#4`；④ 去重分支（该商品+店铺已有流程）直达既有流程时丢 `return_to`；⑤ 明细缺失时按店铺筛选只显示「没有匹配结果」。均已修复，并给出红→绿证明（还原旧实现 2 项 FAIL）。另为上线中心补「返回待办」，补齐 J2「待办→来源页→返回」最后一环。**剩余缺口如实登记**：READY（进行中）流程在待办中心无视图可见（`view='active'` 不在 `TASK_VIEWS`，但计入顶栏）、「下一动作」渲染裸枚举 `CANCEL`、`LaunchDetail` 双白名单冗余。基线更新：559 用例 / 46 文件，`vite build` 9.66s，文档门禁 `total=0`。
+- 2026-10-15（R3-3 三路径交付）：三条经营路径**并行交付**，均严格限定文件归属、未触碰 workbench WIP 与共享路由/AppShell/权限：**J0** `b2914c8`（零基础 5 步链路 + 上下文透传，无内部术语）、**J1** `dbc3127`（商品→上线断点 B1–B5 + WAITING_EXTERNAL 诚实标注）、**J2** `e2cc003`+`4490f95`（待办来源三态条 + 明细未接入诚实降级 + 返回待办闭环）。Lead 亲修两处**根因级**问题：`a1ee90b` 共享回跳白名单纳入 `/app`（此前 `/app/*` return_to 被静默丢弃，J1 商品回跳与 PageHeader 均失效）、`a31bd1c` J0 可信度标签复用 `dataLabels` 单一事实源（补 AI_ESTIMATED/CONTRACT_TEST，修复「模型估算」无法标注）。**实测**：`vite build` 通过、552 用例 / 46 文件全绿。**后续**：独立验证已于 2026-10-18 完成并判定 PASS（见上一条与 `docs/evidence/R3-3-QA/VERDICT.md`）；J0 执行者因 429 限流中断（其提交已在限流前完成）。
 
 ## §7 运行入口与正式接管（2026-10-14 核查）
 

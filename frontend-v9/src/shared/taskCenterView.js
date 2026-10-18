@@ -241,6 +241,30 @@ function filterText(task, field) {
   return displayName(task?.object ?? task?.productRaw, 'product')
 }
 
+/**
+ * 筛选维度不可用提示（R3-3 诚实降级，对应后端缺口 G3）：
+ *
+ * `GET /workbench/todo` 只给「来源分组摘要」，逐条待办的 store/object 恒为 UNKNOWN('—')，
+ * 此时按店铺/商品筛选必然 0 行。若只渲染「没有匹配结果」，用户会误读成
+ * 「本店真的没有待办」——必须显式说明是**明细未提供导致无法筛选**。
+ *
+ * @param {Array} tasks normalizeTasks() 产出的统一任务项（全量，未过滤）
+ * @param {object} filters 当前筛选（store/product/view）
+ * @returns {string} 空串 = 该维度可正常筛选；非空 = 不可筛选的真实原因
+ */
+export function filterGapNote(tasks = [], filters = {}) {
+  const list = (Array.isArray(tasks) ? tasks : []).filter((t) => (filters.view || 'todo') === t?.view)
+  if (!list.length) return ''
+  const allUnknown = (key) => list.every((t) => (t?.[key] ?? UNKNOWN) === UNKNOWN)
+  if (filters.store && allUnknown('store')) {
+    return '后端仅提供来源分组摘要，未给出逐条待办的店铺，无法按店铺筛选（这不代表该店铺没有待办）'
+  }
+  if (filters.product && allUnknown('object')) {
+    return '后端仅提供来源分组摘要，未给出逐条待办的商品，无法按商品筛选（这不代表该商品没有待办）'
+  }
+  return ''
+}
+
 /** 按筛选过滤（product/store/type/due/view）。 */
 export function filterTasks(tasks = [], filters = {}) {
   const list = Array.isArray(tasks) ? tasks : []

@@ -207,15 +207,34 @@ export function verifyErrorKind(error, fallback = '核验提交失败') {
 }
 
 /**
+ * 深链 id 归一：只接受正整数或纯数字字符串。
+ *
+ * 真实浏览器验证发现的根因守卫：`@click="goCreateLaunch"`（漏括号）会把 PointerEvent
+ * 传成 shopId，旧实现 `String(shopId)` 直接产出 `shop_id=[object PointerEvent]`，
+ * 上线中心 `Number()` 得 NaN → 向导店铺为空、创建按钮永久禁用。事件对象必须在这里被丢掉。
+ */
+function toPositiveInt(value) {
+  if (typeof value === 'number') return Number.isInteger(value) && value > 0 ? value : null
+  if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+    const n = Number(value.trim())
+    return n > 0 ? n : null
+  }
+  return null
+}
+
+/**
  * J1 深链：从商品详情跳到「上线中心」创建向导，携带商品/目标店铺上下文，避免重新搜索。
  * 仅组装 path + query，不触碰路由实例（组件负责 push）；字段只带后端 LaunchCreateIn
  * 认的 product_id / shop_id，外加 `from` 作为回跳来源（白名单由调用方 isSafeReturnTo 校验）。
+ * 非 id 值（事件对象 / 带单位的字符串 / NaN）一律丢弃，绝不把 `[object …]` 写进 URL。
  * @returns {{path:string, query:object}}
  */
 export function buildLaunchDeepLink(productId, { shopId = null, from = '' } = {}) {
   const query = {}
-  if (productId != null && productId !== '') query.product_id = String(productId)
-  if (shopId != null && shopId !== '') query.shop_id = String(shopId)
+  const pid = toPositiveInt(productId)
+  const sid = toPositiveInt(shopId)
+  if (pid != null) query.product_id = String(pid)
+  if (sid != null) query.shop_id = String(sid)
   if (from) query.from = String(from)
   return { path: '/app/launch', query }
 }
@@ -225,5 +244,5 @@ export function buildLaunchDeepLink(productId, { shopId = null, from = '' } = {}
  * @returns {0|1} 0=从未带商品（正常从上线中心进入）；1=已带商品（从商品详情深链进入）。
  */
 export function launchWizardStartStep(productId) {
-  return (productId != null && productId !== '') ? 1 : 0
+  return toPositiveInt(productId) != null ? 1 : 0
 }
