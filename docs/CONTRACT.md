@@ -204,7 +204,24 @@ def gen_order(db, tenant_id: int, platform: str | None = None) -> Order         
   - **口径提示**：四张配置表的 `GET` 会附带未被覆盖的代码兜底参考行（`id=null`、`source="default"`）；`PUT/DELETE` 只能作用于本租户行，平台内置行与参考行一律 404。
 - **ads.py** `/ads`：`GET /campaigns`（roi_report 结果）；`POST /campaigns`（草稿/表单创建，可含 id 列表批量）；`POST /campaigns/{id}/optimize` 返回预算建议、`action_id` 与 `PENDING_APPROVAL`，预算不立即改变；`POST /suggest {"product_id","platform"}`。
 - **actions.py** `/actions`（D47～D51）：`GET ""?status=&action_type=` 查当前 Workspace 的指定类型 Action，缺省仍为 ADJUST_AD_BUDGET；另支持 PUBLISH_LISTING、CREATE_LISTING_DRAFT、UPDATE_LISTING_CONTENT、CREATE_AD_CAMPAIGN_DRAFT、UPDATE_PRODUCT_CONTENT，权限按服务端目录。`POST /{id}/approve|reject {"note"}` 仅人工审批动作可用；`POST /{id}/execute` 对已批准 Action 幂等执行，复核当前执行人及原请求者的真实权限、租户状态和服务授权。FAILED/REJECTED 不允许重试同一 Action；结果/失败现场保存在 outcome。Listings 页面提供独立发布审批队列。
-- **orders.py** `/orders`：`GET ""?platform&status&keyword&page&page_size`；`POST /sync {"platform","count":5}`（gen_order×n，require_write）；`PUT /{id}/status {"status"}`（校验合法值）。
+- **orders.py** `/orders`：`GET ""?platform&status&keyword&shop_id&page&page_size`（**shop_id 范围端到端鉴权见下方 D63 卡片**）；`POST /sync {"platform","count":5}`（gen_order×n，require_write）；`PUT /{id}/status {"status"}`（校验合法值）。
+  - **D63 订单列表 shop_id 范围鉴权卡（GET /orders）**
+    - 参数：`shop_id: int | None`。不传 → 返回本租户全部订单（B1 默认不变），响应 `scope = {"shop_id": null, "shop_name": null}` 表示「全店」。
+    - 归属规则：传入后先用 `services.shop_scope.active_shop(db, user.tenant_id, shop_id)` 解析；该函数对「不存在 / 跨租户(tenant_id 不符) / 已归档(archived_at 非空)」一律返回 None。
+    - 状态码：`None` → **404** `店铺不存在或无访问权限`（跨租户、已归档、id 不存在一视同仁，避免泄露目标是否存在）；解析成功但 `role != "sales"`（货源 source 店铺）→ **400** `「{店名}」是 {平台} 货源店铺（source）：货源店铺(source)不能同步销售订单，请选择销售店铺（sales）`（与 CSV 导入路径文案一致）。
+    - 通过后仅对 `Order.shop_id == shop_id` 过滤（叠加既有 `tenant_id` 过滤），并回显 `scope = {"shop_id", "shop_name"}` 供前端显示真实范围；既有 `items/total/page/page_size` 键不变。
+    - 反模式禁止（D63）：绝不允许「静默忽略 shop_id」或「返回 200 + 空集冒充已筛选」；跨租户一律 404 而非 200+空 / 200+他租户行。
+    - 隔离证明：`tests/test_orders_shop_scope.py` 覆盖——同租户双店互相隔离、跨租户 404、货源店 400、无 shop_id 默认全量、富化字段逐行正确、A→B→A 切换无残留泄漏。
+- **business_profiles.py** `/business-profile`（D63 经营画像，V9.1 原型 02 服务端持久化）：
+  - **D63 经营画像契约卡（GET/PUT /business-profile）**
+    - 数据模型：`business_profiles` 表（迁移 `20261018_29`，含真实 downgrade）。一张表两类行：`user_id` 非空 = 个人偏好行（direction / budget_amount / budget_currency），按 (tenant_id, workspace_id, user_id) 唯一；`user_id` 为空 = 空间共享行（target_market / risk），由部分唯一索引 `ix_business_profiles_shared`（WHERE user_id IS NULL）保证 (tenant_id, workspace_id) 唯一。写共享字段复用既有 `workspace:write` 能力 key，未新造权限。
+    - 作用域：**服务端 Workspace Context 是唯一事实**（legacy 路径 workspace_id = user.tenant_id）；请求体 Schema 不含 `workspace_id`，客户端多传也会被忽略。测试证明不存在 tenant 之外的孤儿行。
+    - `GET ""` → 合并视图：`{direction, budget:{amount,currency}, target_market, risk, completed, completed_at, updated_at, sources:{direction:'USER'|null, target_market:'WORKSPACE'|null, risk:'WORKSPACE'|null}}`。缺失字段一律 `null`，绝不臆造。
+    - `PUT ""`（require_write）→ 幂等 upsert：仅写入请求体**显式提供**的字段（`model_fields_set` 区分「显式 null = 清除」与「缺省 = 保持原值」）；等价两次 PUT 命中同一行，仅刷新 `updated_at`。
+    - 校验（422 且点名字段）：`budget_amount` 有限数且 ≥0（0.0 是合法零值，与未填 null 严格区分）；`budget_currency` 3 位大写且必须落在已知币种集 = FX 子系统（exchange_rates 本租户 + 平台内置 + Setting('fx') 键）**恒定并入系统基线 {USD, EUR, CNY}**（订单默认 USD、定价 CNY 计价，本位币不因环境未配汇率被拒），基线外未知币种拒绝不静默强制；`risk` ∈ 低/中/高；`target_market` ≤64 字符。
+    - `completed` 为**服务端推导**：direction / budget_amount / budget_currency / target_market / risk 全部非空才为 true（判定集中在 `routers/business_profiles.py::is_profile_complete`），客户端声明 `completed:true` 不生效。
+    - 错误契约：只读账号（viewer）PUT → 403（require_write）；无 `workspace:write` 写共享字段 → 403；校验失败 → 422 带字段名；无 409（upsert 幂等无冲突态）。
+    - 读回证明：`tests/test_business_profile.py` 覆盖——save→GET 读回一致、重新登录（真实 /auth/login 新 token）读回一致、同租户用户 B 不可见用户 A 的个人字段、跨租户（legacy 下即跨工作区）零泄漏、客户端 workspace_id 被忽略且无孤儿行、幂等单行、三类 422 点名字段、completed 服务端推导 + 显式 null 清除、viewer 403。
 - **support.py** `/support`：`GET /conversations?status&page&page_size`（附 last message + buyer_name）；`POST /conversations {"platform","buyer_name","content",?order_id,?product_id}`（创建会话+首条 buyer 消息）；`GET /conversations/{id}`（含 messages）；`POST /conversations/{id}/reply {"content"}`（operator 回复）；`POST /conversations/{id}/auto_reply`（SupportAgent）；`POST /conversations/{id}/close`。
 - **bi.py** `/bi`：
   - `GET /dashboard -> {"gmv","orders","profit","ad_spend","roi","refund_rate","active_listings","open_conversations","sales_trend":[{date,gmv,orders}×30],"category_dist":[{category,revenue}],"platform_dist":[{platform,revenue}],"top_products":[{product_id,title,units,revenue}×5],"recent_runs":[run dict×5]}`

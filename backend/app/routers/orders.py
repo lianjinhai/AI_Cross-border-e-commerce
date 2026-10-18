@@ -53,7 +53,24 @@ def list_orders(platform: str = "", status: str = "", keyword: str = "",
     if keyword:
         like = f"%{keyword}%"
         q = q.filter(Order.external_no.like(like) | Order.buyer_name.like(like))
+    # 店铺范围必须端到端鉴权（决策 D63）：shop_id 命中前先校验归属与销售角色，
+    # 缺失/跨租户/已归档 → 404，货源(source)店铺 → 400；绝不静默忽略或返回空集。
+    scope_shop = None
     if shop_id is not None:
+        from ..services.shop_scope import active_shop
+
+        scope_shop = active_shop(db, user.tenant_id, shop_id)
+        if not scope_shop:
+            raise HTTPException(status_code=404, detail="店铺不存在或无访问权限")
+        if scope_shop.role != "sales":
+            from ..services.platform_adapters import ADAPTERS
+
+            label = (ADAPTERS[scope_shop.platform].label
+                     if scope_shop.platform in ADAPTERS else scope_shop.platform)
+            raise HTTPException(
+                status_code=400,
+                detail=(f"「{scope_shop.shop_name or label}」是 {label} 货源店铺（source）："
+                        f"货源店铺(source)不能同步销售订单，请选择销售店铺（sales）"))
         q = q.filter(Order.shop_id == shop_id)
     total = q.count()
     items = (q.order_by(Order.created_at.desc())
@@ -75,7 +92,13 @@ def list_orders(platform: str = "", status: str = "", keyword: str = "",
         d["shop_name"] = shop_map.get(o.shop_id, "")
         d["product_title"] = product_map.get(o.product_id, "")
         result.append(d)
-    return page(result, total, page_num, page_size)
+    resp = page(result, total, page_num, page_size)
+    # 真实作用域回显：客户端据此显示「当前在看哪家店」，无 shop_id 时为 None（全部）。
+    resp["scope"] = {
+        "shop_id": scope_shop.id if scope_shop else None,
+        "shop_name": scope_shop.shop_name if scope_shop else None,
+    }
+    return resp
 
 
 def _ensure_sales_platform(db: Session, tenant_id: int, platform: str) -> None:

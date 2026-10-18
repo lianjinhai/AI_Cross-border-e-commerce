@@ -28,8 +28,25 @@
       </div>
     </el-card>
 
-    <!-- 第四/三层主区：左侧四层（主任务→高优待办→阶段/摘要），右侧唯一推荐入口 -->
+    <!-- 顶部问候 + 当前目标行（原型01：一眼看到阶段与下一步） -->
+    <div class="home-hero mb16">
+      <div class="home-hero__greeting">{{ greetingWord }}</div>
+      <div class="home-hero__goal">
+        <el-tag size="small" type="primary">{{ stage.label }}</el-tag>
+        <span class="home-hero__hint">{{ stage.hint }}</span>
+      </div>
+    </div>
+
+    <!--
+      DESIGN-DIFF（master prompt）：本双栏 2:1 布局（当前任务卡 / 经营条件卡）刻意偏离
+      早期「全宽单列任务列」蓝图。取舍：零经验用户首屏只需「一件事 + 诚实经营条件」，
+      双栏把「下一步动作」与「会话内经营画像（预算/目标市场/风险偏好）」并置首屏，
+      而非把画像藏进折叠区。四层优先级语义完整保留：
+        ① 当前任务卡（唯一主任务） ② 优先处理任务（≤3 高优待办）
+        ③ 经营阶段→顶部目标行 + 阻断/摘要（左列下方） ④ AI历史+BI明细（折叠）
+    -->
     <el-row :gutter="16">
+      <!-- 左列（更宽）：第一层唯一主任务 + 第三层阻断/摘要 -->
       <el-col :xs="24" :sm="24" :md="16">
         <!-- 第一层：唯一主任务 -->
         <el-card class="mb16 main-task-card" shadow="never">
@@ -55,27 +72,9 @@
           </SectionState>
         </el-card>
 
-        <!-- 第二层：最多 3 项高优先级待办 -->
-        <el-card class="mb16" shadow="never">
-          <template #header>
-            <div class="between"><span class="card-title">还需要处理（最多 3 项）</span>
-              <el-button link type="primary" size="small" @click="go('/app/tasks')">查看全部待办</el-button></div>
-          </template>
-          <SectionState :state="todoState" @retry="fetchAll" empty-hint="没有其他高优先级待办">
-            <div v-if="highPriority.length" class="task-list">
-              <TaskCard v-for="item in highPriority" :key="item.key" :todo="item.raw" />
-            </div>
-            <EmptyState v-else reason="NO_DATA" hint="没有其他高优先级待办" />
-          </SectionState>
-        </el-card>
-
-        <!-- 第三层：经营阶段 + 阻断 + 真实经营摘要 -->
+        <!-- 第三层：经营阶段（已上移顶部目标行）+ 阻断 + 真实经营摘要 -->
         <el-card class="mb16" shadow="never">
           <template #header><span class="card-title">当前经营状况</span></template>
-          <div class="stage-line">
-            <el-tag size="small" type="primary">{{ stage.label }}</el-tag>
-            <span class="hint">{{ stage.hint }}</span>
-          </div>
           <div v-if="blockers.available && blockers.items.length" class="blocker-list">
             <el-alert v-for="(b, i) in blockers.items" :key="i" type="warning" :closable="false" show-icon
               :title="`${b.product || '商品'} · ${b.store || '店铺'}：${b.message}`" />
@@ -91,23 +90,41 @@
         </el-card>
       </el-col>
 
-      <!-- 右侧：经营阶段唯一推荐入口（画像不同入口不同） -->
+      <!-- 右列（更窄）：经营条件卡（画像服务端持久化 D63，会话层仅兜底） -->
       <el-col :xs="24" :sm="24" :md="8">
-        <el-card class="mb16" shadow="never">
-          <template #header><span class="card-title">唯一推荐入口</span></template>
-          <p class="hint">{{ entry.hint }}</p>
-          <el-button type="primary" class="block" @click="go(entry.recommended.path)">{{ entry.recommended.text }}</el-button>
-          <ol class="guide-steps">
-            <li v-for="step in entry.steps" :key="step.key">
-              <span>{{ step.text }}</span>
-              <el-button link type="primary" size="small" @click="go(step.path)">前往</el-button>
-            </li>
-          </ol>
+        <el-card class="mb16 condition-card" shadow="never">
+          <template #header><span class="card-title">经营条件</span></template>
+          <div class="condition-rows">
+            <div v-for="row in conditionRows" :key="row.key" class="condition-row" :class="{ 'condition-row--missing': row.missing }">
+              <span class="condition-row__label">{{ row.label }}</span>
+              <template v-if="row.missing">
+                <el-link type="primary" :underline="false" @click="go(row.link)">待补 · 去补充</el-link>
+              </template>
+              <span v-else class="condition-row__value">{{ row.value }}</span>
+            </div>
+          </div>
+          <p class="condition-caption" :class="{ 'condition-caption--draft': !isProfilePersisted }">
+            {{ profileCaption }}
+          </p>
         </el-card>
       </el-col>
     </el-row>
 
-    <!-- 第四层：可展开的 AI 执行历史（不与待办抢主位） -->
+    <!-- 第二层：最多 3 项高优先级待办（首屏下方，不抢主位） -->
+    <el-card class="mb16" shadow="never">
+      <template #header>
+        <div class="between"><span class="card-title">还需要处理（最多 3 项）</span>
+          <el-button link type="primary" size="small" @click="go('/app/tasks')">全部待办 →</el-button></div>
+      </template>
+      <SectionState :state="todoState" @retry="fetchAll" empty-hint="没有其他高优先级待办">
+        <div v-if="highPriority.length" class="task-list">
+          <TaskCard v-for="item in highPriority" :key="item.key" :todo="item.raw" />
+        </div>
+        <EmptyState v-else reason="NO_DATA" hint="没有其他高优先级待办" />
+      </SectionState>
+    </el-card>
+
+    <!-- 第四层：可展开的 AI 执行历史 + BI 明细（不与待办抢首屏） -->
     <el-collapse class="mb16">
       <el-collapse-item :title="`AI 执行历史（近 24 小时 · ${ai.count ?? '—'}）`">
         <SectionState :state="aiState" @retry="fetchAll" empty-hint="近 24 小时没有已完成的 AI 运行">
@@ -130,8 +147,11 @@
             <el-table-column type="index" width="50" />
             <el-table-column prop="title" label="热销商品" show-overflow-tooltip />
             <el-table-column prop="units" label="销量" width="90" />
-            <el-table-column label="销售额" width="120">
-              <template #default="{ row }">{{ row.revenue == null ? '—' : `$${Number(row.revenue).toFixed(2)}` }}</template>
+            <el-table-column label="销售额" width="150">
+              <template #default="{ row }">
+                <span>{{ revenueCell(row).display }}</span>
+                <span v-if="revenueCell(row).currencyNote" class="currency-note">（{{ revenueCell(row).currencyNote }}）</span>
+              </template>
             </el-table-column>
           </el-table>
         </template>
@@ -143,11 +163,14 @@
 
 <script setup>
 /**
- * 经营工作台（R3-2B §1 四层优先级）：
+ * 经营工作台（R3-2B §1 四层优先级，B2 对齐原型01「我的生意」）：
  *   第一层 唯一主任务 → 第二层 ≤3 高优待办 → 第三层 阶段/阻断/经营摘要 → 第四层 可展开 AI 历史 + BI 明细。
+ * B2 重排：顶部问候+目标行；双栏 2:1（当前任务卡 / 经营条件卡）；优先待办下移；AI+BI 折叠。
  * 顶部小型计数条（待我处理/等待外部/被阻断）。画像不同入口不同（确定性规则）。
  * 只读红线：本页只发 GET；partial/源失败用横幅与「—」明示，绝不把错误当空或 0。
- * 排序/计数/入口/阶段全部在 shared/workspaceHomeView.js 纯函数中，组件只消费。
+ * 经营画像（预算/目标市场/风险偏好）：服务端 GET /business-profile 为权威事实
+ * （D63），会话缓存仅作服务端不可用时的草稿兜底；保存状态文案按真实来源渲染。
+ * 排序/计数/入口/阶段/条件卡/货币渲染全部在 shared/workspaceHomeView.js 纯函数中，组件只消费。
  */
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -163,9 +186,12 @@ import { fetchOverview, fetchTodo } from '../../api/domains/workbench'
 import { fetchTrends as fetchBiTrends } from '../../api/domains/bi'
 import { isEmptySection, missingSources, sectionState } from '../../composables/workbenchTodo'
 import {
-  aiActivity, blockerSummary, businessStage, businessSummary, entryPlan, pickHighPriority, pickPrimaryTask,
+  aiActivity, blockerSummary, businessStage, businessSummary, conditionCardViewModel, entryPlan, formatBiRevenue,
+  greeting, pickHighPriority, pickPrimaryTask,
   resolveEntryProfile, taskCounters, taskLink,
 } from '../../shared/workspaceHomeView'
+import { loadSessionProfile, profileFromServer } from '../../shared/onboardingProfile'
+import { fetchBusinessProfile } from '../../api/domains/businessProfile'
 
 const router = useRouter()
 
@@ -177,6 +203,27 @@ const biDetail = ref(null)
 const trendRef = ref(null)
 const pieRef = ref(null)
 const charts = []
+const profile = ref(loadSessionProfile())
+
+/** 画像数据来源（诚实文案的唯一事实）：true=服务端已持久化；false=会话草稿。 */
+const isProfilePersisted = ref(false)
+const profileCaption = computed(() => (isProfilePersisted.value
+  ? '已保存到服务器：重新登录或换设备仍可读回'
+  : '未保存到服务器：仅在当前浏览器会话内有效，可在「新手引导」补充'))
+
+/** 画像刷新：会话缓存即时上屏 → 服务端读回覆盖（权威事实）；失败保持草稿。 */
+async function refreshProfile() {
+  profile.value = loadSessionProfile()
+  try {
+    const serverProfile = profileFromServer(await fetchBusinessProfile())
+    if (serverProfile) {
+      profile.value = serverProfile
+      isProfilePersisted.value = true
+      return
+    }
+  } catch { /* 服务端不可用：保持会话草稿，文案如实标注 */ }
+  isProfilePersisted.value = false
+}
 
 async function fetchAll() {
   loading.value = true
@@ -185,6 +232,7 @@ async function fetchAll() {
     const [ov, td] = await Promise.all([fetchOverview(), fetchTodo()])
     overview.value = ov || {}
     todo.value = td || {}
+    refreshProfile()
     if (overview.value.sources?.bi === 'ok') await loadBiDetail()
   } catch (e) {
     const detail = e?.response?.data?.detail
@@ -216,6 +264,8 @@ const stage = computed(() => businessStage(overview.value.signals, overview.valu
 const blockers = computed(() => blockerSummary(overview.value))
 const summary = computed(() => businessSummary(overview.value))
 const ai = computed(() => aiActivity(overview.value))
+const greetingWord = greeting(new Date().getHours())
+const conditionRows = computed(() => conditionCardViewModel(profile.value))
 
 /** 待办条目（附加稳定 key 与深链 return_to）。 */
 const taskEntries = computed(() => {
@@ -251,6 +301,16 @@ function severityTag(sev) {
 function go(path) {
   if (path) router.push(path)
 }
+/** BI 销售额单元格（诚实货币：币种来自 DTO 顶层 currency，缺失标「币种未知」）。 */
+function revenueCell(row) {
+  return formatBiRevenue(row?.revenue, biDetail.value?.currency)
+}
+/** 运行时读取 CSS 令牌色（ECharts 不能直接读 CSS 变量）；无样式环境回退令牌值。 */
+function tokenColor(name, fallback) {
+  if (typeof document === 'undefined' || !document.documentElement) return fallback
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return v || fallback
+}
 
 // ── BI 次级图表 ────────────────────────────────────────────────────────
 function renderTrend(rows) {
@@ -261,12 +321,12 @@ function renderTrend(rows) {
     legend: { data: ['GMV', '订单数'] },
     grid: { left: 50, right: 50, top: 40, bottom: 30 },
     xAxis: { type: 'category', data: rows.map((r) => String(r.date).slice(5)) },
-    yAxis: [{ type: 'value', name: 'GMV($)' }, { type: 'value', name: '订单' }],
+    yAxis: [{ type: 'value', name: 'GMV' }, { type: 'value', name: '订单' }],
     series: [
       { name: 'GMV', type: 'line', smooth: true, data: rows.map((r) => r.gmv), showSymbol: false,
-        areaStyle: { opacity: 0.15 }, itemStyle: { color: '#409EFF' } },
+        areaStyle: { opacity: 0.15 }, itemStyle: { color: tokenColor('--chart-series-1', '#236BBD') } },
       { name: '订单数', type: 'line', yAxisIndex: 1, smooth: true, data: rows.map((r) => r.orders),
-        showSymbol: false, itemStyle: { color: '#67C23A' } },
+        showSymbol: false, itemStyle: { color: tokenColor('--chart-series-2', '#67C23A') } },
     ],
   })
   charts.push(chart)
@@ -276,7 +336,7 @@ function renderPie(rows) {
   if (!pieRef.value) return
   const chart = echarts.init(pieRef.value)
   chart.setOption({
-    tooltip: { trigger: 'item', formatter: '{b}: ${c} ({d}%)' },
+    tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
     series: [{ type: 'pie', radius: ['38%', '68%'],
       data: rows.map((r) => ({ name: r.category, value: Math.round((r.revenue || 0) * 100) / 100 })) }],
   })
@@ -293,31 +353,60 @@ onUnmounted(() => charts.forEach((c) => c.dispose()))
 .card-title { font-size: 16px; font-weight: 600; }
 .scope { color: var(--color-text-secondary); font-size: var(--font-size-xs); }
 .hint { margin: 0 0 8px; color: var(--color-text-secondary); font-size: var(--font-size-sm); }
+
+/* 顶部问候 + 目标行 */
+.home-hero { background: var(--v91-surface); border: 1px solid var(--v91-border); border-radius: var(--radius-md); padding: 16px 20px; }
+.home-hero__greeting { font-size: var(--font-size-display); font-weight: 700; color: var(--v91-text-strong); line-height: 1.2; }
+.home-hero__goal { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.home-hero__hint { color: var(--v91-text-muted); font-size: var(--font-size-sm); }
+
 .counters { display: flex; flex-wrap: wrap; gap: 40px; }
 .counter { text-align: center; }
 .counter__num { font-size: 24px; font-weight: 600; }
 .counter__num--warn { color: var(--color-warning); }
 .counter__label { color: var(--color-text-secondary); font-size: var(--font-size-xs); margin-top: 2px; }
+
+/* 当前任务卡：高亮主任务 */
+.main-task-card { background: var(--v91-tint-blue); }
 .main-task { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
-.main-task__title { flex: 1 1 200px; min-width: 0; font-size: 16px; font-weight: 600; }
+.main-task__title { flex: 1 1 200px; min-width: 0; font-size: 16px; font-weight: 600; color: var(--v91-text-strong); }
 .main-task--empty { justify-content: space-between; }
-.task-list { display: flex; flex-direction: column; }
-.stage-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+
+/* 第三层：阻断/摘要 */
 .blocker-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
 .summary { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 8px; }
 .summary__label { color: var(--color-text-secondary); font-size: var(--font-size-xs); }
-.summary__value { font-size: 18px; font-weight: 600; }
+.summary__value { font-size: 18px; font-weight: 600; color: var(--v91-text-strong); }
 .summary__value--missing { color: var(--color-text-disabled); font-weight: 400; }
-.guide-steps { margin: 12px 0 0; padding-left: 20px; }
-.guide-steps li { margin: 4px 0; }
-.block { width: 100%; }
+
+/* 经营条件卡：会话画像（诚实非服务端） */
+.condition-card { border-color: var(--v91-border); }
+.condition-rows { display: flex; flex-direction: column; }
+.condition-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--v91-border); }
+.condition-row:last-child { border-bottom: none; }
+.condition-row__label { color: var(--v91-text-secondary); font-size: var(--font-size-sm); }
+.condition-row__value { color: var(--v91-text-strong); font-weight: 600; font-size: var(--font-size-sm); text-align: right; }
+.condition-row--missing { background: var(--v91-amber-surface); border-radius: var(--radius-sm); padding-left: 10px; padding-right: 10px; }
+.condition-caption { margin: 12px 0 0; color: var(--v91-text-muted); font-size: var(--font-size-xs); }
+/* 草稿态（未保存到服务器）用琥珀底提示；已保存态保持平静 */
+.condition-caption--draft {
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--v91-amber-surface);
+}
+
+.task-list { display: flex; flex-direction: column; }
 .chart-box { height: 280px; }
-.mb12 { margin-bottom: 12px; }
+
+.currency-note { color: var(--v91-text-muted); font-size: var(--font-size-xs); margin-left: 4px; }
+
 .mb16 { margin-bottom: 16px; }
-/* 窄屏（≤768）：卡片内元素换行，避免挤压成竖排单字；容器不横向溢出 */
+
+/* 窄屏（≤768）：卡片内元素换行，避免挤压；容器不横向溢出 */
 @media (max-width: 768px) {
   .counters { gap: 24px; }
   .summary { gap: 16px; }
+  .home-hero__greeting { font-size: var(--font-size-xl); }
   .chart-box { height: 200px; }
 }
 </style>

@@ -112,7 +112,11 @@ def test_migration_table_list_matches_model_metadata(client):
     expected -= {"users", "tenant_settings", "workspace_profiles", "ai_actions", "workflow_events", "product_assets",
                  "duty_rates", "logistics_routes", "platform_fee_schedules",
                  "destination_compliance_rules", "product_compliance_evidence",
-                 "warehouses", "inventory_snapshots"}
+                 "warehouses", "inventory_snapshots",
+                 # business_profiles 由 Revision 29（D63 经营画像）新建，同理不回改
+                 # Revision 16 清单；其 tenant_id → tenants.id 由元数据级契约
+                 # test_all_tenant_id_columns_have_foreign_key 与 test_business_profile 共同核对。
+                 "business_profiles"}
 
     assert listed == expected, (
         "迁移清单与模型层不一致——漏补：%s；多补：%s"

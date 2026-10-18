@@ -154,3 +154,14 @@
  * `--space-accent-*` 一并覆盖。禁止组件出现 `data-theme` 判断或第二套类名；
  * 主题开关实现属 UX-F 之后，当前留空占位。
  */
+
+/**
+ * 图表序列调色板（B2 批次：ECharts 不能直接读 CSS 变量，由 JS 在构建图表时经
+ * getComputedStyle(document.documentElement) 读取；fallback 同令牌值，无样式环境不偏色）。
+ * 与 V9.1 主色收敛一致：series-1 取主色 #236BBD（取代已退役的旧 #409EFF），
+ * series-2 取增长绿 #67C23A。新增块，不改动上方既有令牌。
+ */
+:root {
+  --chart-series-1: #236BBD;
+  --chart-series-2: #67C23A;
+}

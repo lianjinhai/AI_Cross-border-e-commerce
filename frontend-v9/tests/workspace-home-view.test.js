@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  UNKNOWN, aiActivity, blockerSummary, businessStage, businessSummary, displayName, entryPlan,
-  pickHighPriority, pickPrimaryTask, rankTasks, resolveEntryProfile, safeInternalPath, taskCounters,
+  UNKNOWN, aiActivity, blockerSummary, businessStage, businessSummary, conditionCardViewModel, displayName, entryPlan,
+  formatBiRevenue, greeting, pickHighPriority, pickPrimaryTask, rankTasks, resolveEntryProfile, safeInternalPath, taskCounters,
   taskLink, taskPriorityKey,
 } from '../src/shared/workspaceHomeView'
 import { deriveWorkbenchCounts } from '../src/shared/workbenchContext'
@@ -219,3 +219,69 @@ describe('displayName（bug1/bug3：后端 product/store 对象 → 人类可读
     expect(displayName({}, 'product')).toBe(UNKNOWN)
   })
 })
+
+describe('greeting（B2 顶部问候行：按本地小时分桶，纯函数）', () => {
+  it('05–11 早上好 / 12–17 下午好 / 18–04 晚上好', () => {
+    expect(greeting(5)).toBe('早上好')
+    expect(greeting(11)).toBe('早上好')
+    expect(greeting(12)).toBe('下午好')
+    expect(greeting(17)).toBe('下午好')
+    expect(greeting(18)).toBe('晚上好')
+    expect(greeting(23)).toBe('晚上好')
+    expect(greeting(0)).toBe('晚上好')
+    expect(greeting(4)).toBe('晚上好')
+  })
+
+  it('非法/越界小时 → 「你好」（不抛错）', () => {
+    expect(greeting(NaN)).toBe('你好')
+    expect(greeting(-1)).toBe('你好')
+    expect(greeting(24)).toBe('你好')
+    expect(greeting('x')).toBe('你好')
+  })
+})
+
+describe('conditionCardViewModel（B2 经营条件卡：会话画像三行，缺项待补+入口）', () => {
+  it('null 画像 → 三行全缺，值「待补」，链接 /onboarding?step=1', () => {
+    const rows = conditionCardViewModel(null)
+    expect(rows.map((r) => r.key)).toEqual(['budget', 'targetMarket', 'risk'])
+    expect(rows.every((r) => r.missing && r.value === '待补' && r.link === '/onboarding?step=1')).toBe(true)
+  })
+
+  it('部分画像 → 仅缺项标记待补并给链接，已填行显真实值且无链接', () => {
+    const rows = conditionCardViewModel({ budget: '2 万', targetMarket: '', risk: '保守' })
+    const byKey = Object.fromEntries(rows.map((r) => [r.key, r]))
+    expect(byKey.budget).toMatchObject({ value: '2 万', missing: false, link: '' })
+    expect(byKey.targetMarket).toMatchObject({ value: '待补', missing: true, link: '/onboarding?step=1' })
+    expect(byKey.risk).toMatchObject({ value: '保守', missing: false, link: '' })
+  })
+
+  it('零值/空格不误判为已填', () => {
+    const rows = conditionCardViewModel({ budget: '   ', targetMarket: null, risk: 0 })
+    // 0 是合法值（风险偏好=0 档），视为已填；空格与 null 视为缺
+    const byKey = Object.fromEntries(rows.map((r) => [r.key, r]))
+    expect(byKey.budget.missing).toBe(true)
+    expect(byKey.targetMarket.missing).toBe(true)
+    expect(byKey.risk.missing).toBe(false)
+    expect(byKey.risk.value).toBe('0')
+  })
+})
+
+describe('formatBiRevenue（B2 task3：BI 销售额诚实货币渲染）', () => {
+  it('缺失/null → —（不当 0）', () => {
+    expect(formatBiRevenue(null, 'USD')).toEqual({ display: UNKNOWN, currencyNote: '' })
+    expect(formatBiRevenue(undefined, 'USD')).toEqual({ display: UNKNOWN, currencyNote: '' })
+    expect(formatBiRevenue('', 'USD')).toEqual({ display: UNKNOWN, currencyNote: '' })
+    expect(formatBiRevenue('abc', 'USD')).toEqual({ display: UNKNOWN, currencyNote: '' })
+  })
+
+  it('有币种 → 真实币种 + 金额（来自 BI DTO 顶层 currency）', () => {
+    expect(formatBiRevenue(123.4, 'USD')).toEqual({ display: 'USD 123.40', currencyNote: '' })
+    expect(formatBiRevenue(0, 'CNY')).toEqual({ display: 'CNY 0.00', currencyNote: '' })
+  })
+
+  it('无币种 → 裸数字 + 「币种未知」标注（不臆造符号）', () => {
+    expect(formatBiRevenue(123.4, '')).toEqual({ display: '123.40', currencyNote: '币种未知' })
+    expect(formatBiRevenue(123.4, undefined)).toEqual({ display: '123.40', currencyNote: '币种未知' })
+  })
+})
+

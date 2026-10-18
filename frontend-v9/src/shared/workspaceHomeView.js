@@ -14,9 +14,70 @@
  */
 
 import { deriveWorkbenchCounts } from './workbenchContext'
+import { profileGaps } from './onboardingProfile'
 
 /** 未知/尚未获得占位（金额、计数、百分比通用）。 */
 export const UNKNOWN = '—'
+
+/**
+ * 时段问候（B2：首页顶部问候行，纯函数，按本地小时分桶）。
+ * 05:00–11:59 早上好 / 12:00–17:59 下午好 / 18:00–04:59 晚上好。
+ * 非法/越界小时 → 「你好」（不抛错）。
+ * @param {number} hour 0–23
+ * @returns {'早上好'|'下午好'|'晚上好'|'你好'}
+ */
+export function greeting(hour) {
+  if (typeof hour !== 'number' || Number.isNaN(hour) || hour < 0 || hour > 23) return '你好'
+  if (hour >= 5 && hour < 12) return '早上好'
+  if (hour >= 12 && hour < 18) return '下午好'
+  return '晚上好'
+}
+
+/**
+ * 经营条件卡视图模型（B2：会话画像 → 三行 预算 / 目标市场 / 风险偏好）。
+ * 缺项显「待补」并给出补充入口；全部来自 loadSessionProfile() 的**会话**画像，
+ * 决不当服务端画像（persisted 恒 false，诚实契约见 onboardingProfile.js）。
+ * 用 profileGaps 判定缺项（与「去补充」入口口径一致）。
+ * @param {object|null} profile loadSessionProfile() 返回；null → 全缺
+ * @returns {Array<{key:string,label:string,value:string,missing:boolean,link:string}>}
+ */
+export function conditionCardViewModel(profile) {
+  const gaps = new Set((profileGaps(profile) || []).map((g) => g.key))
+  const defs = [
+    { key: 'budget', label: '预算', value: profile?.budget },
+    { key: 'targetMarket', label: '目标市场', value: profile?.targetMarket },
+    { key: 'risk', label: '风险偏好', value: profile?.risk },
+  ]
+  return defs.map(({ key, label, value }) => {
+    const missing = gaps.has(key)
+    return {
+      key,
+      label,
+      value: missing ? '待补' : String(value ?? ''),
+      missing,
+      link: missing ? '/onboarding?step=1' : '',
+    }
+  })
+}
+
+/**
+ * BI 明细销售额单元格（诚实货币渲染，B2 task3）：
+ * 缺失/null → 「—」；有币种（BI DTO 顶层 currency 字段）→ 真实币种 + 金额；
+ * 无币种 → 裸数字 + 「币种未知」标注（不臆造符号）。
+ * 不复用 orderView.formatOrderMoney（订单专用）；亦不新建通用货币工具。
+ * @param {*} value 金额
+ * @param {string} [currency] BI dashboard 响应顶层 currency（backend/app/routers/bi.py）
+ * @returns {{display:string, currencyNote:string}}
+ */
+export function formatBiRevenue(value, currency) {
+  if (value === null || value === undefined || value === '') return { display: UNKNOWN, currencyNote: '' }
+  const num = Number(value)
+  if (Number.isNaN(num)) return { display: UNKNOWN, currencyNote: '' }
+  const amount = num.toFixed(2)
+  const cur = currency && String(currency).trim() ? String(currency).trim() : ''
+  if (cur) return { display: `${cur} ${amount}`, currencyNote: '' }
+  return { display: amount, currencyNote: '币种未知' }
+}
 
 /**
  * 人类可读名称（R3-2B 修复 bug1/bug3）：后端 `product`/`store` 是**对象**——

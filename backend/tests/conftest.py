@@ -73,8 +73,12 @@ def _remove_db_files() -> None:
     for suffix in ("-wal", "-shm", "-journal", ""):
         try:
             pathlib.Path(str(_DB_FILE) + suffix).unlink(missing_ok=True)
-        except PermissionError:
-            pass  # 仍被其它进程占用：交由调用方容忍（并发跑测试属不支持场景）
+        except (PermissionError, OSError):
+            # PermissionError：仍被其它进程占用（并发跑测试属不支持场景）。
+            # OSError：部分环境的删除钩子对已删除/不可回收的文件抛
+            # OSError("SHFileOperationW 失败: 0x2")，且不带 errno/winerror。
+            # 夹具契约（见 _fresh_db）：删除失败不视为测试失败，下次会话会再删。
+            pass
 
 
 os.environ["ERP_DB_URL"] = "sqlite:///" + _DB_FILE.as_posix()

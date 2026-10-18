@@ -38,11 +38,13 @@ export async function pickCandidates(limit = 3) {
   return (await api.post('/discovery/pick', { limit })).data
 }
 
-/** 选品评分分页：GET /discovery/scores → {items[], total}。 */
-export async function fetchScores({ page, productId } = {}) {
-  return (await api.get('/discovery/scores', {
-    params: { page_num: page, product_id: productId },
-  })).data
+/** 选品评分分页：GET /discovery/scores → {items[], total}。
+ * pageSize 透传后端（上限 200，见 backend/app/pagination.py）；传入大值可一次拉全评分行，
+ * 供前端做「按 total 取 Top N」候选方向派生（后端按 created_at 排序，前端再按 total 重排）。 */
+export async function fetchScores({ page, productId, pageSize } = {}) {
+  const params = { page_num: page, product_id: productId }
+  if (pageSize != null) params.page_size = pageSize
+  return (await api.get('/discovery/scores', { params })).data
 }
 
 /** 单品重评分：POST /discovery/score/{productId} → 评分 DTO。 */

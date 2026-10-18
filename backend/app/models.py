@@ -17,6 +17,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -1363,3 +1364,53 @@ class KnowledgeCandidate(Base):
 
     __table_args__ = (Index("uq_knowledge_candidate_hash", "tenant_id", "question_hash",
                             unique=True),)
+
+
+# ---------------------------------------------------------------- 经营画像（D63）
+
+class BusinessProfile(Base):
+    """经营画像（D63 服务端持久化，替代原型 02 的会话内/草稿方案）。
+
+    一张表同时承载「个人偏好」与「Workspace 共享」两类字段，靠 ``user_id`` 是否为空区分：
+
+      - ``user_id`` 非空  = 个人偏好行：承载 ``direction``（资源起点 A/B/C）、
+        ``budget_amount`` / ``budget_currency``；
+      - ``user_id`` 为空  = 空间共享行：承载 ``target_market``（目标市场）、``risk``（风险偏好），
+        归属 (tenant_id, workspace_id)，写权限复用既有的 ``workspace:write`` 能力 key。
+
+    同一个 (tenant, workspace) 内两类行共存：
+      - 个人行按 (tenant_id, workspace_id, user_id) 唯一（``uq_business_profile_personal``）；
+      - 共享行按 (tenant_id, workspace_id) 唯一，由部分唯一索引
+        ``ix_business_profiles_shared``（WHERE user_id IS NULL）约束。
+
+    ``completed`` / ``completed_at`` 是审计列；API 的「完成」判定由合并视图按"必填字段齐全"
+    推导（见 routers/business_profiles.py 的 ``is_profile_complete``），落库时回填两行以保持一致。
+    """
+
+    __tablename__ = "business_profiles"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "workspace_id", "user_id", name="uq_business_profile_personal"),
+        # 部分唯一索引：同一 (tenant, workspace) 仅允许一份共享画像（user_id IS NULL）。
+        Index(
+            "ix_business_profiles_shared", "tenant_id", "workspace_id",
+            unique=True, sqlite_where=text("user_id IS NULL")),
+        Index("ix_business_profiles_tenant", "tenant_id"),
+        Index("ix_business_profiles_workspace", "workspace_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_business_profiles_tenant_id_tenants"), index=True)
+    workspace_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", name="fk_business_profiles_user_id_users"), nullable=True)
+    direction: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    budget_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    budget_currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    target_market: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    risk: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    completed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
