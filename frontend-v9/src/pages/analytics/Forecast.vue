@@ -13,7 +13,7 @@
       </template>
       <template #actions>
         <el-button @click="router.push('/app/analytics/bi')">经营总览</el-button>
-        <el-button @click="router.push('/app/analytics/finance')">真实利润</el-button>
+        <el-button @click="router.push('/app/analytics/finance')">财务台账</el-button>
       </template>
     </PageHeader>
 

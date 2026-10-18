@@ -23,10 +23,10 @@
         <el-descriptions-item label="关税¥">{{ calcResult.duty_cny ?? '—' }}</el-descriptions-item>
         <el-descriptions-item label="佣金率">{{ percent(calcResult.platform_fee_rate) }}</el-descriptions-item>
         <el-descriptions-item label="广告¥/件">{{ calcResult.ads_cost ?? '—' }}</el-descriptions-item>
-        <el-descriptions-item label="售价">${{ calcResult.price ?? '—' }}</el-descriptions-item>
+        <el-descriptions-item label="售价">{{ calcResult.currency || '—' }} {{ calcResult.price ?? '—' }}</el-descriptions-item>
         <el-descriptions-item label="单件利润">
           <b :style="{ color: Number(calcResult.profit) > 0 ? 'var(--color-success)' : 'var(--color-danger)' }">
-            ${{ calcResult.profit ?? '—' }}
+            {{ calcResult.currency || '—' }} {{ calcResult.profit ?? '—' }}
           </b>
         </el-descriptions-item>
         <el-descriptions-item label="利润率">{{ percent(calcResult.margin) }}</el-descriptions-item>
@@ -54,13 +54,13 @@
         <el-table-column v-if="writable" type="selection" width="40" />
         <el-table-column prop="product_id" label="商品ID" width="80" />
         <el-table-column prop="product_title" label="商品" min-width="180" show-overflow-tooltip />
-        <el-table-column prop="price" label="当前价$" width="90" />
-        <el-table-column label="建议价$" width="100">
+        <el-table-column prop="price" :label="`当前价${priceUnit}`" width="100" />
+        <el-table-column :label="`建议价${priceUnit}`" width="110">
           <template #default="{ row }">
-            <b style="color: var(--color-primary)">${{ row.suggested_price }}</b>
+            <b style="color: var(--color-primary)">{{ row.suggested_price }}</b>
           </template>
         </el-table-column>
-        <el-table-column label="单件利润$" width="100">
+        <el-table-column :label="`单件利润${priceUnit}`" width="110">
           <template #default="{ row }">
             <span :style="{ color: Number(row.profit) > 0 ? 'var(--color-success)' : 'var(--color-danger)' }">
               {{ row.profit }}
@@ -126,6 +126,13 @@ const qty = ref(1)
 const calcLoading = ref(false)
 const sugLoading = ref(false)
 const calcResult = ref(null)
+/** 定价口径币种：取 calc 响应返回的 currency；未跑过试算时为未知（不臆测 USD）。 */
+const calcCurrency = ref('')
+/**
+ * 表头/卡片的金额单位后缀：已知币种包成「（USD）」，未知时显式标「—（口径未知）」
+ * 而非默认 $. 仅做展示绑定，不做前端换汇、不在浏览器算利润（costing.calc_profit 权威）。
+ */
+const priceUnit = computed(() => (calcCurrency.value ? `（${calcCurrency.value}）` : '—（口径未知）'))
 const selected = ref([])
 const adopting = ref(false)
 /** 本地忽略集（后端无忽略端点，仅本次会话生效，不做假持久化）。 */
@@ -160,11 +167,14 @@ function onSelect(rows) {
 async function calc() {
   calcLoading.value = true
   try {
-    calcResult.value = await calcProfit({
+    const res = await calcProfit({
       product_id: pid.value,
       destination_country: destination.value || '',
       qty: qty.value || 1,
     })
+    calcResult.value = res
+    // 币种随 calc 响应绑定；响应缺 currency 时回落未知态（不臆测 USD）。
+    calcCurrency.value = res?.currency || ''
   } finally {
     calcLoading.value = false
   }
@@ -174,7 +184,10 @@ async function suggest() {
   sugLoading.value = true
   try {
     const data = await suggestPrice(pid.value)
-    ElMessage.success(`建议价 $${data.suggested_price}（利润率 ${percent(data.margin)}）`)
+    // 建议响应自带 currency（与 calc 同源 USD），同步到页面币种上下文以复用 priceUnit；
+    // 缺 currency 时回落上一轮 calc 的币种，再回落「—（口径未知）」（不臆测 USD）。
+    calcCurrency.value = data?.currency || calcCurrency.value || ''
+    ElMessage.success(`建议价${priceUnit.value} ${data.suggested_price}（利润率 ${percent(data.margin)}）`)
     load()
   } finally {
     sugLoading.value = false

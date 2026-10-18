@@ -17,7 +17,7 @@ const EXPECTED = {
   ads: { space: 'app', domain: '经营优化', title: '广告与转化' },
   'risk/alerts': { space: 'app', domain: '经营优化', title: '商品与店铺诊断' },
   'analytics/bi': { space: 'app', domain: '财务与分析', title: '经营总览与 BI' },
-  'analytics/finance': { space: 'app', domain: '财务与分析', title: '真实利润' },
+  'analytics/finance': { space: 'app', domain: '财务与分析', title: '财务台账' },
   'analytics/landed-cost': { space: 'app', domain: '财务与分析', title: '到岸成本' },
   // ── 蓝图 R1 P0 补齐：导航叶子可点（真实页未交付，先挂 StubPage 防 404，标记待接入） ──
   'supply/sourcing': { space: 'app', domain: '货源与采购', title: '货源发现' },

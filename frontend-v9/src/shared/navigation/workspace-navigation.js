@@ -5,7 +5,7 @@
  *   mybiz   我的生意 → 经营首页 / 我的待办
  *   goods   我的商品 → 商品库 / 上线中心 / 合规报告 / 合规工作台
  *   orders  我的订单 → 订单工作台 / 发货备货 / 售后退款 / 客户消息 / 结算对账
- *   revenue 我的收益 → BI 总览 / 真实利润 / 到岸成本 / 预测 / 定价试算
+ *   revenue 我的收益 → BI 总览 / 财务台账 / 到岸成本 / 预测 / 定价试算
  *   tools   全部工具 → 其余全部既有页面（货源/市场/渠道/内容/增长/AI/设置）
  *
  * **铁律（R3-2A）**：
@@ -57,7 +57,7 @@ export const WORKSPACE_DOMAINS = [
     icon: 'TrendCharts',
     children: [
       { path: '/app/analytics/bi', label: '经营总览与 BI', icon: 'TrendCharts' },
-      { path: '/app/analytics/finance', label: '真实利润', icon: 'Money' },
+      { path: '/app/analytics/finance', label: '财务台账', icon: 'Money' },
       { path: '/app/analytics/landed-cost', label: '到岸成本', icon: 'Ship' },
       { path: '/app/analytics/forecast', label: '预测与数据质量', icon: 'DataLine' },
       { path: '/app/pricing', label: '定价与利润试算', icon: 'Coin' },

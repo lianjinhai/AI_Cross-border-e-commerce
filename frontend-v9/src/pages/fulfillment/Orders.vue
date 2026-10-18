@@ -9,6 +9,9 @@
         <el-select v-model="status" placeholder="状态" clearable style="width: 120px" @change="touch">
           <el-option v-for="(l, s) in ORDER_STATUS_LABELS" :key="s" :label="l" :value="s" />
         </el-select>
+        <el-select v-model="shopFilter" placeholder="店铺" clearable style="width: 160px" @change="touch">
+          <el-option v-for="s in shopOptions" :key="s.id" :label="`${s.platform} · ${s.shop_name}`" :value="s.id" />
+        </el-select>
       </template>
       <template #actions>
         <el-select v-model="syncShopId" placeholder="已授权销售店铺" clearable style="width: 200px">
@@ -38,6 +41,10 @@
     </FormSection>
 
     <FormSection title="订单列表" description="展开行查看状态时间线与履约链">
+      <div class="scope-line">
+        当前范围：<template v-if="shopFilter">店铺 #{{ shopFilter }} · {{ shopLabel(shopFilter) }}</template>
+        <template v-else>全部店铺</template>
+      </div>
       <el-table v-loading="loading" :data="items" size="small">
         <el-table-column type="expand">
           <template #default="{ row }">
@@ -53,13 +60,16 @@
         <el-table-column prop="buyer_name" label="买家" width="100" />
         <el-table-column prop="country" label="国家" width="70" />
         <el-table-column prop="qty" label="件数" width="70" />
-        <el-table-column label="金额" width="100">
-          <template #default="{ row }">${{ Number(row.amount || 0).toFixed(2) }}</template>
+        <el-table-column label="店铺" width="140">
+          <template #default="{ row }">{{ orderShopLabel(row) }}</template>
+        </el-table-column>
+        <el-table-column label="金额" width="120">
+          <template #default="{ row }">{{ formatOrderMoney(row) }}</template>
         </el-table-column>
         <el-table-column :label="ESTIMATED_PROFIT_LABEL" width="130">
           <template #default="{ row }">
             <span :style="{ color: row.profit > 0 ? 'var(--color-success)' : 'var(--color-danger)' }">
-              ${{ Number(row.profit || 0).toFixed(2) }}
+              {{ formatOrderMoney({ currency: row.currency, amount: row.profit }) }}
             </span>
           </template>
         </el-table-column>
@@ -147,6 +157,7 @@ import {
   fetchOrders, importCsv, exportOrders, updateStatus, ship as shipOrder,
 } from '../../api/domains/orders'
 import { fetchShops, syncOrders as syncShopOrdersReal } from '../../api/domains/shops'
+import { formatOrderMoney, orderShopLabel } from '../../shared/orderView'
 import {
   ORDER_STATUS_LABELS, ORDER_MAIN_FLOW, nextStatusOptions, orderTimeline,
   parseImportErrors, CSV_IMPORT_HINT,
@@ -160,6 +171,8 @@ const writable = can('order:write')
 const keyword = ref('')
 const platform = ref('')
 const status = ref('')
+const shopFilter = ref(null)
+const shopOptions = ref([])
 const items = ref([])
 const total = ref(0)
 const page = ref(1)
@@ -181,11 +194,18 @@ function touch() {
   load()
 }
 
+/** 按店铺 id 查展示名（用于范围行）。找不到时回退到 "#id"，避免空白。 */
+function shopLabel(id) {
+  const s = shopOptions.value.find((x) => x.id === id)
+  return s ? (s.shop_name || `#${id}`) : `#${id}`
+}
+
 async function load() {
   loading.value = true
   try {
     const data = await fetchOrders({
-      page: page.value, status: status.value, platform: platform.value, keyword: keyword.value,
+      page: page.value, status: status.value, platform: platform.value,
+      keyword: keyword.value, shopId: shopFilter.value,
     })
     items.value = data.items || []
     total.value = Number(data.total ?? items.value.length)
@@ -271,6 +291,7 @@ onMounted(async () => {
   await load()
   try {
     const data = await fetchShops()
+    shopOptions.value = data.items || []
     syncShops.value = (data.items || []).filter(
       (s) => s.role === 'sales' && !s.is_demo && s.status === 'authorized'
         && s.capabilities?.can_order_sync !== false)
@@ -284,6 +305,11 @@ onMounted(async () => {
   align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
+}
+.scope-line {
+  margin-bottom: var(--space-2);
+  color: var(--color-text-secondary, #6b7280);
+  font-size: 13px;
 }
 .pager {
   margin-top: var(--space-3);

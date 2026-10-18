@@ -42,6 +42,7 @@ class StatusIn(BaseModel):
 
 @router.get("")
 def list_orders(platform: str = "", status: str = "", keyword: str = "",
+                shop_id: int | None = None,
                 page_num: int = PageNum, page_size: int = PageSize,
                 user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     q = db.query(Order).filter(Order.tenant_id == user.tenant_id)
@@ -52,10 +53,29 @@ def list_orders(platform: str = "", status: str = "", keyword: str = "",
     if keyword:
         like = f"%{keyword}%"
         q = q.filter(Order.external_no.like(like) | Order.buyer_name.like(like))
+    if shop_id is not None:
+        q = q.filter(Order.shop_id == shop_id)
     total = q.count()
     items = (q.order_by(Order.created_at.desc())
              .offset((page_num - 1) * page_size).limit(page_size).all())
-    return page([to_dict(o) for o in items], total, page_num, page_size)
+    # 富化：补充 shop_name / product_title，避免 N+1 —— 仅对当页出现的
+    # 去重 id 各跑一次批量查询（最多 2 次），缺失名称回退为空字符串。
+    shop_ids = {o.shop_id for o in items if o.shop_id is not None}
+    product_ids = {o.product_id for o in items if o.product_id is not None}
+    shop_map, product_map = {}, {}
+    if shop_ids:
+        for s in db.query(Shop.id, Shop.shop_name).filter(Shop.id.in_(shop_ids)).all():
+            shop_map[s.id] = s.shop_name or ""
+    if product_ids:
+        for p in db.query(Product.id, Product.title).filter(Product.id.in_(product_ids)).all():
+            product_map[p.id] = p.title or ""
+    result = []
+    for o in items:
+        d = to_dict(o)
+        d["shop_name"] = shop_map.get(o.shop_id, "")
+        d["product_title"] = product_map.get(o.product_id, "")
+        result.append(d)
+    return page(result, total, page_num, page_size)
 
 
 def _ensure_sales_platform(db: Session, tenant_id: int, platform: str) -> None:

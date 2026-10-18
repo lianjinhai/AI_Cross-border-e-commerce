@@ -1,6 +1,6 @@
 <template>
   <div class="page">
-    <PageHeader title="财务工作台" subtitle="维护交易日汇率、订单行与费用，并核对平台结算 · 全部行内编辑" />
+    <PageHeader title="财务台账" subtitle="维护交易日汇率、订单行与费用，并核对平台结算 · 全部行内编辑" />
 
     <el-alert
       type="info" show-icon :closable="false" class="mb16"
@@ -202,7 +202,8 @@ import {
 const writable = can('finance:write')
 const FEE_TYPES = ['platform_fee', 'payment_fee', 'shipping', 'tax', 'advertising', 'other']
 
-const tab = ref('fx')
+// 默认落到中央台账「订单明细与费用」，而非汇率维护（fx）标签；不误导为「真实利润」。
+const tab = ref('orders')
 const loading = ref(false)
 const saving = ref(false)
 const fxItems = ref([])

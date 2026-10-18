@@ -165,7 +165,7 @@ const ENTRY_PLANS = {
     steps: [
       { key: 'launch', text: '继续上线流程', path: '/app/launch' },
       { key: 'orders', text: '处理订单 / 履约', path: '/app/orders' },
-      { key: 'profit', text: '查看真实利润', path: '/app/analytics/finance' },
+      { key: 'profit', text: '查看财务台账', path: '/app/analytics/finance' },
     ],
     recommended: { key: 'launch', text: '继续上线', path: '/app/launch' },
   },

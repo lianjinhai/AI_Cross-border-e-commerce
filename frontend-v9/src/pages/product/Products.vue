@@ -206,7 +206,9 @@ const is1688 = (row) => (row.source_platform || '').includes('1688') || (row.sou
 async function load() {
   loading.value = true
   try {
-    const data = await fetchProducts({ page: page.value, keyword: q.keyword, source: q.category })
+    // q.category 是真正按「类目」过滤（控件 placeholder=类目、选项为类目名），
+    // 通过 category 参数转发；source 留作「来源」语义，不在此占用。
+    const data = await fetchProducts({ page: page.value, keyword: q.keyword, category: q.category })
     items.value = data.items
     total.value = data.total
   } finally { loading.value = false }

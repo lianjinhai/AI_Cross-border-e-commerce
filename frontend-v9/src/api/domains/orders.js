@@ -3,16 +3,17 @@ import api from '../../shared/api/client'
 /**
  * orders 域（契约 §4.2）：对应 backend/app/routers/orders.py（前缀 /orders）。
  * 非法状态流转由后端拒绝（409），前端 StateBar 预校验；物流轨迹待接入不渲染。
- * 真实筛参为 platform/keyword（后端 GET /orders 无 shop_id 筛选）。
+ * 真实筛参为 platform/keyword/shop_id。
  */
 
 /** 订单列表：GET /orders → {items[], total}。 */
 export async function fetchOrders({ page, status, shopId, platform, keyword } = {}) {
-  // 契约签名保留 shopId；后端该端点不支持店铺筛选，仅透传真实支持的参数。
-  void shopId
-  return (await api.get('/orders', {
-    params: { page_num: page, status, platform, keyword },
-  })).data
+  // shop_id 透传后端店铺筛选（GET /orders?shop_id=）；缺失时不加筛选（全部店铺）。
+  const params = { page_num: page, status, platform, keyword }
+  if (shopId !== null && shopId !== undefined && shopId !== '') {
+    params.shop_id = shopId
+  }
+  return (await api.get('/orders', { params })).data
 }
 
 /**

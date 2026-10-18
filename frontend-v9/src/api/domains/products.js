@@ -12,10 +12,15 @@ import api from '../../shared/api/client'
  *   AssetIn.shop_id 必填；验证 shop.market/platform 必须与素材适用范围一致）。
  */
 
-/** 商品列表：GET /products → {items[], total}。 */
-export async function fetchProducts({ page, keyword, source } = {}) {
+/**
+ * 商品列表：GET /products → {items[], total}。
+ * category 与 source 各自按其语义转发（后端 list_products 仅按 category 过滤，
+ * source 透传为无副作用的查询参数，供未来/其他端按需使用）。
+ * 向后兼容：仅传 source 的既有调用方行为不变。
+ */
+export async function fetchProducts({ page, keyword, source, category } = {}) {
   return (await api.get('/products', {
-    params: { page_num: page, keyword, source },
+    params: { page_num: page, keyword, source, category },
   })).data
 }
 

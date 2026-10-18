@@ -1,6 +1,6 @@
 <template>
   <el-container class="shell" :class="`shell--${space}`">
-    <el-aside :width="collapsed ? '64px' : '220px'" class="shell__aside">
+    <el-aside :width="collapsed ? 'var(--layout-sidebar-collapsed)' : 'var(--layout-sidebar-width)'" class="shell__aside">
       <div class="shell__brand" @click="toggleSidebar">
         <span class="shell__brand-dot" :style="{ background: accentColor }" />
         <span v-if="!collapsed" class="shell__brand-text">{{ spaceLabel }}</span>
@@ -8,7 +8,7 @@
       <ShellSidebar :navigation="navigation" :active-path="activePath" :collapsed="collapsed" />
     </el-aside>
     <el-container class="shell__body">
-      <el-header class="shell__topbar" height="56px">
+      <el-header class="shell__topbar" height="var(--layout-topbar-height)">
         <div class="shell__topbar-left">
           <!-- R3-2A：顶层上下文条槽（Workspace/店铺范围 + 任务计数条，baseline §3）。
                仅 Workspace 薄壳填充；控制台/工厂留空（:empty 自动隐藏，不留分隔符）。 -->
@@ -197,6 +197,7 @@ function logout() {
 }
 .shell__main {
   background: var(--color-bg);
+  padding: var(--layout-content-gutter);
   min-width: 0;
 }
 /* 窄屏（≤768）：收紧顶栏间距，隐藏上下文条（窄屏易致横向溢出），

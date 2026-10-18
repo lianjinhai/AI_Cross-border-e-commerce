@@ -11,16 +11,17 @@
 
 :root {
   /* ---- 语义色（与 Element Plus 默认一致，§1.1 沿用） ---- */
-  --color-primary: #409EFF;
+  /* V9.1（B1，D62 签批）：主色/工作区底/侧栏底色值改指向 --v91-*，名字保留不破依赖 */
+  --color-primary: var(--v91-blue-600);
   --color-success: #67C23A;
   --color-warning: #E6A23C;
   --color-danger: #F56C6C;
   --color-info: #909399;
-  --color-bg: #f5f7fa;
+  --color-bg: var(--v91-workspace-bg);
   --color-text: #303133;
   --color-text-secondary: #909399;
   --color-border: #dcdfe6;
-  --color-sidebar: #1f2d3d;
+  --color-sidebar: var(--v91-navy-900);
 
   /* ---- 间距 ---- */
   --space-1: 4px;
@@ -85,14 +86,59 @@
 }
 
 /**
+ * ============================================================================
+ * V9.1 设计令牌（B1 批次：设计令牌基线 + 侧栏五入口收敛；D62 已签批，落地不复议）
+ * ============================================================================
+ * 全部颜色收敛到语义名；字面量仅允许出现在本文件，组件一律引用下方 `--v91-*` 名。
+ * 决策：主色 #409EFF → #236BBD；侧栏 #1f2d3d → #0C2654；工作区底 #f5f7fa → #F5F8FC。
+ * 布局基线：侧栏展开 208px / 收起 64px，顶栏 58px，内容横向留白 28px（取代旧 220/56）。
+ */
+:root {
+  /* ---- V9.1 语义色（命名冻结） ---- */
+  --v91-navy-900: #0C2654;
+  --v91-workspace-bg: #F5F8FC;
+  --v91-surface: #FFFFFF;
+  --v91-surface-muted: #F9FBFE;
+  --v91-tint-blue: #EAF2FB;
+  --v91-border: #DCE5EF;
+  --v91-blue-600: #236BBD;
+  --v91-blue-700: #245A9C;
+  --v91-amber-surface: #FFF4DE;
+  --v91-brand-gold: #DDB85E;
+  --v91-text-strong: #0C2654;
+  --v91-text-secondary: #172D4B;
+  --v91-text-muted: #3B5076;
+
+  /* ---- 深色侧栏文字（B1：取代 ShellSidebar 旧硬编码 #bfcbd9 / #409EFF） ---- */
+  --v91-sidebar-text: #C7D7EB;
+  --v91-sidebar-active-bg: #245A9C;
+  --v91-sidebar-active-text: #FFFFFF;
+
+  /* ---- V9.1 布局基线（B1：取代旧侧栏/顶栏像素基线） ---- */
+  --layout-sidebar-width: 208px;
+  --layout-sidebar-collapsed: 64px;
+  --layout-topbar-height: 58px;
+  --layout-content-gutter: 28px;
+}
+
+/**
  * Element Plus 变量同源映射（契约 §1.4，逐字平移现方案）。
  *
  * 用 `:root:root`（特异性 0,2,0）而非 `:root`：EP 的变量定义在按需加载时可能
  * 晚于本文件注入，同级选择器下后者胜出会覆盖本块；提高一格特异性可确保映射稳定
- * 生效。EP 派生梯度（light-3/5/7/8/9）仍由 EP 构建期生成，本文件不处理。
+ * 生效。EP 主色派生梯度（light-3/5/7/8/9、dark-2）现由本文件**显式钉死**（见下方
+ * `--el-color-primary-*`），不再依赖 EP 构建期按旧 #409EFF 推导——否则 hover/disabled
+ * 等态会偏移到旧主色相，与新主色 #236BBD 不一致。
  */
 :root:root {
   --el-color-primary: var(--color-primary);
+  /* V9.1（D62）：显式钉死主色派生梯度，避免 EP 按旧 #409EFF 推导导致 hover/disabled 偏色 */
+  --el-color-primary-light-3: #6597D1;
+  --el-color-primary-light-5: #91B5DE;
+  --el-color-primary-light-7: #BDD3EB;
+  --el-color-primary-light-8: #D3E1F2;
+  --el-color-primary-light-9: #E9F0F8;
+  --el-color-primary-dark-2: #1C5697;
   --el-color-success: var(--color-success);
   --el-color-warning: var(--color-warning);
   --el-color-danger: var(--color-danger);

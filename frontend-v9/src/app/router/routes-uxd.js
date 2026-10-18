@@ -79,7 +79,7 @@ export const UXD_ROUTES = [
   {
     path: 'analytics/finance',
     component: () => import('../../pages/analytics/Finance.vue'),
-    meta: { space: 'app', domain: '财务与分析', title: '真实利润' },
+    meta: { space: 'app', domain: '财务与分析', title: '财务台账' },
   },
   {
     path: 'analytics/landed-cost',
