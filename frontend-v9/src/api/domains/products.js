@@ -119,3 +119,23 @@ export async function verifyAsset(id, assetId, review = {}) {
 export async function fetchChannels(id) {
   return (await api.get(`/products/${id}/channels`)).data
 }
+
+/**
+ * 选定/清除报价（B3 货源比选）：PUT /products/{id}/selected-offer。
+ * body {offer_id: number|null}：传 null 即清除选定。
+ * 后端以此报价作为成本试算（costing）的优先依据。
+ * 错误：404 商品/报价不存在、400 报价不属于该商品——由调用方按 detail 展示。
+ * 纯薄封装，不改动其他既有导出。
+ */
+export async function saveSelectedOffer(productId, offerId) {
+  return (await api.put(`/products/${productId}/selected-offer`, { offer_id: offerId ?? null })).data
+}
+
+/**
+ * 商品经营中心聚合概览（B3 原型 06）：GET /products/{id}/overview。
+ * 返回 {product, supply, channels, performance, stage, generated_at}；
+ * 404 = 商品不存在。纯薄封装，不改动其他既有导出。
+ */
+export async function fetchProductOverview(productId) {
+  return (await api.get(`/products/${productId}/overview`)).data
+}

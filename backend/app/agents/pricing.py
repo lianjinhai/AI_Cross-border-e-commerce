@@ -96,10 +96,11 @@ class PricingAgent(BaseAgent):
     # ---------- 利润计算 ----------
     def calc_profit(self, product_id: int, price: float | None = None,
                     destination_country: str = "", channel_type: str = "",
-                    site: str = "", qty: int = 1) -> dict:
+                    site: str = "", qty: int = 1, shop_id: int | None = None) -> dict:
         return costing.calc_profit(self.db, self.tenant_id, product_id, price,
                                    destination_country=destination_country,
-                                   channel_type=channel_type, site=site, qty=qty)
+                                   channel_type=channel_type, site=site, qty=qty,
+                                   shop_id=shop_id)
 
     # ---------- 动态定价 ----------
     def suggest_price(self, product_id: int) -> dict:

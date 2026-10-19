@@ -3,7 +3,6 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..agents.orchestrator import invoke_listing, invoke_review
@@ -17,6 +16,7 @@ from ..db import get_db
 from ..models import Listing, ListingReviewDecision, PlatformPublishAttempt, Product, Shop, User
 from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
+from ..services import review_outputs
 from ..services.ai_actions import ActionError
 from ..services.platform_adapters import ADAPTERS
 from ..services.review_outputs import approve_review_output
@@ -160,27 +160,12 @@ def review_queue(status: str = "manual_required", limit: int = 50,
 
     默认返回 ``manual_required``（复核 Agent 判定需人工确认的），
     每条附最新的复核决策与理由，供审批人判断。
+    查询实现收敛在 ``services/review_outputs.review_queue``（router 与 workbench BFF 共用）。
     """
-    if status not in ("manual_required", "rejected", "approved"):
-        raise HTTPException(status_code=400, detail="status 必须是 manual_required/rejected/approved")
-    # 取每个 Listing 的最新一次复核决策
-    sub = (db.query(func.max(ListingReviewDecision.id).label("max_id"))
-           .filter(ListingReviewDecision.tenant_id == user.tenant_id,
-                   ListingReviewDecision.decision == status)
-           .group_by(ListingReviewDecision.listing_id).subquery())
-    rows = (db.query(ListingReviewDecision, Listing)
-            .join(sub, ListingReviewDecision.id == sub.c.max_id)
-            .join(Listing, Listing.id == ListingReviewDecision.listing_id)
-            .order_by(ListingReviewDecision.created_at.desc())
-            .limit(max(1, min(200, limit))).all())
-    items = []
-    for decision, listing in rows:
-        d = to_dict(decision)
-        d["listing_title"] = listing.title
-        d["platform"] = listing.platform
-        d["listing_status"] = listing.status
-        items.append(d)
-    return {"items": items, "total": len(items)}
+    try:
+        return review_outputs.review_queue(db, user.tenant_id, status, limit)
+    except ActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.get("/{listing_id}/reviews")

@@ -11,10 +11,19 @@ import {
   workspaceId,
   workspaceName as contextWorkspaceName,
 } from '../shared/workspace'
-import { isAllShops } from '../shared/storeScope'
+import { isAllShops, toShellShop } from '../shared/storeScope'
 import { restoreImpersonation } from './impersonation'
 import { fetchShops } from '../api/domains/shops'
 import { useWorkbenchCounts } from './workbenchCounts'
+
+/**
+ * 店铺范围是**全壳单一事实**：壳顶栏切换器写、业务页读。
+ * 若每次调用 useWorkspaceShell() 都新建 ref，页面拿到的是挂载时的快照，
+ * 切换店铺后页面成本口径不会重算（B3 实测缺陷）。
+ * 故此处提升为模块级共享状态（持久化仍以 localStorage `v9_selected_shop` 为准）。
+ */
+const selectedShopId = ref(
+  (typeof localStorage !== 'undefined' && localStorage.getItem('v9_selected_shop')) || '')
 
 /**
  * Workspace 薄壳数据装配（契约 §2.1 的壳外下沉，保持薄壳 ≤60 行）。
@@ -27,7 +36,6 @@ import { useWorkbenchCounts } from './workbenchCounts'
 export function useWorkspaceShell() {
   const workspaces = ref([])
   const shops = ref([])
-  const selectedShopId = ref('')
 
   const impersonating = computed(() =>
     Boolean(getContext()?.is_impersonating) || Boolean(localStorage.getItem('erp_impersonating')))
@@ -54,7 +62,11 @@ export function useWorkspaceShell() {
     const myEpoch = getWorkspaceEpoch()
     try {
       const data = await fetchShops()
-      if (myEpoch === getWorkspaceEpoch()) shops.value = Array.isArray(data?.items) ? data.items : []
+      if (myEpoch === getWorkspaceEpoch()) {
+        const items = Array.isArray(data?.items) ? data.items : []
+        // DTO 适配唯一入口：shop_name/role → name/type（否则下拉框只剩 id、货源店铺混入销售店铺）。
+        shops.value = items.map(toShellShop).filter(Boolean)
+      }
     } catch { shops.value = [] }
   }
 
@@ -70,8 +82,8 @@ export function useWorkspaceShell() {
     window.location.assign('/console/overview')
   }
 
-  // selectedShopId 初值来自 localStorage 记忆（StoreSwitcher 负责回写）。
-  selectedShopId.value = localStorage.getItem('v9_selected_shop') || ''
+  // selectedShopId 为模块级共享状态（见文件头）：此处不再重置，
+  // 否则页面挂载会用旧的 localStorage 快照覆盖掉刚切换的店铺范围。
 
   let unsubscribe = () => {}
   onMounted(async () => {

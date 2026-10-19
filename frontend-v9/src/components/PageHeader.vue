@@ -50,6 +50,27 @@ function goBack() {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* 窄屏必须能换行：否则 actions 里的定宽控件会把标题区压成 1 字/行（390px 实测）。 */
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+/* 标题区可收缩但不是零宽：min-width:0 允许省略，flex-basis 保证有可读宽度。 */
+.page-header__text {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.page-header__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+@media (max-width: 560px) {
+  .page-header__actions {
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
 }
 .page-header__breadcrumb:empty {
   display: none;
@@ -57,10 +78,13 @@ function goBack() {
 .page-header__title {
   font-size: 16px;
   font-weight: 600;
+  word-break: keep-all;
 }
 .page-header__subtitle {
   margin-top: 2px;
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 </style>

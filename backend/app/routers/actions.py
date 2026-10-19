@@ -2,12 +2,12 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..auth import get_current_user, is_impersonating_user
 from ..db import get_db
-from ..models import AiAction, User
+from ..models import User
+from ..services import action_queue
 from ..services.action_identity import require_action_permission
 from ..services.action_policy import POLICIES
 from ..services.action_system import HANDLERS, decide_action, execute_action
@@ -15,7 +15,7 @@ from ..services.ai_actions import (
     ActionError,
     action_dict,
 )
-from ..services.store_scope import StoreScopeError, resolve_store_scope
+from ..services.store_scope import StoreScopeError
 from ..services.workspace_context import resolve_workspace_context
 
 router = APIRouter(prefix="/actions", tags=["actions"])
@@ -57,20 +57,12 @@ def list_actions(status: str = "PENDING_APPROVAL", limit: int = 50,
         require_action_permission(db, ctx, POLICIES[action_type].permission)
     except ActionError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    if status not in {"PENDING_APPROVAL", "APPROVED", "EXECUTING", "SUCCESS", "FAILED", "REJECTED"}:
+    if status not in action_queue.VALID_STATUS:
         raise HTTPException(status_code=400, detail="Action 状态无效")
-    query = db.query(AiAction).filter(AiAction.workspace_id == ctx.workspace_id,
-                                     AiAction.tenant_id == ctx.legacy_tenant_id,
-                                     AiAction.action_type == action_type,
-                                     AiAction.status == status)
-    if action_type == "PUBLISH_LISTING":
-        try:
-            shop_id = func.coalesce(AiAction.evidence["shop_id"].as_integer(),
-                                    AiAction.evidence["payload"]["shop_id"].as_integer())
-            query = resolve_store_scope(db, ctx).filter(query, shop_id)
-        except StoreScopeError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    rows = query.order_by(AiAction.id.desc()).limit(max(1, min(limit, 200))).all()
+    try:
+        rows = action_queue.list_actions(db, ctx, action_type, status, limit)
+    except StoreScopeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     return {"items": [action_dict(row) for row in rows]}
 
 

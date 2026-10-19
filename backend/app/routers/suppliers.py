@@ -1,14 +1,16 @@
 """供应链路由：供应商 CRUD / AI 评分 / 最优货源 / 销量预测 / 报价单录入。"""
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
 from ..agents.orchestrator import invoke_supplier
 from ..agents.supplier import SupplierAgent
 from ..auth import get_current_user, is_impersonating_user, require_write
 from ..db import get_db
-from ..models import Supplier, SupplierOffer, SupplierScore, User
+from ..models import Product, Supplier, SupplierOffer, SupplierScore, User
 from ..serialize import to_dict
 from ..services.ai_actions import ActionError
 from ..services.workspace_context import resolve_workspace_context
@@ -106,6 +108,27 @@ class OfferIn(BaseModel):
     moq: int = 1
     ship_days: int = 7
     in_stock: bool = True
+    # 报价诚实性扩展：有效期 / 来源种类 / 核实状态（人工录入即视为已核实来源）。
+    valid_until: datetime | None = None
+    source_kind: str = "manual"
+    verification_status: str = "unverified"
+
+    @field_validator("source_kind")
+    @classmethod
+    def _check_source_kind(cls, v: str) -> str:
+        allowed = {"manual", "scraped", "imported", "api"}
+        if v not in allowed:
+            raise ValueError("source_kind 必须是 manual/scraped/imported/api 之一")
+        return v
+
+    @field_validator("verification_status")
+    @classmethod
+    def _check_verification_status(cls, v: str) -> str:
+        allowed = {"manual", "verified", "unverified", "scraped"}
+        if v not in allowed:
+            raise ValueError(
+                "verification_status 必须是 manual/verified/unverified/scraped 之一")
+        return v
 
 
 @router.post("/offers")
@@ -125,7 +148,9 @@ def create_offer(body: OfferIn, user: User = Depends(require_write),
     o = SupplierOffer(tenant_id=user.tenant_id, supplier_id=body.supplier_id,
                       product_id=body.product_id, price=body.price,
                       currency=body.currency.upper(),
-                      moq=body.moq, ship_days=body.ship_days, in_stock=body.in_stock)
+                      moq=body.moq, ship_days=body.ship_days, in_stock=body.in_stock,
+                      valid_until=body.valid_until, source_kind=body.source_kind,
+                      verification_status=body.verification_status)
     db.add(o)
     db.commit()
     return to_dict(o)
@@ -136,7 +161,29 @@ def offers(product_id: int, user: User = Depends(get_current_user), db: Session 
     rows = (db.query(SupplierOffer)
             .filter(SupplierOffer.tenant_id == user.tenant_id,
                     SupplierOffer.product_id == product_id).all())
-    return {"items": [to_dict(o) for o in rows]}
+    product = db.get(Product, product_id)
+    selected_offer_id = product.selected_offer_id if product else None
+    # 批量加载供应商，避免 N+1；一次查询覆盖本页全部 supplier_id。
+    supplier_ids = {o.supplier_id for o in rows}
+    suppliers = {}
+    if supplier_ids:
+        for s in (db.query(Supplier)
+                  .filter(Supplier.tenant_id == user.tenant_id,
+                          Supplier.id.in_(supplier_ids)).all()):
+            suppliers[s.id] = s
+    items = []
+    for o in rows:
+        d = to_dict(o)
+        s = suppliers.get(o.supplier_id)
+        d["supplier"] = (
+            {"id": s.id, "name": s.name, "region": s.region,
+             "supplier_type": s.supplier_type, "verification_status": s.verification_status,
+             "rating": s.rating, "certifications": s.certifications,
+             "capabilities": s.capabilities}
+            if s else None)
+        d["is_selected"] = bool(selected_offer_id and o.id == selected_offer_id)
+        items.append(d)
+    return {"items": items, "selected_offer_id": selected_offer_id}
 
 
 @router.get("/{supplier_id}")

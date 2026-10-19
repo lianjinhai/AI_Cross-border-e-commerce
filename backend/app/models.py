@@ -116,6 +116,12 @@ class Product(Base):
     source_url: Mapped[str] = mapped_column(String(1024), default="")
     status: Mapped[str] = mapped_column(String(16), default="active")  # active/paused/deleted
     dedupe_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
+    # 用户显式选定的报价（costing 优先使用，即使缺货也以该报价为准）。None = 未选定。
+    # costing.best_purchase 命中 selected_offer_id 时直接采用其 to_cny 价格，覆盖「最低在库价」逻辑。
+    selected_offer_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("supplier_offers.id",
+                            name="fk_products_selected_offer_id_supplier_offers"),
+        nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -280,6 +286,13 @@ class SupplierOffer(Base):
     moq: Mapped[int] = mapped_column(Integer, default=1)
     ship_days: Mapped[int] = mapped_column(Integer, default=7)
     in_stock: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 报价有效期（人工录入/抓取来源的时效标注）。None = 长期有效。
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 来源种类：manual=人工录入（视为已核实来源）；scraped=爬虫抓取；imported=批量导入；api=接口回写。
+    source_kind: Mapped[str] = mapped_column(String(32), default="manual", server_default="manual")
+    # 核实状态：manual=人工已核实；verified=系统已核实；unverified=待核实；scraped=抓取待核实。
+    # 注意：manual 来源在业务上即视为已核实来源（人工录入可追责），scraped/imported 默认待核实。
+    verification_status: Mapped[str] = mapped_column(String(24), default="unverified", server_default="unverified")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

@@ -6,15 +6,34 @@
  */
 
 /**
+ * 归一化店铺 DTO（壳层唯一适配点）：
+ * `GET /shops` 返回的是 `{shop_name, role}`，而壳内组件（StoreSwitcher /
+ * filterSalesShops / shopScope）读的是 `{name, type}`。缺这层映射时，
+ * 下拉框只剩纯 id、且 1688 货源店铺会被当成销售店铺列出来（B3 实测缺陷）。
+ *
+ * @param {object} shop 后端店铺 DTO。
+ * @returns {object|null} 含 name/type 的壳层店铺对象。
+ */
+export function toShellShop(shop) {
+  if (!shop || typeof shop !== 'object') return null
+  return {
+    ...shop,
+    name: shop.name || shop.shop_name || '',
+    type: shop.type || shop.role || '',
+  }
+}
+
+/**
  * 过滤销售店铺（剔除 source 类型——source 是货源，不是销售店铺）。
  * 店铺对象：{ id, name, type?, status?, ... }；type='source' 为货源类型。
+ * 兼容只给 `role` 的旧 DTO（见 toShellShop）。
  *
  * @param {Array} shops 全量店铺列表。
  * @returns {Array} 仅销售店铺。
  */
 export function filterSalesShops(shops) {
   if (!Array.isArray(shops)) return []
-  return shops.filter((s) => s && s.type !== 'source')
+  return shops.filter((s) => s && (s.type || s.role) !== 'source')
 }
 
 /**

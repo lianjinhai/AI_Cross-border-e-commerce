@@ -62,4 +62,7 @@ watch(() => props.modelValue, (value) => {
 .store-switcher__select {
   width: 180px;
 }
+@media (max-width: 560px) {
+  .store-switcher__select { width: 128px; }
+}
 </style>

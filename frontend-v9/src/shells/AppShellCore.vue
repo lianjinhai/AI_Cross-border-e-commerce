@@ -207,4 +207,16 @@ function logout() {
   .shell__topbar { gap: var(--space-2); }
   .shell__topbar-context { display: none; }
 }
+/* 手机窄屏（≤560）：面包屑让位（页面标题已在 PageHeader），
+   顶栏右侧控件改为可横向滚动——宁可滚，也不要被裁切成「· ⏻」这种残片。 */
+@media (max-width: 560px) {
+  .shell__topbar-left { flex: 0 1 auto; overflow: hidden; }
+  .shell__topbar-left .el-breadcrumb { display: none; }
+  .shell__topbar-extras {
+    overflow-x: auto;
+    scrollbar-width: none;
+    flex-wrap: nowrap;
+  }
+  .shell__topbar-extras::-webkit-scrollbar { display: none; }
+}
 </style>

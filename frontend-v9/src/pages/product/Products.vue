@@ -39,6 +39,27 @@
         </el-table-column>
         <el-table-column prop="source_platform" label="来源" width="90" />
         <el-table-column prop="status" label="状态" width="90" />
+        <!-- 阶段（派生设计）：来自后端 signals；缺失显「—」不编造 -->
+        <el-table-column label="阶段" width="120">
+          <template #default="{ row }">
+            <el-tag
+              v-if="row.signals"
+              :type="stageFromSignals(row.signals).tone"
+              size="small" effect="plain"
+            >{{ stageFromSignals(row.signals).label }}</el-tag>
+            <span v-else class="muted-text">—</span>
+          </template>
+        </el-table-column>
+        <!-- 主动作：未接货源→去比选；其余→查看经营中心 -->
+        <el-table-column label="主动作" width="140">
+          <template #default="{ row }">
+            <el-button
+              size="small"
+              :type="row.signals && row.signals.offers_count === 0 ? 'warning' : 'primary'"
+              @click="runPrimary(row)"
+            >{{ primaryAction(row.signals, row.id).label }}</el-button>
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="260" fixed="right">
           <template #default="{ row }">
             <el-button size="small" @click="openDetail(row)">详情</el-button>
@@ -168,6 +189,8 @@ import {
   scrapeByUrl, standardize as apiStandardize, createDropshipOrder,
 } from '../../api/domains/products'
 import { fetchShops } from '../../api/domains/shops'
+// 商品池阶段为「派生设计」：无原型底图（刻意保持列表优先），阶段由后端 signals 派生。
+import { stageFromSignals, primaryAction } from '../../shared/productsListView'
 
 const router = useRouter()
 
@@ -221,6 +244,11 @@ function reload() {
 
 function openDetail(row) {
   router.push(`/app/products/${row.id}`)
+}
+
+/** 阶段主动作：未接货源→去比选；其余→查看经营中心（signals 缺失回退查看经营中心）。 */
+function runPrimary(row) {
+  router.push(primaryAction(row.signals, row.id).path)
 }
 
 function openCollect() {
@@ -310,4 +338,5 @@ onMounted(load)
 
 <style scoped>
 .mb16 { margin-bottom: 16px; }
+.muted-text { color: var(--color-text-disabled); }
 </style>

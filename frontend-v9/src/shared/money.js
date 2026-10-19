@@ -2,7 +2,11 @@
  * 金额展示纯函数（蓝图 §6.5，包 1 P0 共享组件 MoneyValue 纯函数下沉）。
  *
  * 规则：必显币种 + 汇率基准日 + 估算/已结算标签；缺值不渲染 0（显"—"）；缺 fxDate 显"汇率未知"。
+ * 例外：本位币 CNY 不需要换算，"汇率未知"对它属假缺项，不标注（B3 口径修正）。
  */
+
+/** 本位币：与后端 costing 的换算基准一致。 */
+export const BASE_CURRENCY = 'CNY'
 
 /**
  * 判定金额值是否缺失（不渲染 0）。
@@ -42,8 +46,9 @@ export function renderMoney(p = {}) {
   if (analysisCurrency && analysisCurrency !== currency) {
     result += `（分析口径：${analysisCurrency}）`
   }
+  // 本位币（CNY）不需要汇率：给它标「汇率未知」是假缺项，会让人误以为成本不可算。
   if (fxDate) result += ` · 汇率 ${fxDate}`
-  else if (currency) result += ' · 汇率未知'
+  else if (currency && String(currency).toUpperCase() !== BASE_CURRENCY) result += ' · 汇率未知'
   if (estimated) result += ' · 估算'
   if (unit) result += ` · ${unit === 'unit' ? '单价' : '合计'}`
   return result

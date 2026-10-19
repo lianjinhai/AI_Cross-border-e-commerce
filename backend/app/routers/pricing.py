@@ -24,6 +24,9 @@ class CalcIn(BaseModel):
     channel_type: str = ""
     site: str = ""
     qty: int = 1
+    # 成本上下文（B3）：目标店铺。给出时校验归属（否则 422），响应回显 shop_id；
+    # 未给出表示通用试算，响应 is_generic_estimate=True，不得展示为某店铺确认利润。
+    shop_id: int | None = None
 
 
 class SuggestIn(BaseModel):
@@ -54,11 +57,27 @@ def calc(body: CalcIn, user: User = Depends(require_write), db: Session = Depend
     p = db.get(Product, body.product_id)
     if not p or p.tenant_id != user.tenant_id:
         raise HTTPException(status_code=404, detail="商品不存在")
+    destination_country = body.destination_country
+    if body.shop_id is not None:
+        # 成本上下文归属校验（D63 唯一实现）：跨租户/已归档 → 404；
+        # 货源店铺不承载销售成本口径 → 422（与订单的 sales/source 语义保持一致）。
+        from ..services.shop_scope import active_shop
+
+        shop = active_shop(db, user.tenant_id, body.shop_id)
+        if not shop:
+            raise HTTPException(status_code=404, detail="店铺不存在或无访问权限")
+        if shop.role != "sales":
+            raise HTTPException(
+                status_code=422,
+                detail="货源店铺不承载销售成本口径，请选择销售店铺（sales）或改用通用试算")
+        # 市场口径唯一来源：显式目的国 > 店铺市场。缺省即沿用店铺市场，
+        # 避免「选了店铺却回显 market=null」的口径空转（前端不得自行推断）。
+        destination_country = destination_country or (shop.market or "")
     with PricingAgent(user.tenant_id) as a:
         return a.calc_profit(body.product_id, body.price,
-                            destination_country=body.destination_country,
+                            destination_country=destination_country,
                             channel_type=body.channel_type, site=body.site,
-                            qty=max(int(body.qty or 1), 1))
+                            qty=max(int(body.qty or 1), 1), shop_id=body.shop_id)
 
 
 @router.post("/suggest")

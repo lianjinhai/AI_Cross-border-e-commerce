@@ -18,7 +18,9 @@ export default defineConfig({
   },
   server: {
     port: 5174,
-    proxy: { '/api': 'http://127.0.0.1:8000' },
+    // 默认代理到 8000（旧/正式后端）。可设 VITE_API_PROXY_TARGET 指向其它后端
+    // （如 V9 接管版 8001），用于独立验收而不影响默认链路。
+    proxy: { '/api': process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8000' },
   },
   build: {
     outDir: 'dist',

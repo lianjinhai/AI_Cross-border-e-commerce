@@ -298,3 +298,119 @@ describe('J1 launchWizardStartStep — 深链跳过「选商品」步', () => {
     expect(launchWizardStartStep('abc')).toBe(0)
   })
 })
+
+// ── B3：概览 / 货源 / 表现 纯函数（防御式映射，任何缺失键回落「待补」，绝不崩溃） ──
+import {
+  offersViewModel,
+  overviewViewModel,
+  performanceViewModel,
+  stageTone,
+  supplierVerificationLabel,
+} from '../src/shared/productDetailView'
+
+describe('B3 stageTone', () => {
+  it('缺口阶段 amber / 就绪 blue / 经营 success / 未知 neutral', () => {
+    expect(stageTone('NO_SUPPLY')).toBe('amber')
+    expect(stageTone('CHANNEL_PENDING')).toBe('amber')
+    expect(stageTone('SUPPLY_READY')).toBe('blue')
+    expect(stageTone('LAUNCHING')).toBe('blue')
+    expect(stageTone('OPERATING')).toBe('success')
+    expect(stageTone('WHATEVER')).toBe('neutral')
+  })
+})
+
+describe('B3 overviewViewModel', () => {
+  it('完整 overview → 稳定视图（供给摘要 + 阶段 + 理由 + 表现透传）', () => {
+    const v = overviewViewModel({
+      product: { id: 1 },
+      supply: { offers_count: 2, selected_offer_id: 5, selected_offer_price_cny: 9.5,
+        min_offer_price_cny: 8.1, cost_missing: ['hs_code'], cost_complete: false },
+      channels: { total: 1, channels: [] },
+      performance: { units_sold: 12 },
+      stage: { key: 'SUPPLY_READY', label: '货源就绪', reasons: ['已有 2 条报价'] },
+      generated_at: '2026-10-19T08:00:00',
+    })
+    expect(v.supply.offersCount).toBe(2)
+    expect(v.supply.selectedOfferId).toBe(5)
+    expect(v.supply.costMissing).toEqual(['hs_code'])
+    expect(v.stage.key).toBe('SUPPLY_READY')
+    expect(v.stage.tone).toBe('blue')
+    expect(v.stage.reasons).toEqual(['已有 2 条报价'])
+    expect(v.performance).toEqual({ units_sold: 12 })
+    expect(v.generatedAt).toBe('2026-10-19T08:00:00')
+  })
+
+  it('空/缺失 overview → 全部「待补」回落，永不抛错', () => {
+    const v = overviewViewModel()
+    expect(v.product).toBeNull()
+    expect(v.supply.offersCount).toBeNull()
+    expect(v.supply.costMissing).toEqual([])
+    expect(v.stage.label).toBe('待补')
+    expect(v.stage.tone).toBe('neutral')
+    expect(v.performance).toBeNull()
+    const v2 = overviewViewModel(null)
+    expect(v2.stage.label).toBe('待补')
+  })
+})
+
+describe('B3 offersViewModel', () => {
+  const supplier = { id: 3, name: '深圳华强', region: '广东', supplier_type: 'factory',
+    verification_status: 'verified', rating: 4.6, certifications: ['ISO9001'], capabilities: ['OEM'] }
+
+  it('嵌套 supplier 契约 → 行视图（金额真币种、供应商 chips、选中标记）', () => {
+    const rows = offersViewModel([
+      { id: 5, price: 9.9, currency: 'CNY', moq: 50, ship_days: 14, in_stock: true,
+        valid_until: '2026-12-31', source_kind: 'manual', verification_status: 'verified', supplier },
+      { id: 6, price: 8.2, currency: 'CNY', moq: 100, ship_days: 20, in_stock: false,
+        source_kind: 'scraped', verification_status: 'unverified', supplier },
+    ], 5)
+    expect(rows).toHaveLength(2)
+    expect(rows[0].isSelected).toBe(true)
+    expect(rows[1].isSelected).toBe(false)
+    expect(rows[0].validityText).toBe('2026-12-31')
+    expect(rows[1].validityText).toBe('未填写')
+    expect(rows[0].supplier.name).toBe('深圳华强')
+    expect(rows[0].supplier.verificationHonestNote).toBe('平台核验，非工商尽调')
+    expect(rows[0].supplier.chips.map((c) => c.label)).toEqual(['ISO9001', 'OEM'])
+    expect(rows[0].priceText).not.toBe('—')
+    // 爬取 + 未核验 → 诚实「待核实」琥珀（tone 由 matchingView 决定，此处只断言非 success）
+    expect(rows[1].verificationLabel).toBe('待核实')
+  })
+
+  it('无币种 → 裸数字 + 「币种未知」，绝不默认 $；缺 id 不标选中', () => {
+    const rows = offersViewModel([{ price: 9.9, moq: 10 }], 5)
+    expect(rows[0].priceText).not.toContain('$')
+    expect(rows[0].priceNote).toBe('币种未知')
+    expect(rows[0].isSelected).toBe(false)
+  })
+
+  it('非数组输入 → 空数组', () => {
+    expect(offersViewModel(null, null)).toEqual([])
+  })
+})
+
+describe('B3 performanceViewModel', () => {
+  it('null → 未取得（available=false），绝不臆造 0', () => {
+    expect(performanceViewModel(null)).toMatchObject({ available: false, hasData: false, metrics: [] })
+  })
+  it('有值 → 金额裸数字 + 币种未知、比率百分比、缺失「—」', () => {
+    const v = performanceViewModel({ units_sold: 34, revenue: 1234.5, margin: 0.18, profit: null })
+    expect(v.available).toBe(true)
+    const byKey = Object.fromEntries(v.metrics.map((m) => [m.key, m]))
+    expect(byKey.units_sold.text).toBe('34')
+    expect(byKey.revenue.text).not.toContain('$')
+    expect(byKey.revenue.note).toBe('币种未知')
+    expect(byKey.margin.text).toBe('18.0%')
+    expect(byKey.profit.text).toBe('—')
+    expect(byKey.profit.missing).toBe(true)
+  })
+})
+
+describe('B3 supplierVerificationLabel', () => {
+  it('verified 必须带诚实边界注；未知值回显不臆造', () => {
+    expect(supplierVerificationLabel('verified')).toEqual({ label: '已核验', honestNote: '平台核验，非工商尽调' })
+    expect(supplierVerificationLabel('unverified').label).toBe('未核验')
+    expect(supplierVerificationLabel('').label).toBe('未核验')
+    expect(supplierVerificationLabel('weird').label).toBe('weird')
+  })
+})

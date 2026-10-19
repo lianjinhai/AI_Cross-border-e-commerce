@@ -78,8 +78,68 @@ def to_cny(db: Session, tenant_id: int, amount: float, currency: str) -> float:
     raise ValueError(f"缺少 {currency}→CNY 的有效汇率，禁止计算利润")
 
 
-def best_purchase(db: Session, tenant_id: int, product: Product) -> tuple[float, int | None]:
-    """在库且可用的报价里取最低采购价（已折算人民币）。"""
+def offer_state(db: Session, tenant_id: int, product: Product) -> tuple[str | None, list[str]]:
+    """选定报价的业务状态与对外承诺限制（B3 契约：失效规则唯一实现）。
+
+    三档语义（前端禁止自行推断，只用本函数结果）：
+      - ``MISSING``（删除/跨租户/非本商品）：选择失效，成本回退最低在库价；
+      - ``EXPIRED`` / ``OUT_OF_STOCK`` / ``UNVERIFIED``：**保留用户偏好且可试算**，
+        但阻断据此对外报价、采购下单与上线承诺（需先恢复有效事实）；
+      - ``OK``：无限制。未选定时返回 ``(None, [])``。
+
+    返回 ``(state, limits)``；``limits`` 是可直接展示的中文阻断原因。
+    """
+    sel_id = product.selected_offer_id
+    if sel_id is None:
+        return None, []
+    sel = db.get(SupplierOffer, sel_id)
+    if (sel is None or sel.tenant_id != tenant_id or sel.product_id != product.id):
+        return "MISSING", ["选定报价已不存在或无权访问：成本已回退最低在库价，请重新比选"]
+    limits: list[str] = []
+    state = "OK"
+    if sel.valid_until is not None and sel.valid_until < datetime.utcnow():
+        state = "EXPIRED"
+        limits.append("报价已过期：可保留偏好与试算，不得据此对外报价或采购")
+    elif not sel.in_stock:
+        state = "OUT_OF_STOCK"
+        limits.append("报价缺货：可保留偏好与试算，不得据此对外报价或采购")
+    elif not _offer_verified(sel):
+        state = "UNVERIFIED"
+        limits.append("报价来源待核实：可保留偏好与试算，不得据此对外报价或采购")
+    return state, limits
+
+
+def _offer_verified(sel: SupplierOffer) -> bool:
+    """报价是否已核实。口径与 models.SupplierOffer 注释一致：
+
+    ``manual`` 来源视为人工已核实（可追责）；其余来源须 ``verification_status``
+    为 ``manual`` / ``verified`` 才视为已核实，``unverified`` / ``scraped`` 均待核实。
+    """
+    verification = (sel.verification_status or "").lower()
+    source_kind = (sel.source_kind or "").lower()
+    if source_kind == "manual":
+        return True
+    return verification in {"manual", "verified"}
+
+
+def best_purchase(db: Session, tenant_id: int, product: Product,
+                  honor_selection: bool = True) -> tuple[float, int | None]:
+    """取采购价（已折算人民币）与所用报价 id。
+
+    选中报价优先（``honor_selection=True``，成本引擎默认）：若
+    ``product.selected_offer_id`` 已设置且该报价行存在、匹配本租户与商品，
+    则直接采用（**即使缺货也尊重用户显式选择**）——缺货状态由下游渲染层
+    处理，不在这里降级为「最低在库价」。否则退回「在库最低价」逻辑。
+    ``honor_selection=False`` 仅用于 overview 的 ``min_offer_price_cny``：
+    那个字段的语义是「真正的最低在库价」，供与选定价对比，绝不能被选定覆盖。
+    返回签名不变：(price_cny, offer_id)，offer_id 为 None 表示用了 attrs 占位价。
+    """
+    sel_id = product.selected_offer_id
+    if honor_selection and sel_id is not None:
+        sel = db.get(SupplierOffer, sel_id)
+        if (sel is not None and sel.tenant_id == tenant_id
+                and sel.product_id == product.id):
+            return to_cny(db, tenant_id, float(sel.price), sel.currency), sel.id
     offers = (db.query(SupplierOffer)
               .filter(SupplierOffer.tenant_id == tenant_id,
                       SupplierOffer.product_id == product.id,
@@ -89,6 +149,35 @@ def best_purchase(db: Session, tenant_id: int, product: Product) -> tuple[float,
     if converted:
         return min(converted, key=lambda x: x[0])
     return float((product.attrs or {}).get("supplier_price") or 10.0), None
+
+
+def cost_completeness(db: Session, tenant_id: int, product: Product) -> tuple[list[str], bool]:
+    """回报真实成本所需的必填输入是否齐备。
+
+    返回 ``(missing, complete)``。``missing`` 列出当前确实缺失或被退化的成本输入
+    （字段名用于 ``overview.supply.cost_missing``）：
+      - ``purchase``：无在库报价且 ``product.attrs.supplier_price`` 缺失——
+        costing 会退化为 10.0 占位价，并非真实采购价；
+      - ``fx``：存在非 CNY 报价币种却缺少该币种→CNY 的折算汇率（to_cny 会 fail-closed 拒绝）；
+      - ``hs_code``：商品无 HS 编码，关税引擎按兜底税率估算（非真实申报值）。
+    """
+    missing: list[str] = []
+    attrs = product.attrs or {}
+    offers = (db.query(SupplierOffer)
+              .filter(SupplierOffer.tenant_id == tenant_id,
+                      SupplierOffer.product_id == product.id,
+                      SupplierOffer.in_stock.is_(True))
+              .all())
+    if not offers and not attrs.get("supplier_price"):
+        missing.append("purchase")
+    non_cny = {o.currency for o in offers if (o.currency or "CNY").upper() != "CNY"}
+    for cur in non_cny:
+        if latest_fx(db, tenant_id, cur, "CNY") is None:
+            missing.append("fx")
+            break
+    if not (product.hs_code or attrs.get("hs_code")):
+        missing.append("hs_code")
+    return missing, (len(missing) == 0)
 
 
 def cost_elements(db: Session, tenant_id: int, product: Product, platform: str = "",
@@ -160,7 +249,8 @@ def _quantize(amount: float) -> float:
 
 def calc_profit(db: Session, tenant_id: int, product_id: int, price: float | None = None,
                 destination_country: str = "", channel_type: str = "",
-                site: str = "", qty: int = 1, warehouse_id: int | None = None) -> dict:
+                site: str = "", qty: int = 1, warehouse_id: int | None = None,
+                shop_id: int | None = None) -> dict:
     """真实利润 = 售价 - 全部成本 / 汇率。
 
     成本明细（8+ 项，D58）：
@@ -205,6 +295,7 @@ def calc_profit(db: Session, tenant_id: int, product_id: int, price: float | Non
         "refund_cost_cny": _quantize(refund_cost), "tax_rebate_cny": _quantize(tax_rebate),
         "holding_cost_cny": _quantize(holding_cost),
     }
+    sel_state, sel_limits = offer_state(db, tenant_id, product)
     return {
         "product_id": product_id,
         "purchase_cost": ce["purchase_cny"], "logistics_cost": ce["logistics_cny"],
@@ -224,4 +315,15 @@ def calc_profit(db: Session, tenant_id: int, product_id: int, price: float | Non
         "holding_cost_applied": ce.get("holding_cost_applied", False),
         "holding_cost_detail": ce.get("holding_cost_detail", {}),
         "cost_total_cny": _quantize(cost_total_cny), "cost_breakdown": breakdown,
+        # 成本依据报价：costing 实际采用的 offer（选定优先，否则最低在库价），
+        # 供前端展示「成本依据报价 offer_id=X」并在选定失效时诚实标注回退，绝不前端本地派生。
+        "offer_id": ce.get("offer_id"),
+        # 选定报价状态与对外承诺限制（B3 契约唯一实现，见 offer_state）。
+        "offer_state": sel_state,
+        "offer_limits": sel_limits,
+        # 成本上下文回显：shop_id 为空表示通用试算（不含店铺专属费用口径）。
+        "shop_id": shop_id,
+        "market": destination_country or None,
+        "qty": qty,
+        "is_generic_estimate": shop_id is None,
     }
