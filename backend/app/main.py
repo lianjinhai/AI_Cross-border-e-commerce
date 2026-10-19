@@ -43,6 +43,7 @@ from .routers import (
     shops,
     suppliers,
     support,
+    workbench,
     workflows,
 )
 from .seed import ensure_listing_review_workflow, seed_if_empty
@@ -85,13 +86,36 @@ def create_app() -> FastAPI:
     for m in (auth, products, product_assets, product_channels, discovery, suppliers, listings, compliance, actions,
               pricing, ads, orders, support, bi, workflows, launch, knowledge, ai,
               schedules, purchases, shops, admin, refunds, settlements, finance,
-              factory_network, cross_border, me, alerts,
+              factory_network, cross_border, me, alerts, workbench,
               business_profiles):
         app.include_router(m.router, prefix="/api")
 
     @app.get("/api/health", include_in_schema=False)
     def health():
         return {"ok": True, "app": config.settings.app_name}
+
+    @app.get("/api/build-info", include_in_schema=False)
+    def build_info():
+        """暴露当前实际部署的前端身份，避免「用户访问了哪套前端」无从判断。
+
+        返回：服务中的 dist 目录、dist 是否实际存在、前端源目录（frontend=旧 /
+        frontend-v9=V9）、构建版本标识（ERP_BUILD_*）、环境。用于排查
+        「代码已开发但界面未变」类问题——直接证明运行入口指向哪套前端。
+        """
+        dist = config.settings.frontend_dist
+        norm = os.path.normpath(dist)
+        # 识别这是 V9 还是旧前端：路径中含 frontend-v9 即为 V9。
+        is_v9 = "frontend-v9" in norm or "frontend_v9" in norm
+        return {
+            "frontend_dir": "frontend-v9" if is_v9 else "frontend",
+            "frontend_dist": norm,
+            "dist_exists": os.path.isdir(norm),
+            "dist_has_index": os.path.isfile(os.path.join(norm, "index.html")),
+            "build_id": config.settings.build_id,
+            "build_sha": config.settings.build_sha,
+            "build_time": config.settings.build_time,
+            "env": config.settings.environment,
+        }
 
     @app.get("/api/placeholder/{seed}.svg", include_in_schema=False)
     def placeholder(seed: str):

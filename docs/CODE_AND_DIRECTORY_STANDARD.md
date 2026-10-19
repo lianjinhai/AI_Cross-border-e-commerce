@@ -43,6 +43,8 @@
 
 ## 2. 目标目录结构
 
+V9.1 的前后端文件落位补充见 `docs/V9_1_DIRECTORY_AND_FILE_PLAN.md`（现有路径与拟新增文件分别标明）。该清单不改变本规范的依赖、迁移与目录红线；新增 services 模块仍须按 D-6 同步本节。
+
 ```
 AI-电商ERP/
 ├── .github/workflows/ci.yml        # CI：测试 + 构建
@@ -121,6 +123,20 @@ AI-电商ERP/
 │   ├── src/{views,components,composables}/   # components/composables 为 Phase 2 目标
 │   ├── tests/
 │   └── dist/  node_modules/        # 生成物，禁止提交
+├── frontend-v9/                   # V9 当前开发对象；旧 frontend 保留回退
+│   ├── src/
+│   │   ├── app/router/            # 路由、守卫、旧链接兼容
+│   │   ├── shells/                # 三空间外壳及共享内核
+│   │   ├── pages/                 # 按业务域组织的路由页面
+│   │   ├── features/              # 业务专用组件与逻辑
+│   │   ├── components/            # 跨域公共组件
+│   │   ├── composables/           # Vue 响应式编排
+│   │   ├── api/domains/           # 领域请求封装
+│   │   ├── shared/                # 展示转换、上下文、HTTP 与导航基础设施
+│   │   ├── permissions/           # 前端权限展示判断
+│   │   └── styles/                # 设计令牌
+│   ├── tests/                     # Vitest 测试
+│   └── dist/  node_modules/        # 生成物，Git/Docker 双重忽略后使用
 ├── Dockerfile                      # 两阶段构建；runtime 阶段已命名（可 --target 单独验证）
 ├── docker-compose.yml              # 生产模式固定 + 密钥必填（无默认值）
 ├── docker-entrypoint.sh            # 容器入口：先 alembic upgrade head 再启服务

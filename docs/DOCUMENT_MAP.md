@@ -108,6 +108,8 @@ V9.0 全站前端重设计项目的产品与架构冻结文档；UX-A 一次性�
 | 文档 | 状态 | 作用 |
 |---|---|---|
 | docs/FRONTEND_V9_MASTER_DESIGN.md | UX-A 冻结 | 三空间外壳架构、基座落位决策（frontend-v9 新目录）、迁移/回退总纲、风险清单 |
+| docs/V9_1_DIRECTORY_AND_FILE_PLAN.md | V9.1 开发落位方案（2026-10-18） | 现有目录职责、前后端文件映射、测试位置、拟新增文件及逐批文件清单；不替代上位目录规范 |
+| docs/V9_1_NEXT_EXECUTION_PLAN.md | 待执行（2026-10-19） | B3 集成收尾、AI 能力契约与真实执行闭环、成本订单联动及逐阶段验收；进度仍维护于 FRONTEND_V9_PROGRESS |
 | docs/FRONTEND_V9_PAGE_MATRIX.md | UX-A 冻结 | 全站 30 界面逐页矩阵（含 18 项弹窗/隐藏界面清单、后端域覆盖核对） |
 | docs/FRONTEND_V9_USER_JOURNEYS.md | UX-A 冻结 | 三产品空间定义与 7 类用户旅程、跨起点衔接 |
 | docs/FRONTEND_V9_NAVIGATION.md | UX-A 冻结 | 三空间导航冻结（11 业务域+Console/Factory 菜单）、顶栏规范、6 角色可见路径 |

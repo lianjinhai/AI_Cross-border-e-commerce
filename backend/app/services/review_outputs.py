@@ -2,6 +2,8 @@
 
 import os
 
+from sqlalchemy import func
+
 from ..db import SessionLocal
 from ..models import ComplianceReport, Listing, ListingReviewDecision, Product, Tenant
 from ..serialize import to_dict
@@ -185,3 +187,50 @@ def approve_review_output(db, ctx, lid, note, review_id):
     except Exception:
         db.rollback()
         raise
+
+
+# ---------------------------------------------------------------- 复核队列（只读）
+
+_REVIEW_STATUS = ("manual_required", "rejected", "approved")
+
+
+def _validate_review_status(status: str) -> None:
+    if status not in _REVIEW_STATUS:
+        raise ActionError(400, "status 必须是 manual_required/rejected/approved")
+
+
+def _latest_review_ids(db, tenant_id: int, status: str):
+    """每个 Listing 的最新一次复核决策 id 子查询（按决策取值过滤）。"""
+    return (db.query(func.max(ListingReviewDecision.id).label("max_id"))
+            .filter(ListingReviewDecision.tenant_id == tenant_id,
+                    ListingReviewDecision.decision == status)
+            .group_by(ListingReviewDecision.listing_id).subquery())
+
+
+def review_queue(db, tenant_id: int, status: str = "manual_required", limit: int = 50) -> dict:
+    """合规审批队列：待人工复核的 Listing（router 与 workbench BFF 共用的单一实现）。
+
+    默认返回 ``manual_required``（复核 Agent 判定需人工确认的），每条附最新复核决策与理由。
+    """
+    _validate_review_status(status)
+    sub = _latest_review_ids(db, tenant_id, status)
+    rows = (db.query(ListingReviewDecision, Listing)
+            .join(sub, ListingReviewDecision.id == sub.c.max_id)
+            .join(Listing, Listing.id == ListingReviewDecision.listing_id)
+            .order_by(ListingReviewDecision.created_at.desc())
+            .limit(max(1, min(int(limit or 50), 200))).all())
+    items = []
+    for decision, listing in rows:
+        item = to_dict(decision)
+        item["listing_title"] = listing.title
+        item["platform"] = listing.platform
+        item["listing_status"] = listing.status
+        items.append(item)
+    return {"items": items, "total": len(items)}
+
+
+def review_queue_count(db, tenant_id: int, status: str = "manual_required") -> int:
+    """符合条件的待复核 Listing **总数**（不受 limit 影响，供角标使用）。"""
+    _validate_review_status(status)
+    sub = _latest_review_ids(db, tenant_id, status)
+    return int(db.query(func.count()).select_from(sub).scalar() or 0)

@@ -67,8 +67,20 @@ class Settings:
     # 工作流调试模式：1 = 同步执行（测试用），0 = 后台线程执行
     sync_workflow: bool = os.getenv("ERP_SYNC_WORKFLOW", "0") == "1"
 
-    # 前端构建产物目录（存在时由后端托管）
-    frontend_dist: str = os.path.join(os.path.dirname(_BACKEND_DIR), "frontend", "dist")
+    # 前端构建产物目录（存在时由后端托管）。
+    # 默认仍指向旧 frontend/dist（可回退）；设置 ERP_FRONTEND_DIST 可切换到
+    # frontend-v9/dist（V9 接管正式入口）。这是「用户看不到新版界面」的根因——
+    # 此前该路径写死为 frontend/dist，V9 构建产物从未被任何入口部署。
+    frontend_dist: str = os.getenv(
+        "ERP_FRONTEND_DIST",
+        os.path.join(os.path.dirname(_BACKEND_DIR), "frontend", "dist"),
+    )
+
+    # 构建版本标识：暴露给 /api/build-info，便于判断用户究竟访问哪一套前端。
+    # ERP_BUILD_ID / ERP_BUILD_SHA / ERP_BUILD_TIME 由发布链路（CI/entrypoint）注入。
+    build_id: str = os.getenv("ERP_BUILD_ID", "")
+    build_sha: str = os.getenv("ERP_BUILD_SHA", "")
+    build_time: str = os.getenv("ERP_BUILD_TIME", "")
 
     # 反向代理信任开关（见 Caddyfile / docker-compose.tls.yml）
     #

@@ -1,0 +1,309 @@
+{
+  "summary": {
+    "total": 20,
+    "passed": 20,
+    "failed": 0,
+    "verdict": "PASS",
+    "failedChecks": [],
+    "notes": [],
+    "checks": [
+      {
+        "name": "Z0 真实表单登录成功并进入 /app 空间",
+        "pass": true,
+        "detail": "http://127.0.0.1:5193/app"
+      },
+      {
+        "name": "A 侧栏恰好 5 个一级入口",
+        "pass": true,
+        "detail": {
+          "topLevelCount": 5,
+          "visibleTopLevelCount": 5
+        }
+      },
+      {
+        "name": "A 标签精确 = 我的生意/我的商品/我的订单/我的收益/全部工具",
+        "pass": true,
+        "detail": {
+          "observed": [
+            "我的生意",
+            "我的商品",
+            "我的订单",
+            "我的收益",
+            "全部工具"
+          ]
+        }
+      },
+      {
+        "name": "B 首屏可见一级行数 = 5",
+        "pass": true,
+        "detail": {
+          "visibleTopLevelCount": 5
+        }
+      },
+      {
+        "name": "B 默认仅当前路由所在组展开（openGroup 数=1）",
+        "pass": true,
+        "detail": {
+          "openGroupCount": 1,
+          "openGroups": [
+            "我的生意"
+          ]
+        }
+      },
+      {
+        "name": "B 过期叶子（商品库等）默认不可见（visible 叶子=2）",
+        "pass": true,
+        "detail": {
+          "visibleLeafCount": 2,
+          "visibleLeafLabels": [
+            "经营首页",
+            "我的待办"
+          ]
+        }
+      },
+      {
+        "name": "D 侧栏背景 = rgb(12, 38, 84)",
+        "pass": true,
+        "detail": {
+          "observed": "rgb(12, 38, 84)",
+          "token": "#0C2654"
+        }
+      },
+      {
+        "name": "D 激活项文字 = rgb(255, 255, 255) 白",
+        "pass": true,
+        "detail": {
+          "observed": "rgb(255, 255, 255)",
+          "token": "#FFFFFF"
+        }
+      },
+      {
+        "name": "D 激活项背景 = rgb(36, 90, 156)",
+        "pass": true,
+        "detail": {
+          "observed": "rgb(36, 90, 156)",
+          "token": "#245A9C",
+          "activeLabel": "经营首页"
+        }
+      },
+      {
+        "name": "G 390px 侧栏已收起（aside 宽度 ≤80px）",
+        "pass": true,
+        "detail": {
+          "asideW": 64,
+          "collapsed": true
+        }
+      },
+      {
+        "name": "G 390px 主内容区未被裁切（mainW>0 且占满视口）",
+        "pass": true,
+        "detail": {
+          "win": 390,
+          "mainW": 311,
+          "asideW": 64
+        }
+      },
+      {
+        "name": "C 点击前「商品库」不可见（过期叶子隐藏）",
+        "pass": true,
+        "detail": {
+          "beforeLeaves": 2
+        }
+      },
+      {
+        "name": "C 点击「我的商品」后其 4 个子集可见（含商品库）",
+        "pass": true,
+        "detail": {
+          "leafCount": 6,
+          "goodsVisible": true,
+          "goodsCount": 4
+        }
+      },
+      {
+        "name": "C 「商品库」导航到 /app/products",
+        "pass": true,
+        "detail": {
+          "goodsUrl": "http://127.0.0.1:5193/app/products"
+        }
+      },
+      {
+        "name": "E 主按钮 = rgb(35, 107, 189)",
+        "pass": true,
+        "detail": {
+          "observed": "rgb(35, 107, 189)",
+          "token": "#236BBD"
+        }
+      },
+      {
+        "name": "E hover 为同色相更浅 tint（非 #409EFF 系）",
+        "pass": true,
+        "detail": {
+          "ok": true,
+          "baseRGB": [
+            35,
+            107,
+            189
+          ],
+          "hoverRGB": [
+            101,
+            151,
+            209
+          ],
+          "hoverBg": "rgb(101, 151, 209)",
+          "baseHue": 212,
+          "hoverHue": 212,
+          "hueDelta": 0,
+          "baseLight": 44,
+          "hoverLight": 61,
+          "lighter": true,
+          "sameHueFamily": true
+        }
+      },
+      {
+        "name": "F 旧深链 /products → /app/products",
+        "pass": true,
+        "detail": {
+          "landed": "http://127.0.0.1:5193/app/products"
+        }
+      },
+      {
+        "name": "F 旧深链 /orders → /app/orders",
+        "pass": true,
+        "detail": {
+          "landed": "http://127.0.0.1:5193/app/orders"
+        }
+      },
+      {
+        "name": "F 旧深链 /finance → /app/analytics/finance",
+        "pass": true,
+        "detail": {
+          "landed": "http://127.0.0.1:5193/app/analytics/finance"
+        }
+      },
+      {
+        "name": "F 旧深链 /launch → /app/launch",
+        "pass": true,
+        "detail": {
+          "landed": "http://127.0.0.1:5193/app/launch"
+        }
+      }
+    ]
+  },
+  "scenarios": {
+    "sidebar_firstpaint": {
+      "topLevelCount": 5,
+      "visibleTopLevelCount": 5,
+      "labels": [
+        "我的生意",
+        "我的商品",
+        "我的订单",
+        "我的收益",
+        "全部工具"
+      ],
+      "visibleLeafCount": 2,
+      "visibleLeafLabels": [
+        "经营首页",
+        "我的待办"
+      ],
+      "openGroupCount": 1,
+      "openGroups": [
+        "我的生意"
+      ]
+    },
+    "sidebar_labels": [
+      "我的生意",
+      "我的商品",
+      "我的订单",
+      "我的收益",
+      "全部工具"
+    ],
+    "colors_sidebar": {
+      "sidebarBg": "rgb(12, 38, 84)",
+      "activeText": "rgb(255, 255, 255)",
+      "activeBg": "rgb(36, 90, 156)",
+      "activeLabel": "经营首页",
+      "tokenNavy": "#0C2654",
+      "tokenActiveBg": "#245A9C",
+      "tokenActiveText": "#FFFFFF"
+    },
+    "g_390": {
+      "win": 390,
+      "asideW": 64,
+      "collapsed": true,
+      "mainW": 311,
+      "sidebarCollapsedExpected": true
+    },
+    "c_expand": {
+      "beforeLeaves": 2,
+      "clicked": {
+        "ok": true
+      },
+      "after": {
+        "leafCount": 6,
+        "goodsVisible": true,
+        "goodsCount": 4
+      }
+    },
+    "c_nav": {
+      "goodsUrl": "http://127.0.0.1:5193/app/products",
+      "onProducts": true
+    },
+    "e_primary": {
+      "found": true,
+      "label": "新增商品",
+      "bg": "rgb(35, 107, 189)",
+      "color": "rgb(255, 255, 255)",
+      "cx": 1188,
+      "cy": 122,
+      "tokenPrimary": "#236BBD",
+      "tokenElPrimary": "#236BBD",
+      "cmp": {
+        "ok": true,
+        "baseRGB": [
+          35,
+          107,
+          189
+        ],
+        "hoverRGB": [
+          101,
+          151,
+          209
+        ],
+        "hoverBg": "rgb(101, 151, 209)",
+        "baseHue": 212,
+        "hoverHue": 212,
+        "hueDelta": 0,
+        "baseLight": 44,
+        "hoverLight": 61,
+        "lighter": true,
+        "sameHueFamily": true
+      }
+    },
+    "deep_links": [
+      {
+        "from": "/products",
+        "landed": "http://127.0.0.1:5193/app/products",
+        "expect": "/app/products",
+        "ok": true
+      },
+      {
+        "from": "/orders",
+        "landed": "http://127.0.0.1:5193/app/orders",
+        "expect": "/app/orders",
+        "ok": true
+      },
+      {
+        "from": "/finance",
+        "landed": "http://127.0.0.1:5193/app/analytics/finance",
+        "expect": "/app/analytics/finance",
+        "ok": true
+      },
+      {
+        "from": "/launch",
+        "landed": "http://127.0.0.1:5193/app/launch",
+        "expect": "/app/launch",
+        "ok": true
+      }
+    ]
+  }
+}

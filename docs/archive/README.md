@@ -7,6 +7,9 @@
 
 | 文件 | 类型 | 归档日期 | 说明 |
 |---|---|---|---|
+| `V9_1_AI_DEVELOPMENT_PROMPTS_2026-10-18.md` | 原型落地开发提示词 | 2026-10-18 | 10 张链鲸原型与现有 V9 源码映射、总开发提示词、分批指令与独立验收提示词 |
+| `FRONTEND_DESIGN_AUDIT_2026-10-18.md` | 前端设计现状审查 | 2026-10-18 | V9 外壳、核心页面、源码确认问题及后续原型对照底稿；未做浏览器视觉验收 |
+| `DEVELOPMENT_SUMMARY_2026-10-14.md` | 开发总结与交接快照 | 2026-10-14 | 当前代码/提交/历史验收分层，Launch 与 V9 成果、Agent 遗留、工作区增量及后续任务 |
 | `final_architecture_assessment.md` | 架构评估报告 | 2026-09-23 | Phase 0 最终业务架构冻结依据（662 行） |
 | `phase1_migration_safety.md` | 迁移安全分析 | 2026-09-23 | Phase 1.0 只读审计报告（457 行） |
 | `phase1_migration_abc_design.md` | 迁移设计 | 2026-09-23 | Revision A/B/C 精确设计；**已执行完成** |
