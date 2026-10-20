@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.agents.discovery import ProductAgent
 from app.agents.orchestrator import invoke_product
 from app.db import Base, SessionLocal
-from app.models import AiAction, Product, Tenant, User, WorkflowTemplate
+from app.models import AiAction, AiLog, Product, Tenant, User, WorkflowTemplate
 from app.services.action_system import HANDLERS, execute_action, submit_action
 from app.services.ai_actions import ActionError
 from app.services.product_standardization import safe_fields, snapshot
@@ -349,8 +349,9 @@ def test_workflow_with_zero_actions_retains_failed_auto_selected_range(client, a
     ids = first["steps"][0]["output"]["_standardization_manifest"]["product_ids"]
     assert product["id"] in ids
     with SessionLocal() as db:
-        db.query(Product).filter(Product.id.in_(ids)).update({"status": "deleted"}, synchronize_session=False)
-        db.commit()
+        # 本用例把 standardize 整体 mock 成失败，没有改动任何商品；
+        # 原先这里把「全部活跃商品」标记 deleted 做清理，会让后续用例
+        # 查不到商品（如 test_ai_native_p1 取 products[0] 直接 IndexError）。
         assert db.query(AiAction).filter_by(action_type="UPDATE_PRODUCT_CONTENT",
                                            target_id=product["id"]).count() == 0
     response = client.post(f"/api/workflows/runs/{first['id']}/resume", headers=auth_headers)
@@ -358,3 +359,62 @@ def test_workflow_with_zero_actions_retains_failed_auto_selected_range(client, a
     detail = client.get(f"/api/workflows/runs/{first['id']}", headers=auth_headers).json()
     assert detail["steps"][0]["output"]["_standardization_manifest"]["product_ids"] == ids
     assert len(detail["steps"][0]["output"]["errors"]) == len(ids)
+
+
+def test_action_evidence_records_proposal_source(case):
+    """建议来源必须落进 Action 证据：mode=llm 时不能标成 rule，反之亦然。"""
+    db, ctx, _, product = case
+    result = invoke_product(db, ctx, "standardize", product.id, scope_key="s4-source")
+    db.expire_all()
+    action = db.query(AiAction).filter_by(id=result["action_id"]).one()
+    assert action.evidence["source"] == "llm"
+    assert action.evidence["model_mode"] == "llm"
+
+
+def test_invalid_model_output_degrades_to_rule_and_is_traced(monkeypatch):
+    """模型返回非结构化内容：降级规则引擎，且审计里留下「llm 失败」痕迹。
+
+    S4 要求「无效结构不造成功建议」——降级本身可接受（离线可用），
+    但事后必须能看出模型确实失败过，不能只剩一条 rule 日志。
+    """
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        tenant = Tenant(name="模型降级探针")
+        db.add(tenant)
+        db.commit()
+        tenant_id = tenant.id
+
+    class FakeRouter:
+        available = True
+
+        def ask_json(self, *args, **kwargs):
+            return {"parsed": {}, "raw": {"model": "fake-model",
+                                          "content": "not json", "latency_ms": 7}}
+
+    monkeypatch.setattr("app.agents.base.SessionLocal", lambda: Session(engine))
+    monkeypatch.setattr("app.agents.base.ModelRouter", lambda _db: FakeRouter())
+    agent = ProductAgent(tenant_id)
+    try:
+        result, mode = agent.ask_json("standardize", "system", "prompt",
+                                      fallback=lambda: {"attrs": {"color": "白"}})
+    finally:
+        agent.close()
+
+    assert mode == "rule" and result == {"attrs": {"color": "白"}}
+    with Session(engine) as fresh:
+        logs = fresh.query(AiLog).filter(AiLog.action == "standardize").order_by(AiLog.id).all()
+        assert [(row.mode, row.ok) for row in logs] == [("llm", False), ("rule", True)]
+        assert logs[0].response == "not json" and logs[0].model == "fake-model"
+    engine.dispose()
+
+
+def test_repeat_standardize_reuses_success_action(case):
+    """同一商品、目标值未变化的重复请求必须复用既有 Action（不产生第二次写）。"""
+    db, ctx, _, product = case
+    first = invoke_product(db, ctx, "standardize", product.id, scope_key="s4-replay-1")
+    second = invoke_product(db, ctx, "standardize", product.id, scope_key="s4-replay-2")
+    assert second["action_id"] == first["action_id"]
+    assert second.get("idempotent_replay") is True
+    assert db.query(AiAction).filter_by(action_type="UPDATE_PRODUCT_CONTENT",
+                                        target_id=product.id).count() == 1

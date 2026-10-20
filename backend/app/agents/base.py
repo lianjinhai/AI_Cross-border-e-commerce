@@ -78,6 +78,10 @@ class BaseAgent:
                     self._log(action, "llm", r["raw"]["model"], prompt,
                               r["raw"]["content"], r["raw"]["latency_ms"], ok=True)
                     return parsed, "llm"
+                # 结构无效（空对象/非 dict）：必须留失败痕迹再降级，
+                # 否则事后只能看到一条 rule 日志，无法判断模型到底回没回。
+                self._log(action, "llm", r["raw"].get("model", ""), prompt,
+                          r["raw"].get("content", ""), r["raw"].get("latency_ms", 0), ok=False)
             except Exception as e:  # 任何 LLM 故障都降级，不阻塞业务
                 self._log(action, "llm", "", prompt, str(e), 0, ok=False)
         result = fallback() if fallback else {}

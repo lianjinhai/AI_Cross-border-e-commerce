@@ -40,9 +40,42 @@ def recover_range(db, ctx, scope_key, supplied):
 
 def finalize_product(db, ctx, output, scope_key, scope_manifest=None):
     proposal = output["_action_proposal"]
+    # 范围清单（批量/工作流）必须落在各自的 Action 证据里，供断点恢复使用；
+    # 因此只在单商品直接调用时启用「目标值未变→复用既有成功 Action」。
+    same = _unchanged_success(db, ctx, proposal) if scope_manifest is None else None
+    if same is not None:
+        # 重复请求且目标值已等于上次成功结果：复用既有 Action，不再造第二个写动作。
+        return {**same.outcome["result"], "action_id": same.id,
+                "action_status": same.status, "idempotent_replay": True}
     action = submit_action(db, ctx, "product", proposal, scope_key,
-                           scope_manifest=scope_manifest)
+                           scope_manifest=scope_manifest,
+                           extra_evidence=output.get("_action_proposal_evidence"))
     return finish_product(db, ctx, action)
+
+
+def _unchanged_success(db, ctx, proposal):
+    """最近一次成功标准化写入的目标值，是否与本次提案完全一致。
+
+    为什么按「目标值」而不是整份 payload 比较：payload.before 里含 ``updated_at``，
+    每次读都不同；若按整份比较，同一商品的重复请求永远命中不了，会不断新建 Action。
+    """
+    payload = proposal.get("payload") or {}
+    target_values = {key: value for key, value in payload.items() if key != "before"}
+    if not target_values:
+        return None
+    previous = (db.query(AiAction)
+                .filter(AiAction.tenant_id == ctx.legacy_tenant_id,
+                        AiAction.workspace_id == ctx.workspace_id,
+                        AiAction.requested_by == ctx.user_id,
+                        AiAction.action_type == "UPDATE_PRODUCT_CONTENT",
+                        AiAction.target_id == proposal["target_id"],
+                        AiAction.status == "SUCCESS")
+                .order_by(AiAction.id.desc()).first())
+    if previous is None:
+        return None
+    previous_values = {key: value for key, value in
+                       (previous.evidence.get("payload") or {}).items() if key != "before"}
+    return previous if previous_values == target_values else None
 
 
 def batch_result(results, errors, manifest):

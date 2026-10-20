@@ -317,7 +317,7 @@ class ProductAgent(BaseAgent):
         category = self.map_category(p["title"])
         system = "你是电商商品数据标准化引擎。只返回 JSON。"
         prompt = (f"标准化商品「{p['title']}」，返回 JSON attrs 仅补全 weight_kg/material/color。")
-        result, _mode = self.ask_json("standardize", system, prompt,
+        result, mode = self.ask_json("standardize", system, prompt,
                                      fallback=lambda: {"attrs": {}}, small_task=True)
         fields = safe_fields(p, category, result.get("attrs") if isinstance(result, dict) else None)
         got = self.tool("product").call("find_duplicate", dedupe_hash=fields["dedupe_hash"],
@@ -328,7 +328,10 @@ class ProductAgent(BaseAgent):
                 "_action_proposal": {
             "action_type": "UPDATE_PRODUCT_CONTENT", "target_type": "product",
             "target_id": product_id, "reason": "安全标准化商品类目、重量、材质和颜色",
-            "payload": {"before": snapshot(p), **fields}}}
+            "payload": {"before": snapshot(p), **fields}},
+                # 建议来源如实落进 Action 证据：离线/故障降级时是 rule，不是「AI 生成」。
+                "_action_proposal_evidence": {"source": "llm" if mode == "llm" else "rule",
+                                              "model_mode": mode}}
 
     def standardize_batch(self, params: dict | None = None, context: dict | None = None) -> dict:
         params, context = params or {}, context or {}
