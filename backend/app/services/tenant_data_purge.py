@@ -55,6 +55,15 @@ from ..workflows.kinds import PLATFORM_LAUNCH
 class DemoPurgeBlocked(ValueError):
     """上线历史不能通过旧演示清理入口删除。"""
 
+
+# 外键闭环（无纯拓扑解）：products.selected_offer_id → supplier_offers.id，
+# 而 supplier_offers.product_id → products.id。无论先删哪张表都会被另一条边拦住，
+# 因此必须显式断环——清理前先把本租户商品的 selected_offer_id 置空。
+# 新增同类互引时，同步登记在此并在 purge_tenant_demo_data 里补对应的置空语句。
+_CYCLE_BREAKS = frozenset({
+    ("products", "selected_offer_id", "supplier_offers"),
+})
+
 # 删除顺序 = 外键拓扑序（被引用者必须后删）。每一项都含 tenant_id，按租户隔离。
 _PURGE_PLAN = (
     (WorkflowEvent, "workflow_events"),                     # → workflow_steps / workflow_runs
@@ -98,6 +107,11 @@ def purge_tenant_demo_data(db: Session, tenant_id: int) -> dict[str, int]:
     if db.query(ProductAsset.id).filter_by(tenant_id=tenant_id).first():
         raise DemoPurgeBlocked("已有素材版本与权利记录，不能执行演示数据清理")
     counts: dict[str, int] = {}
+    # 显式断环：products ↔ supplier_offers 互引，先把选定报价引用置空（见 _CYCLE_BREAKS）。
+    # 只改引用列，商品行本身仍在计划末尾由 Product 删除。
+    db.query(Product).filter(
+        Product.tenant_id == tenant_id, Product.selected_offer_id.isnot(None)
+    ).update({Product.selected_offer_id: None}, synchronize_session=False)
     for model, label in _PURGE_PLAN:
         counts[label] = int(
             db.query(func.count(model.id)).filter(model.tenant_id == tenant_id).scalar() or 0)

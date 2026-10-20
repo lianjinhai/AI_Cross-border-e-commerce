@@ -17,6 +17,15 @@ export async function fetchOrders({ page, status, shopId, platform, keyword } = 
 }
 
 /**
+ * 单条订单详情：GET /orders/{id}（S5）。
+ * 返回 {order, lines, fees, purchases, refunds, fulfillment, totals, source}；
+ * 采购为 CNY 应付，与订单成本不是同一口径，前端不得相加或换算。
+ */
+export async function fetchOrder(id) {
+  return (await api.get(`/orders/${id}`)).data
+}
+
+/**
  * CSV 导入：POST /orders/import {csv_text, shop_id?} →
  * {imported, skipped, errors: ['第N行(...): 原因', ...]}。
  * errors 为后端拼好的字符串数组，逐行报告由 features/fulfillment/orderStateMachine.js

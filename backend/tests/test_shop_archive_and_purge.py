@@ -162,8 +162,11 @@ def test_purge_plan_order_is_topologically_valid():
 
     只检查计划内部的引用边：若 A 引用 B，则 A 必须排在 B 之前。
     顺序写错同样会让清理接口在 DELETE 时撞外键。
+
+    例外：`_CYCLE_BREAKS` 登记的外键环（互相引用）不存在纯拓扑解，
+    由清理前显式置空引用列来断开，因此这些边不参与顺序判定。
     """
-    from app.services.tenant_data_purge import _PURGE_PLAN
+    from app.services.tenant_data_purge import _CYCLE_BREAKS, _PURGE_PLAN
 
     order = {model.__tablename__: idx for idx, (model, _) in enumerate(_PURGE_PLAN)}
     violations: list[str] = []
@@ -171,9 +174,45 @@ def test_purge_plan_order_is_topologically_valid():
         table = _PURGE_PLAN[idx][0].__table__
         for fk in table.foreign_keys:
             target = fk.column.table.name
+            if (table_name, fk.parent.name, target) in _CYCLE_BREAKS:
+                continue
             if target in order and order[target] < idx:
                 violations.append(
                     f"{table_name}(#{idx}).{fk.parent.name} -> {target}(#{order[target]})"
                     "：被引用表排在了引用表之前")
 
     assert not violations, "清理顺序违反外键拓扑序：\n" + "\n".join(violations)
+
+
+def test_purge_succeeds_when_product_has_selected_offer(client, auth_headers):
+    """回归：商品已选定报价时，清理演示数据仍必须成功（真实外键环）。
+
+    `products.selected_offer_id → supplier_offers.id` 与
+    `supplier_offers.product_id → products.id` 互引成环，纯拓扑序无解：
+    若未在删除 supplier_offers 前置空引用，DELETE 会被 SQLite 外键拦截 → 500。
+    这里走真实 API 造出该状态，证明清理不是靠「演示数据里恰好没选报价」蒙过去的。
+    """
+    supplier = client.post("/api/suppliers", headers=auth_headers,
+                           json={"name": "断环测试供应商"}).json()
+    product = client.post("/api/products", headers=auth_headers, json={
+        "title": "断环测试商品", "category": "家居",
+        "attrs": {"supplier_price": 8, "sale_price": 20},
+        "source_platform": "1688",
+        "source_url": "https://detail.1688.com/offer/700333.html"}).json()
+    offer = client.post("/api/suppliers/offers", headers=auth_headers, json={
+        "supplier_id": supplier["id"], "product_id": product["id"],
+        "price": 12.5, "currency": "CNY"}).json()
+    selected = client.put(f"/api/products/{product['id']}/selected-offer",
+                          headers=auth_headers, json={"offer_id": offer["id"]})
+    assert selected.status_code == 200, selected.text
+
+    r = client.post("/api/shops/purge_demo_data", headers=auth_headers)
+    assert r.status_code == 200, r.text
+    deleted = r.json()["deleted"]
+    assert deleted["products"] > 0, deleted
+    assert deleted["supplier_offers"] > 0, deleted
+
+    from app.db import engine
+    with engine.connect() as conn:
+        violations = conn.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
+    assert violations == [], f"清理后仍存在外键违规: {violations}"

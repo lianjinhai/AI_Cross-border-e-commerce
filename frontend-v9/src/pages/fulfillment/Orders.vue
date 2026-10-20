@@ -87,15 +87,15 @@
             </el-select>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="80">
+        <el-table-column label="操作" width="150">
           <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="openDetail(row)">详情</el-button>
             <el-button
               v-if="writable && row.status === 'paid'"
               size="small" type="success" @click="ship(row)"
             >
               发货
             </el-button>
-            <span v-else>—</span>
           </template>
         </el-table-column>
         <el-table-column label="物流单号" width="150">
@@ -142,11 +142,110 @@
         </el-button>
       </template>
     </el-dialog>
+    <!-- 订单详情：行/费用/采购/退款/履约，口径分开展示（S5） -->
+    <el-drawer v-model="detailOpen" :title="detailTitle" size="640px">
+      <div v-loading="detailLoading">
+        <template v-if="detail">
+          <el-alert
+            v-for="(w, i) in detailWarnings(detail)" :key="i"
+            :type="w.level" :title="w.text" :closable="false" class="mb8"
+          />
+          <el-descriptions :column="2" border size="small" class="mb12">
+            <el-descriptions-item label="订单号">{{ detail.order.external_no }}</el-descriptions-item>
+            <el-descriptions-item label="状态">{{ ORDER_STATUS_LABELS[detail.order.status] || detail.order.status }}</el-descriptions-item>
+            <el-descriptions-item label="平台">{{ detail.order.platform }}</el-descriptions-item>
+            <el-descriptions-item label="店铺">{{ detail.order.shop_name || '—（未绑定）' }}</el-descriptions-item>
+            <el-descriptions-item label="商品">{{ detail.order.product_title || '—（未绑定）' }}</el-descriptions-item>
+            <el-descriptions-item label="来源">{{ detail.order.source }}</el-descriptions-item>
+            <el-descriptions-item label="下单时间">{{ detail.order.created_at }}</el-descriptions-item>
+            <el-descriptions-item label="物流单号">
+              {{ detail.fulfillment.tracking_no || '—' }}
+              <span v-if="!detail.fulfillment.tracking_available" class="hint">（轨迹未接入）</span>
+            </el-descriptions-item>
+          </el-descriptions>
+
+          <div class="money-grid">
+            <div class="money-cell">
+              <span class="money-label">订单金额</span>
+              <span class="money-value">{{ formatOrderMoney({ currency: detail.order.currency, amount: detail.order.amount }) }}</span>
+            </div>
+            <div class="money-cell">
+              <span class="money-label">{{ ESTIMATED_PROFIT_LABEL }}</span>
+              <span class="money-value">{{ formatOrderMoney({ currency: detail.order.currency, amount: detail.order.profit }) }}</span>
+            </div>
+            <div class="money-cell">
+              <span class="money-label">平台/物流等费用</span>
+              <span class="money-value">{{ feeTotalsText(detail) }}</span>
+            </div>
+            <div class="money-cell">
+              <span class="money-label">关联采购应付</span>
+              <span class="money-value">{{ purchaseTotalsText(detail) }}</span>
+            </div>
+            <div class="money-cell">
+              <span class="money-label">退款合计</span>
+              <span class="money-value">{{ refundTotalText(detail) }}</span>
+            </div>
+          </div>
+
+          <el-divider content-position="left">订单行</el-divider>
+          <el-table :data="detail.lines" size="small">
+            <el-table-column prop="sku" label="SKU" width="140" />
+            <el-table-column prop="title" label="商品" min-width="180" show-overflow-tooltip />
+            <el-table-column prop="qty" label="数量" width="70" />
+            <el-table-column label="成交价" width="110">
+              <template #default="{ row }">{{ formatOrderMoney({ currency: row.currency, amount: row.unit_price }) }}</template>
+            </el-table-column>
+            <el-table-column label="成本快照" width="110">
+              <template #default="{ row }">{{ formatOrderMoney({ currency: row.currency, amount: row.product_cost }) }}</template>
+            </el-table-column>
+            <template #empty><span class="hint">该订单没有行明细（旧数据只存订单头）</span></template>
+          </el-table>
+
+          <el-divider content-position="left">费用事实</el-divider>
+          <el-table :data="detail.fees.items" size="small">
+            <el-table-column label="类型" width="120">
+              <template #default="{ row }">{{ feeLabel(row.fee_type) }}</template>
+            </el-table-column>
+            <el-table-column label="金额" width="120">
+              <template #default="{ row }">{{ formatOrderMoney({ currency: row.currency, amount: row.amount }) }}</template>
+            </el-table-column>
+            <el-table-column prop="source" label="来源" width="100" />
+            <el-table-column prop="occurred_at" label="发生时间" min-width="150" />
+            <template #empty><span class="hint">没有登记费用</span></template>
+          </el-table>
+
+          <el-divider content-position="left">关联采购（sales_order_id，CNY 应付）</el-divider>
+          <el-table :data="detail.purchases.items" size="small">
+            <el-table-column prop="po_no" label="采购单" width="150" />
+            <el-table-column prop="status" label="状态" width="90" />
+            <el-table-column prop="qty" label="数量" width="70" />
+            <el-table-column label="单价" width="110">
+              <template #default="{ row }">{{ formatOrderMoney({ currency: 'CNY', amount: row.unit_price }) }}</template>
+            </el-table-column>
+            <el-table-column label="合计" width="110">
+              <template #default="{ row }">{{ formatOrderMoney({ currency: 'CNY', amount: row.total }) }}</template>
+            </el-table-column>
+            <template #empty><span class="hint">没有直接关联的采购单</span></template>
+          </el-table>
+
+          <el-divider content-position="left">退款</el-divider>
+          <el-table :data="detail.refunds" size="small">
+            <el-table-column prop="refund_no" label="退款单" width="150" />
+            <el-table-column prop="status" label="状态" width="100" />
+            <el-table-column prop="reason" label="原因" min-width="160" show-overflow-tooltip />
+            <el-table-column label="金额" width="110">
+              <template #default="{ row }">{{ formatOrderMoney({ currency: detail.order.currency, amount: row.amount }) }}</template>
+            </el-table-column>
+            <template #empty><span class="hint">没有退款单</span></template>
+          </el-table>
+        </template>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from '../../shared/ui'
 import PageHeader from '../../components/PageHeader.vue'
 import FormSection from '../../components/FormSection.vue'
@@ -154,10 +253,13 @@ import EmptyState from '../../components/EmptyState.vue'
 import AuditTimeline from '../../components/AuditTimeline.vue'
 import { can } from '../../permissions/permissions'
 import {
-  fetchOrders, importCsv, exportOrders, updateStatus, ship as shipOrder,
+  fetchOrders, fetchOrder, importCsv, exportOrders, updateStatus, ship as shipOrder,
 } from '../../api/domains/orders'
 import { fetchShops, syncOrders as syncShopOrdersReal } from '../../api/domains/shops'
 import { formatOrderMoney, orderShopLabel } from '../../shared/orderView'
+import {
+  detailWarnings, feeLabel, feeTotalsText, purchaseTotalsText, refundTotalText,
+} from '../../shared/orderDetailView'
 import {
   ORDER_STATUS_LABELS, ORDER_MAIN_FLOW, nextStatusOptions, orderTimeline,
   parseImportErrors, CSV_IMPORT_HINT,
@@ -188,6 +290,13 @@ const importDone = ref(false)
 const csvText = ref('')
 const importResult = ref({})
 const parsedErrors = ref([])
+
+// 订单详情抽屉（按 id 拉取，列表行只作为入口，不复用行数据当详情）
+const detailOpen = ref(false)
+const detailLoading = ref(false)
+const detail = ref(null)
+const detailTitle = computed(() =>
+  detail.value?.order?.external_no ? `订单 ${detail.value.order.external_no}` : '订单详情')
 
 function touch() {
   page.value = 1
@@ -287,6 +396,19 @@ async function syncShop() {
   }
 }
 
+async function openDetail(row) {
+  detailOpen.value = true
+  detailLoading.value = true
+  detail.value = null
+  try {
+    detail.value = await fetchOrder(row.id)
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '订单详情加载失败')
+  } finally {
+    detailLoading.value = false
+  }
+}
+
 onMounted(async () => {
   await load()
   try {
@@ -320,5 +442,34 @@ onMounted(async () => {
 }
 .mb8 {
   margin-bottom: var(--space-2);
+}
+.mb12 {
+  margin-bottom: var(--space-3);
+}
+.hint {
+  color: var(--color-text-secondary, #6b7280);
+  font-size: 12px;
+}
+.money-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.money-cell {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.money-label {
+  color: var(--color-text-secondary, #6b7280);
+  font-size: 12px;
+}
+.money-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 </style>

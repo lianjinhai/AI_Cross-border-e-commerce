@@ -283,6 +283,88 @@ def export_csv(user: User = Depends(get_current_user), db: Session = Depends(get
                     headers={"Content-Disposition": "attachment; filename=orders.csv"})
 
 
+@router.get("/{order_id}")
+def get_order(order_id: int, user: User = Depends(get_current_user),
+              db: Session = Depends(get_db)):
+    """单条订单详情：订单事实 + 行 + 费用 + 关联采购 + 退款 + 履约状态。
+
+    口径原则（S5）：
+      * 订单金额/成本按**订单币种**原样返回，不在服务端换算；
+      * 采购单是 CNY 应付（供应商账期），与订单成本是两套口径，**不得相加**；
+      * 物流轨迹未接入时 `tracking_available=false`，只回单号，不编造轨迹。
+    """
+    from ..auth import is_impersonating_user
+    from ..models import OrderFee, OrderLine, PurchaseOrder, RefundOrder
+    from ..services.store_scope import StoreScopeError, resolve_store_scope
+    from ..services.workspace_context import resolve_workspace_context
+
+    o = db.get(Order, order_id)
+    if not o or o.tenant_id != user.tenant_id:
+        raise HTTPException(status_code=404, detail="订单不存在")
+    ctx = resolve_workspace_context(db, user, is_impersonating=is_impersonating_user(user))
+    try:
+        scope = resolve_store_scope(db, ctx)
+    except StoreScopeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    if o.shop_id is not None:
+        try:
+            scope.require(o.shop_id)
+        except StoreScopeError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    shop = db.get(Shop, o.shop_id) if o.shop_id else None
+    product = db.get(Product, o.product_id) if o.product_id else None
+    lines = (db.query(OrderLine).filter(OrderLine.order_id == o.id)
+             .order_by(OrderLine.id).all())
+    fees = (db.query(OrderFee).filter(OrderFee.order_id == o.id)
+            .order_by(OrderFee.id).all())
+    purchases = (db.query(PurchaseOrder)
+                 .filter(PurchaseOrder.tenant_id == o.tenant_id,
+                         PurchaseOrder.sales_order_id == o.id)
+                 .order_by(PurchaseOrder.id).all())
+    refunds = (db.query(RefundOrder).filter(RefundOrder.order_id == o.id)
+               .order_by(RefundOrder.id).all())
+
+    fee_totals: dict[str, float] = {}
+    for fee in fees:
+        fee_totals[fee.currency] = round(fee_totals.get(fee.currency, 0.0) + float(fee.amount), 4)
+    purchase_totals: dict[str, float] = {}
+    for po in purchases:
+        purchase_totals["CNY"] = round(purchase_totals.get("CNY", 0.0) + float(po.total or 0), 2)
+
+    detail = to_dict(o)
+    detail["shop_name"] = (shop.shop_name if shop else "") or ""
+    detail["product_title"] = (product.title if product else "") or ""
+    return {
+        "order": detail,
+        "lines": [to_dict(line) for line in lines],
+        "fees": {"items": [to_dict(fee) for fee in fees], "total_by_currency": fee_totals},
+        "purchases": {
+            "items": [to_dict(po) for po in purchases],
+            "total_by_currency": purchase_totals,
+            "link": "purchase_orders.sales_order_id",
+            "note": "采购单为供应商应付（CNY），与订单成本快照不是同一口径，不可相加",
+        },
+        "refunds": [to_dict(row) for row in refunds],
+        "fulfillment": {
+            "status": o.status,
+            "tracking_no": o.tracking_no or "",
+            "tracking_available": False,
+            "note": "物流轨迹未接入：仅回单号，不展示轨迹或到达时间",
+        },
+        "totals": {
+            "currency": o.currency,
+            "amount": o.amount,
+            "cost": o.cost,
+            "profit": o.profit,
+            "fees_by_currency": fee_totals,
+            "purchases_by_currency": purchase_totals,
+            "mixed_currency": bool(purchase_totals and o.currency != "CNY"),
+        },
+        "source": {"order": o.source, "honesty": "金额与成本为订单库原值，未做汇率换算"},
+    }
+
+
 @router.post("/{order_id}/ship")
 def ship_order(order_id: int, user: User = Depends(require_write), db: Session = Depends(get_db)):
     """发货：生成物流单号，状态流转为已发货。"""
