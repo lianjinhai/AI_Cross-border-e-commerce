@@ -3,7 +3,7 @@
 import hashlib
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, update
 from sqlalchemy.exc import IntegrityError
@@ -37,6 +37,37 @@ HANDLERS = {
 }
 
 logger = logging.getLogger(__name__)
+
+
+def recover_stuck_actions(db, older_than_minutes=10):
+    """启动恢复：把孤儿 ``EXECUTING`` 收敛为 ``FAILED``（可重试），避免永久卡死。
+
+    背景：execute 先把状态改成 EXECUTING 再跑 handler；若进程在 handler 中途退出
+    （重启/崩溃），该行会永远停在 EXECUTING，之后任何执行都会 409「已被领取」。
+    规则：
+      * 只处理 ``updated_at`` 早于阈值的行——阈值用于避免把**另一个进程正在跑**的
+        执行误判（单进程部署下重启即无在途请求，默认 10 分钟足够保守）；
+      * 收敛为 FAILED 而不是回滚业务对象：外部平台可能已经收到提交，系统无权重放；
+        outcome 明确写「未确认业务对象是否已修改」，要求人工核对后再重试/新建；
+      * 不删除任何记录，保留完整审计。
+    """
+    cutoff = datetime.utcnow() - timedelta(minutes=max(0, int(older_than_minutes)))
+    rows = db.query(AiAction).filter(
+        AiAction.status == "EXECUTING", AiAction.updated_at < cutoff).all()
+    if not rows:
+        return 0
+    now = datetime.utcnow()
+    for action in rows:
+        action.status = "FAILED"
+        action.updated_at = now
+        action.outcome = {**(action.outcome or {}),
+                          "error": ("执行中断（服务重启/进程退出），未确认业务对象是否已修改；"
+                                    "请核对业务事实后重试或新建 Action"),
+                          "recovered_on_startup": True}
+    db.commit()
+    logger.warning("已收敛 %d 条挂起的 EXECUTING Action（阈值 %d 分钟）",
+                   len(rows), older_than_minutes)
+    return len(rows)
 
 
 def _validate_target(db, tenant_id, policy, target_id, payload):

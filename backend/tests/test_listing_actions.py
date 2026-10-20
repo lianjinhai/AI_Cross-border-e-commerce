@@ -1,14 +1,43 @@
 """Listing 提案、审批执行与工作流断点恢复的闭环验证。"""
 
 import ast
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from app.db import SessionLocal
-from app.models import AiAction, Listing, User, WorkflowTemplate
+from app.models import AiAction, Listing, PlatformRulePack, User, WorkflowTemplate
+from app.services.platform_rules import DEFAULT_RULE_PACKS
 
 from .action_helpers import approve_and_execute
+
+
+@pytest.fixture
+def _fresh_rule_pack():
+    """发布链测试不应被「内置规则包超过 30 天未更新」策略影响。
+
+    这是**时间函数**：内置包版本写死（2026-09-19），一旦系统日期走过 30 天，
+    所有发布都会被判 manual_required 并 409——测试会在某天集体变红而与代码无关。
+    过期策略本身由 test_stale_rule_pack_blocks_publish 单独锁定。
+    仅发布链测试显式请求本夹具（纯函数测试不需要数据库）。
+    """
+    base = DEFAULT_RULE_PACKS["shopee"]
+
+    def _seed(version: str, updated_at=None):
+        with SessionLocal() as db:
+            db.query(PlatformRulePack).filter(PlatformRulePack.platform == "shopee").delete()
+            db.add(PlatformRulePack(
+                tenant_id=None, platform="shopee", version=version,
+                rules=base["rules"], source_url=base["source_url"],
+                updated_at=updated_at or datetime.utcnow()))
+            db.commit()
+
+    _seed(datetime.utcnow().strftime("%Y-%m-%d"))
+    yield _seed
+    with SessionLocal() as db:
+        db.query(PlatformRulePack).filter(PlatformRulePack.platform == "shopee").delete()
+        db.commit()
 
 
 def make_listing(client, headers):
@@ -74,7 +103,8 @@ def test_advert_skeleton_raises_without_external_account():
         adapter.ad_campaign_status("cmp-1")
 
 
-def test_pending_publish_does_not_change_listing_and_reuses_intent(client, auth_headers):
+def test_pending_publish_does_not_change_listing_and_reuses_intent(
+        client, auth_headers, _fresh_rule_pack):
     _, lid = make_listing(client, auth_headers)
     first = client.post(f"/api/listings/{lid}/publish", headers=auth_headers)
     assert first.status_code == 200, first.text
@@ -91,7 +121,8 @@ def test_pending_publish_does_not_change_listing_and_reuses_intent(client, auth_
     assert optimized.status_code == 409, "已发布内容禁止 AI 自动覆盖"
 
 
-def test_publication_rechecks_approved_content_and_preserves_failure_scene(client, auth_headers):
+def test_publication_rechecks_approved_content_and_preserves_failure_scene(
+        client, auth_headers, _fresh_rule_pack):
     _, lid = make_listing(client, auth_headers)
     pending = client.post(f"/api/listings/{lid}/publish", headers=auth_headers).json()
     action_id = pending["action_id"]
@@ -110,7 +141,8 @@ def test_publication_rechecks_approved_content_and_preserves_failure_scene(clien
 
 
 @pytest.mark.parametrize("reject", [False, True])
-def test_workflow_pauses_before_publish_and_resumes_only_after_execution(client, auth_headers, reject):
+def test_workflow_pauses_before_publish_and_resumes_only_after_execution(
+        client, auth_headers, _fresh_rule_pack, reject):
     pid, _ = make_listing(client, auth_headers)
     key = "action-rejection-probe" if reject else "action-approval-probe"
     with SessionLocal() as db:
@@ -150,3 +182,20 @@ def test_workflow_pauses_before_publish_and_resumes_only_after_execution(client,
     with SessionLocal() as db:
         assert db.query(AiAction).filter_by(action_type="PUBLISH_LISTING", target_id=lid).count() == count
         assert db.get(Listing, lid).status == ("draft" if reject else "published")
+
+
+def test_stale_rule_pack_blocks_publish_with_reason(client, auth_headers, _fresh_rule_pack):
+    """规则包超过 30 天必须阻断发布并说明原因（不静默放行、不伪装成可上架）。
+
+    这条锁定的是策略本身；其余发布链测试用新鲜规则包，避免「测试随时间腐烂」。
+    """
+    _, lid = make_listing(client, auth_headers)
+    stale_version = (datetime.utcnow() - timedelta(days=45)).strftime("%Y-%m-%d")
+    _fresh_rule_pack(stale_version, updated_at=datetime.utcnow() + timedelta(seconds=5))
+
+    response = client.post(f"/api/listings/{lid}/publish", headers=auth_headers)
+    assert response.status_code == 409, response.text
+    assert "平台规则已超过30天未更新" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.get(Listing, lid).status == "draft", "阻断时不得改动 Listing"
+        assert db.query(AiAction).filter_by(action_type="PUBLISH_LISTING", target_id=lid).count() == 0

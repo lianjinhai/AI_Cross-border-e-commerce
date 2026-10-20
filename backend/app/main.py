@@ -68,6 +68,11 @@ async def lifespan(_app: FastAPI):
     from .workflows.launch_recovery import recover_launch_steps
     with SessionLocal() as db:
         recover_launch_steps(db)
+    # AI Action 的启动恢复（S3）：EXECUTING 若因进程退出而无人收尾，收敛为 FAILED 可重试，
+    # 否则该 Action 会永久 409「已被领取」——任务与回执再也恢复不了。
+    from .services.action_system import recover_stuck_actions
+    with SessionLocal() as db:
+        recover_stuck_actions(db)
     yield
 
 

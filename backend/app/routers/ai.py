@@ -15,6 +15,7 @@ from ..db import get_db
 from ..models import AiLog, User
 from ..serialize import to_dict
 from ..services import settings_service
+from ..services.ai_capabilities import capability_matrix
 from ..services.workspace_context import resolve_workspace_context
 
 router = APIRouter(prefix="/ai", tags=["ai"])
@@ -24,6 +25,16 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 
 class ChatIn(BaseModel):
     message: str
+
+
+@router.get("/capabilities")
+def get_capabilities(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """AI 能力矩阵（只读）：能用哪些 Action、为什么不能用、各 Agent 注册了哪些 Action。
+
+    以注册表为准（POLICIES / HANDLERS / CONTRACTS），前端不得自行推断能力边界。
+    """
+    ctx = resolve_workspace_context(db, user, is_impersonating=is_impersonating_user(user))
+    return capability_matrix(db, ctx)
 
 
 @router.get("/settings")

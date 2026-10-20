@@ -5,14 +5,14 @@
       subtitle="AI 建议全生命周期：对象 / 原因 / 证据 / 风险 / 经济口径 / 状态 / 来源 / 审批人 / 结果 / 下一操作"
     >
       <template #filters>
-        <el-radio-group v-model="statusFilter" size="small" @change="load">
+        <el-radio-group v-model="statusFilter" size="small" @change="reload">
           <el-radio-button value="">全部</el-radio-button>
           <el-radio-button value="PENDING_APPROVAL">待审批</el-radio-button>
           <el-radio-button value="APPROVED">已批准</el-radio-button>
           <el-radio-button value="SUCCESS">执行成功</el-radio-button>
           <el-radio-button value="FAILED">执行失败</el-radio-button>
         </el-radio-group>
-        <el-select v-model="typeFilter" size="small" placeholder="动作类型" clearable @change="load">
+        <el-select v-model="typeFilter" size="small" placeholder="动作类型" clearable @change="reload">
           <el-option v-for="o in typeOptions" :key="o.value" :label="o.label" :value="o.value" />
         </el-select>
       </template>
@@ -73,16 +73,16 @@
           </el-table-column>
           <el-table-column label="下一操作" width="170" fixed="right">
             <template #default="{ row }">
-              <template v-if="row.status === 'PENDING_APPROVAL' && writable">
+              <template v-if="row.status === 'PENDING_APPROVAL' && canOperate(row)">
                 <el-button size="small" type="success" @click.stop="decide(row, true)">批准</el-button>
                 <el-button size="small" type="danger" @click.stop="decide(row, false)">拒绝</el-button>
               </template>
               <el-button
-                v-else-if="row.status === 'APPROVED' && writable"
+                v-else-if="row.status === 'APPROVED' && canOperate(row)"
                 size="small" type="primary" @click.stop="execute(row)"
               >执行</el-button>
               <el-button
-                v-else-if="row.status === 'FAILED' && writable"
+                v-else-if="row.status === 'FAILED' && canOperate(row)"
                 size="small" type="warning" @click.stop="execute(row)"
               >重试执行</el-button>
               <span v-else class="next-hint">{{ nextHint(row) }}</span>
@@ -90,6 +90,18 @@
           </el-table-column>
           <template #empty><EmptyState reason="NO_DATA" hint="AI 还没有提出建议（或当前筛选无结果）" /></template>
         </el-table>
+        <!-- S3：总数与分页由服务端给（此前按状态各查一页拼接，看不到全量与页码）。 -->
+        <el-pagination
+          v-if="total > 0"
+          class="actions-pager"
+          layout="total, sizes, prev, pager, next"
+          :total="total"
+          :page-sizes="[20, 50, 100, 200]"
+          v-model:current-page="page"
+          v-model:page-size="pageSize"
+          @current-change="load"
+          @size-change="reload"
+        />
       </el-card>
     </SectionState>
 
@@ -156,21 +168,35 @@ import AsyncActionDialog from '../../components/AsyncActionDialog.vue'
 import { ElMessage, ElMessageBox } from '../../shared/ui'
 import { can } from '../../permissions/permissions'
 import { fetchActions, approve, reject, execute as executeAction } from '../../api/domains/actions'
+import { fetchCapabilities } from '../../api/domains/ai'
+import {
+  ACTION_LABELS, actionTypeOptions, canOperateAction, nextActionHint,
+} from '../../shared/actionView'
 
 const router = useRouter()
-const writable = can('order:write')
 
-const typeOptions = [
-  { value: 'ADJUST_AD_BUDGET', label: '预算调整' },
-  { value: 'REPRICE', label: '重新定价' },
-  { value: 'RESTOCK', label: '补货建议' },
-]
+/** 服务端能力矩阵：动作类型清单 + 当前身份是否可用 + 阻断原因（前端不自行推断）。 */
+const caps = ref(null)
+const capByType = computed(() => {
+  const map = {}
+  for (const item of caps.value?.actions || []) map[item.action_type] = item
+  return map
+})
+const typeOptions = computed(() => actionTypeOptions(caps.value))
+
+/** 单条是否可操作：以该 Action 自己的 required_permission 判定（fail-closed）。 */
+function canOperate(row) {
+  return canOperateAction(row, can, false)
+}
 
 const items = ref([])
 const loading = ref(false)
 const error = ref('')
 const statusFilter = ref('')
 const typeFilter = ref('')
+const total = ref(0)
+const page = ref(1)
+const pageSize = ref(50)
 
 const listCode = computed(() => {
   if (error.value) return 'ERROR'
@@ -201,10 +227,14 @@ function riskTag(level) {
   return RISK_TAGS[key] || { type: 'info', label: level ? String(level) : '未标注' }
 }
 
-/** 证据摘要（单行，抽屉看全量）。 */
+/** 证据摘要（单行，抽屉看全量）。evidence 后端是对象（payload/来源/scope_key），旧数据可能是数组。 */
 function evidenceSummary(row) {
   const ev = row.evidence || row.evidence_items
   if (Array.isArray(ev) && ev.length) return `证据 ${ev.length} 项`
+  if (ev && typeof ev === 'object' && Object.keys(ev).length) {
+    const payload = ev.payload && typeof ev.payload === 'object' ? Object.keys(ev.payload) : []
+    return payload.length ? `载荷 ${payload.length} 字段` : '证据快照'
+  }
   if (row.decision_id) return `决策 #${row.decision_id}`
   return '无证据快照'
 }
@@ -218,32 +248,45 @@ function economicSummary(row) {
   return `${old ?? '—'} → ${nw ?? '—'} ${cur}`.trim()
 }
 
-/** 下一操作提示（只读行）。 */
+/** 下一操作提示（只读行）：不可操作时优先展示服务端给的阻断原因。 */
 function nextHint(row) {
-  if (row.status === 'PENDING_APPROVAL' && !writable) return '仅审批人可操作'
-  if (row.status === 'APPROVED' && !writable) return '仅执行角色可操作'
-  if (row.status === 'SUCCESS') return '已完成'
-  if (row.status === 'FAILED') return '失败可重试或查看决策依据'
-  if (row.status === 'REJECTED') return '已拒绝，无需操作'
-  return '—'
+  return nextActionHint(row, {
+    operable: canOperate(row),
+    blockedReasons: capByType.value[row.action_type]?.blocked_reasons || [],
+  })
 }
 
 async function load() {
   loading.value = true
   error.value = ''
   try {
-    const wantAll = !statusFilter.value
-    const statuses = wantAll
-      ? ['PENDING_APPROVAL', 'APPROVED', 'SUCCESS', 'FAILED']
-      : [statusFilter.value]
-    const lists = await Promise.all(statuses.map((s) => fetchActions({
-      status: s, type: typeFilter.value || undefined, page: 1,
-    })))
-    items.value = lists.flatMap((r) => r.items || [])
+    // 单一请求：status 为空 = 全部状态，type 为空 = 本人权限内的全部类型（服务端已收窄）。
+    const data = await fetchActions({
+      status: statusFilter.value,
+      type: typeFilter.value,
+      page: page.value,
+      pageSize: pageSize.value,
+    })
+    items.value = data.items || []
+    total.value = Number(data.total || 0)
   } catch (e) {
     error.value = e?.response?.data?.detail || e?.message || '加载失败'
   } finally {
     loading.value = false
+  }
+}
+
+/** 筛选条件变化：回到第 1 页再查（否则会停在越界页看到空列表）。 */
+function reload() {
+  page.value = 1
+  load()
+}
+
+async function loadCapabilities() {
+  try {
+    caps.value = await fetchCapabilities()
+  } catch {
+    caps.value = null // 能力矩阵不可得时退回静态已注册清单，按钮仍按 required_permission fail-closed
   }
 }
 
@@ -346,7 +389,9 @@ async function onExecuteSubmit() {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  await Promise.all([loadCapabilities(), load()])
+})
 </script>
 
 <style scoped>
@@ -354,4 +399,5 @@ onMounted(load)
 .mb12 { margin-bottom: 12px; }
 .fail-text { color: var(--color-danger); }
 .next-hint { font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.actions-pager { margin-top: 12px; justify-content: flex-end; }
 </style>

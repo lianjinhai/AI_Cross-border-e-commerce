@@ -187,4 +187,11 @@ def action_dict(action: AiAction) -> dict:
             "expected_impact": action.expected_impact, "risk_level": action.risk_level,
             "execution_mode": action.execution_mode, "approval_required": action.approval_required,
             "status": action.status, "requested_by": action.requested_by,
-            "approved_by": action.approved_by, "outcome": action.outcome}
+            "approved_by": action.approved_by, "outcome": action.outcome,
+            # S3：前端按条闸门与时间线所需字段（只读回显，不含任何凭证）。
+            "agent_type": action.agent_type,
+            "required_permission": action.required_permission,
+            "executed_by": action.executed_by,
+            "created_at": action.created_at,
+            "updated_at": action.updated_at,
+            "executed_at": action.executed_at}

@@ -45,8 +45,11 @@ PROBES = [
      {"operator", "admin", "compliance"}, "发起合规检测（compliance:check）"),
     ("POST", "/api/products", {"title": "权限矩阵探针"},
      {"operator", "admin"}, "商品写（product:write）"),
+    # S3：Action 队列的「全部」= 本人持有权限的类型集合。合规员持有 compliance:check
+    # （UPDATE_LISTING_COMPLIANCE_RISK 的权限），因此能看到**自己的**合规队列；
+    # 其余类型不在其权限内（返回集合被类型收窄，不是越权）。只读/观察者仍 403。
     ("GET", "/api/actions", None,
-     {"operator", "admin"}, "Action 审批队列（finance:write）"),
+     {"operator", "admin", "compliance"}, "Action 审批队列（本人权限内的类型）"),
     ("POST", "/api/actions/999999/approve", {"note": "权限探针"},
      {"operator", "admin"}, "Action 审批（finance:write）"),
     ("POST", "/api/listings/generate", {"product_id": 1},

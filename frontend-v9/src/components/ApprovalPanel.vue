@@ -58,7 +58,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from '../shared/ui'
 import { fetchActions, approve, reject, execute as executeAction } from '../api/domains/actions'
 
-defineProps({
+const props = defineProps({
   title: { type: String, default: '预算调整审批' },
   // Action 类型（后端 list_actions 必填 action_type，默认预算调整）。
   type: { type: String, default: 'ADJUST_AD_BUDGET' },
@@ -85,7 +85,9 @@ function statusTag(status) {
 async function load() {
   loading.value = true
   try {
-    const lists = await Promise.all(ACTION_STATUSES.map((status) => fetchActions({ status })))
+    // type prop 必须真正下发：否则「广告预算审批」面板会把其它类型的待办也拉进来（S3 修正）。
+    const lists = await Promise.all(ACTION_STATUSES.map(
+      (status) => fetchActions({ status, type: props.type || undefined })))
     items.value = lists.flatMap((r) => r.items || [])
     emit('changed')
   } finally {

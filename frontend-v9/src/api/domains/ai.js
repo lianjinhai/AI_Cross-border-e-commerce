@@ -32,6 +32,14 @@ export async function fetchAiLogs(limit = 50) {
   return (await api.get('/ai/logs', { params: { limit } })).data
 }
 
+/**
+ * AI 能力矩阵：GET /ai/capabilities → {identity, actions[], agents[], summary}。
+ * 服务端以注册表计算「能否执行 + 阻断原因」；前端只展示，不自行推断能力边界。
+ */
+export async function fetchCapabilities() {
+  return (await api.get('/ai/capabilities')).data
+}
+
 /** Orchestrator 对话：POST /ai/chat {message} → {reply, intent, actions, data}。 */
 export async function sendChat(message) {
   return (await api.post('/ai/chat', { message })).data
