@@ -23,7 +23,7 @@
 **后端**
 - `action_queue.query_actions()`：类型/状态可为「全部」，返回 `(rows, total)`；`_scope_condition` 在「全部」口径下按权限收窄（PUBLISH_LISTING 无店铺范围时排除），保留 `list_actions` 兼容层。
 - `routers/actions.py`：`GET /actions` 支持 `ALL`、`page_num/page_size`（`limit` 兼容）、`total`；新增 `GET /actions/{id}` 与 `GET /actions/{id}/result`；权限判定改为「按类型校验 / 全部=本人权限类型集合」。
-- `services/ai_capabilities.py`（新）：由 `POLICIES + HANDLERS + CONTRACTS + WorkspaceContext + StoreScope` 计算能力矩阵（`enabled`/`blocked_reasons`/`summary`），只读、无凭证。
+- `agents/capabilities.py`（S3 新建为 `services/ai_capabilities.py`，S6 因「services 不得反向依赖 agents」迁到 Agent 层）：由 `POLICIES + HANDLERS + CONTRACTS + WorkspaceContext + StoreScope` 计算能力矩阵（`enabled`/`blocked_reasons`/`summary`），只读、无凭证。
 - `routers/ai.py`：`GET /ai/capabilities`。
 - `services/action_system.recover_stuck_actions()`：启动时把超过 10 分钟的 `EXECUTING` 收敛为 `FAILED` 并写 `recovered_on_startup`，在途的不动。
 - `services/ai_actions.action_dict()`：补 `agent_type/required_permission/executed_by/created_at/updated_at/executed_at`。

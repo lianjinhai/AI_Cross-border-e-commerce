@@ -15,7 +15,7 @@ from ..db import get_db
 from ..models import AiLog, User
 from ..serialize import to_dict
 from ..services import settings_service
-from ..services.ai_capabilities import capability_matrix
+from ..agents.capabilities import capability_matrix
 from ..services.workspace_context import resolve_workspace_context
 
 router = APIRouter(prefix="/ai", tags=["ai"])

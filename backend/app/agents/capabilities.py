@@ -3,7 +3,7 @@
 为什么要单独成模块：前端过去只能靠「把架构里的动作全部渲染成按钮」来猜能力，
 于是出现「按钮点了才知道没权限」和「不知道某个 Agent 到底有没有实现」。这里以
 **代码注册表**为准（`action_policy.POLICIES` + `action_system.HANDLERS` +
-`agents.contracts.CONTRACTS` + `workspace_context` 的权限），一次性把
+`contracts.CONTRACTS` + `workspace_context` 的权限），一次性把
 「能力 / 风险 / 是否需审批 / 当前身份是否可用 / 阻断原因」算清楚，前端只做展示，
 不自行推断，也不把未注册能力渲染成可执行。
 
@@ -11,15 +11,15 @@
 """
 from __future__ import annotations
 
-from .action_policy import POLICIES
-from .store_scope import StoreScopeError, resolve_store_scope
+from ..services.action_policy import POLICIES
+from ..services.store_scope import StoreScopeError, resolve_store_scope
 
 # 证据带 shop_id、受店铺数据范围约束的 Action 类型。
 _SCOPED_ACTION_TYPE = "PUBLISH_LISTING"
 
 
 def _action_entries(ctx):
-    from .action_system import HANDLERS  # 延迟导入：避免 policy → system 循环
+    from ..services.action_system import HANDLERS  # 延迟导入：避免 policy → system 循环
 
     entries = []
     for action_type, policy in POLICIES.items():
@@ -54,7 +54,7 @@ def _scope_blocked(db, ctx):
 
 def capability_matrix(db, ctx) -> dict:
     """返回 {identity, actions, agents, summary}；所有字段均来自注册表与当前上下文。"""
-    from ..agents.contracts import CONTRACTS
+    from .contracts import CONTRACTS
 
     actions = _action_entries(ctx)
     scope_reason = _scope_blocked(db, ctx)
