@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from ..agents.capabilities import capability_matrix
 from ..agents.orchestrator import OrchestratorAgent
 from ..ai.llm import get_llm_config, set_llm_config
 from ..auth import (
@@ -15,7 +16,6 @@ from ..db import get_db
 from ..models import AiLog, User
 from ..serialize import to_dict
 from ..services import settings_service
-from ..agents.capabilities import capability_matrix
 from ..services.workspace_context import resolve_workspace_context
 
 router = APIRouter(prefix="/ai", tags=["ai"])

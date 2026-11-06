@@ -32,7 +32,7 @@ from ..services.costing import best_purchase, cost_completeness, offer_state, to
 from ..services.product_performance import read_performance
 from ..services.workspace_context import resolve_workspace_context
 from ..workflows import launch_dto
-from ..workflows.launch_access import LaunchError, launch_context
+from ..workflows.launch_access import launch_context
 
 router = APIRouter(prefix="/products", tags=["products"])
 
