@@ -12,6 +12,7 @@ import hmac
 import json
 import os
 import time
+from datetime import date
 
 import httpx
 from sqlalchemy.orm import Session
@@ -20,9 +21,15 @@ from ..models import PlatformRulePack
 
 # ---------------------------------------------------------------- 内置规则包
 
+# 内置规则包的复核基准日 = 本次构建/导入日，**不是**写死的日历常量。
+# 为什么：过期策略（版本超过 30 天 → 上架转人工）要求新鲜的安装包不应天生过期；
+# 写死日期会让「安装后第 31 天」起所有发布被 409 阻断（2026-10-19 全量测试 13 项因此变红）。
+# 过期判定本身不变：任何 pack（含数据库覆盖包）版本超过 30 天仍转人工复核。
+DEFAULT_RULE_VERSION = date.today().isoformat()
+
 DEFAULT_RULE_PACKS: dict[str, dict] = {
     "shopee": {
-        "version": "2026-09-19",
+        "version": DEFAULT_RULE_VERSION,
         "source_url": "https://open.shopee.com/documents/v2/v2.product.post_item",
         "rules": {
             "title_max": 255, "desc_max": 3000, "image_min": 1, "image_max": 9,
@@ -38,7 +45,7 @@ DEFAULT_RULE_PACKS: dict[str, dict] = {
         },
     },
     "amazon": {
-        "version": "2026-09-19",
+        "version": DEFAULT_RULE_VERSION,
         "source_url": "https://developer-docs.amazon.com/sp-api/docs/listings-items-api",
         "rules": {
             "title_max": 200, "desc_max": 2000, "image_min": 1, "image_max": 9,
@@ -55,7 +62,7 @@ DEFAULT_RULE_PACKS: dict[str, dict] = {
         },
     },
     "tiktok": {
-        "version": "2026-09-19",
+        "version": DEFAULT_RULE_VERSION,
         "source_url": "https://partner.tiktokshop.com/docv2/page/6507ead7b99d5302be949ba9",
         "rules": {
             "title_max": 255, "desc_max": 3000, "image_min": 1, "image_max": 9,
@@ -69,7 +76,7 @@ DEFAULT_RULE_PACKS: dict[str, dict] = {
         },
     },
     "1688": {
-        "version": "2026-09-19",
+        "version": DEFAULT_RULE_VERSION,
         "source_url": "https://open.1688.com/api/apidocdetail.htm",
         "rules": {
             "title_max": 128, "desc_max": 5000, "image_min": 1, "image_max": 6,
