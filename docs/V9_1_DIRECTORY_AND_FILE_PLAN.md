@@ -147,7 +147,7 @@ Pydantic 请求模型现有多在各领域 router，复用现状；跨模块类�
 | frontend-v9/src/api/domains/onboarding.js | 后端画像契约确认后封装专门读写；身份 Context 仍用既有 me/workspace，不复制 | frontend-v9/tests/onboarding-api.test.js |
 | backend/app/services/product_journey.py | 现有商品/渠道读模型不足时聚合阶段、缺口及合法下一步；不持有第二份流程状态 | backend/tests/test_product_journey.py |
 | backend/app/services/supply_selection.py | 确有独立报价选择业务时校验归属、有效性并持久化，不重算成本 | backend/tests/test_supply_selection.py |
-| backend/app/services/order_workbench.py | 订单全量计数与订单/采购/履约关联只读聚合；订单写入仍在所属领域 | backend/tests/test_order_workbench.py |
+| backend/app/services/order_workbench.py | **已被取代（S5）**：单条订单的行/费用/采购/退款/履约只读聚合由 `backend/app/routers/orders.py` 的 `get_order` 承接，未新建服务；订单写入仍在所属领域 | `backend/tests/test_order_detail.py`（已创建） |
 | frontend-v9/src/features/product/ProductJourneyPanel.vue | 商品详情准备阶段过大需拆出时；消费真实 DTO，不请求多个后端自造阶段 | frontend-v9/tests/product-journey-panel.test.js |
 | frontend-v9/src/features/optimization/CostCompletenessPanel.vue | 费用完整性业务面板需拆分时；消费 costing 结果，不复制公式 | frontend-v9/tests/cost-completeness-panel.test.js |
 | frontend-v9/src/features/aiops/ActionDetailPanel.vue | AI 建议主从页需拆分时；复用 ApprovalPanel 和 Action API | frontend-v9/tests/action-detail-panel.test.js |

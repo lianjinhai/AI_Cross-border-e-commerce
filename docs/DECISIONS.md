@@ -3475,3 +3475,15 @@ PostgreSQL 与独立任务队列未动。
 **兼容与回退**：画像表新增，不影响既有表；`frontend-v9/src/shared/onboardingProfile.js` 的会话实现降级为**施工期草稿**，服务端接入后不得再作为最终持久化路径（可保留为网络失败时的明确降级提示，但不得显示「已保存」）。主库迁移不在页面验收中自动执行；隔离库验证升级/回滚后单独立项。
 
 **权威细节**：逐页后端责任、契约卡、迁移与事务要求见用户 V2 提示词 `docs/` 归档版；B2 起每批交付须附读回证据。
+
+## D64：订单详情三套口径分离与只读聚合边界（2026-10-20，S5）
+
+**背景**：订单列表只有订单头（金额/成本/利润），无法看出行明细、费用事实、关联采购、退款与履约状态；前端若拿列表行拼装关联，会重复实现归属与口径判断。B3 起 `products.selected_offer_id` 与 `supplier_offers.product_id` 形成外键环，演示数据清理在「商品已选定报价」时会撞 FK 而 500，静态拓扑序守护随即失败。
+
+**决策**：
+1. **单条详情用只读聚合端点，不新建第二套事实源**。`GET /api/orders/{id}` 在既有 `routers/orders.py` 内聚合订单域事实（订单头/行/费用/退款/履约）与采购域只读关联（`purchase_orders.sales_order_id`）；不新建订单聚合服务（原提案 order_workbench.py 已取消），不在 workbench 写订单，不复制 costing 公式。范围与身份每次重验（Workspace Context + Store Scope），跨租户/缺失一律 404。
+2. **三套口径永不相加**：① 订单金额/成本/利润是订单币种原值（服务端不换算）；② 采购单是供应商 CNY 应付（账期口径）；③ 平台结算走 `finance/settlement-reconciliation` 独立核对。响应以 `purchases.note`、`totals.mixed_currency`、`source.honesty` 显式标注，禁止前端合并成一个「总成本」。
+3. **未接入能力如实为空**：物流轨迹未接入 → `fulfillment.tracking_available=false`，只回单号，响应不含 `events/trajectory`；演示代发返回 `mode=demo`，不冒充真实下单。
+4. **外键环显式断环**：`_CYCLE_BREAKS` 登记无法拓扑排序的互引边，清理前先置空引用列（`products.selected_offer_id`），静态顺序守护对这些边豁免；新增同类互引必须同时登记并补置空语句，否则清理会在真实数据上 500。
+
+**兼容与回退**：仅新增只读端点与清理前置语句，不改既有表结构与写路径；回退只涉及本批提交，不改迁移。外部发布/物流/结算能力仍单列 BLOCKED，不因内部端点补齐而宣布实网验证通过。
