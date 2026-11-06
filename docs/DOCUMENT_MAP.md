@@ -12,6 +12,8 @@
 | 我要…… | 先读 | 再读 |
 |---|---|---|
 | 了解项目全貌 | `README.md` | `docs/项目介绍与功能地图.md` |
+| **快速了解项目现况（新人/协作方）** | `docs/PROJECT_STATUS_BRIEF.md` | `docs/FRONTEND_V9_PROGRESS.md` |
+| `docs/PROJECT_DIRECTORY_GUIDE.md` | 活（2026-10-29 工作区快照） | 完整交付文件目录、模块说明、接口声明与开发维护导览 |
 | 查看项目策划与当前开发总结 | `docs/PROJECT_MASTER_PLAN.md` | `docs/archive/DEVELOPMENT_SUMMARY_2026-10-14.md` |
 | **动手写代码** | `AGENTS.md`（AI 助手）/ `CONTRIBUTING.md`（人类） | `docs/CODE_AND_DIRECTORY_STANDARD.md` |
 | 开发 AI / Agent 能力 | `docs/AI_AGENT_OPERATING_SYSTEM_ARCHITECTURE.md`（**强制先读**） | `docs/CONTRACT.md` |
@@ -60,6 +62,8 @@
 | `docs/项目介绍与功能地图.md` | 活 | 功能全景（模块、接口、能力清单） |
 | `docs/PROJECT_MASTER_PLAN.md` | 建设策划 V1.0（2026-10-14） | 产品定位、领域能力、前端与 AI 策略、里程碑、工作包、试点和验收 |
 | `docs/需求分析与详细设计说明书V8.0.md` | 历史基线 | 原始需求与设计（Phase 0 输入） |
+| `docs/PROJECT_STATUS_BRIEF.md` | 活（随批次更新） | 团队同步版项目现况：定位/业务主链/当前进度（校准到仓库实际）/硬缺口/三份核心文档导读/阅读顺序 |
+
 
 ### 2.5 **方案 / 设计稿类（待实施，未定稿）**
 
