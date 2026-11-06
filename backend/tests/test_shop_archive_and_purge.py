@@ -90,13 +90,49 @@ def test_archived_shop_rejects_order_import_and_dropship(client, auth_headers):
     assert r.status_code == 404, r.text
 
 
-def test_purge_demo_data_succeeds_under_foreign_keys(client, auth_headers):
-    """清理演示数据在 FK 约束下必须整体成功，且不误删账号/店铺/知识库。"""
-    before_users = client.get("/api/auth/users", headers=auth_headers).json()["total"]
-    before_docs = client.get("/api/knowledge/docs",
-                             headers=auth_headers).json()["total"]
+def _isolated_admin_headers(client):
+    """在**独立租户**建一个 admin 并登录，专供清理用例。
 
-    r = client.post("/api/shops/purge_demo_data", headers=auth_headers)
+    为什么必须隔离：`client` 是 session 级夹具，全量跑时共享租户里可能已有素材版本
+    或 PLATFORM_LAUNCH 流程，`DemoPurgeBlocked` 会让清理返回 409 —— 用例变成
+    「单跑绿、全量红」的顺序依赖（2026-10-20 全量跑实际复现）。
+    独立租户从零开始，`deleted > 0` 才真正证明清理干了活。
+    """
+    import uuid
+
+    from app.auth import hash_password
+    from app.db import SessionLocal
+    from app.models import Tenant, User
+
+    suffix = uuid.uuid4().hex[:8]
+    username = f"purge_{suffix}"
+    with SessionLocal() as db:
+        tenant = Tenant(name=f"清理隔离租户 {suffix}")
+        db.add(tenant)
+        db.flush()
+        db.add(User(tenant_id=tenant.id, username=username, role="admin",
+                    password_hash=hash_password("purge123")))
+        db.commit()
+    login = client.post("/api/auth/login",
+                        json={"username": username, "password": "purge123"})
+    assert login.status_code == 200, login.text
+    return {"Authorization": f"Bearer {login.json()['token']}"}
+
+
+def test_purge_demo_data_succeeds_under_foreign_keys(client):
+    """清理演示数据在 FK 约束下必须整体成功，且不误删账号/店铺/知识库。"""
+    h = _isolated_admin_headers(client)
+    created = client.post("/api/products", headers=h, json={
+        "title": "清理用例商品", "category": "家居", "attrs": {}})
+    assert created.status_code == 200, created.text
+    imported = client.post("/api/orders/import", headers=h, json={
+        "csv_text": "external_no,amount\nPURGE-CASE-1,50.00"})
+    assert imported.status_code == 200 and imported.json()["imported"] == 1, imported.text
+
+    before_users = client.get("/api/auth/users", headers=h).json()["total"]
+    before_docs = client.get("/api/knowledge/docs", headers=h).json()["total"]
+
+    r = client.post("/api/shops/purge_demo_data", headers=h)
     assert r.status_code == 200, r.text
     deleted = r.json()["deleted"]
     # 计数型字段断言 `>= 0` 恒真（等于没测）。清理前上面已确认有演示订单/商品，
@@ -105,13 +141,12 @@ def test_purge_demo_data_succeeds_under_foreign_keys(client, auth_headers):
     assert deleted["products"] > 0, deleted
 
     # 业务数据已清空
-    assert client.get("/api/products", headers=auth_headers).json()["total"] == 0
-    assert client.get("/api/orders", headers=auth_headers).json()["total"] == 0
+    assert client.get("/api/products", headers=h).json()["total"] == 0
+    assert client.get("/api/orders", headers=h).json()["total"] == 0
 
     # 保留项：账号、知识库、店铺授权配置（清理的是演示业务数据）
-    assert client.get("/api/auth/users", headers=auth_headers).json()["total"] == before_users
-    assert client.get("/api/knowledge/docs",
-                      headers=auth_headers).json()["total"] == before_docs
+    assert client.get("/api/auth/users", headers=h).json()["total"] == before_users
+    assert client.get("/api/knowledge/docs", headers=h).json()["total"] == before_docs
 
     # 清理后无残留外键违规（依赖顺序正确性的直接证据）
     from app.db import engine
@@ -184,29 +219,31 @@ def test_purge_plan_order_is_topologically_valid():
     assert not violations, "清理顺序违反外键拓扑序：\n" + "\n".join(violations)
 
 
-def test_purge_succeeds_when_product_has_selected_offer(client, auth_headers):
+def test_purge_succeeds_when_product_has_selected_offer(client):
     """回归：商品已选定报价时，清理演示数据仍必须成功（真实外键环）。
 
     `products.selected_offer_id → supplier_offers.id` 与
     `supplier_offers.product_id → products.id` 互引成环，纯拓扑序无解：
     若未在删除 supplier_offers 前置空引用，DELETE 会被 SQLite 外键拦截 → 500。
     这里走真实 API 造出该状态，证明清理不是靠「演示数据里恰好没选报价」蒙过去的。
+    同样使用独立租户，避免共享库中的上线/素材记录抢先阻断清理。
     """
-    supplier = client.post("/api/suppliers", headers=auth_headers,
+    h = _isolated_admin_headers(client)
+    supplier = client.post("/api/suppliers", headers=h,
                            json={"name": "断环测试供应商"}).json()
-    product = client.post("/api/products", headers=auth_headers, json={
+    product = client.post("/api/products", headers=h, json={
         "title": "断环测试商品", "category": "家居",
         "attrs": {"supplier_price": 8, "sale_price": 20},
         "source_platform": "1688",
         "source_url": "https://detail.1688.com/offer/700333.html"}).json()
-    offer = client.post("/api/suppliers/offers", headers=auth_headers, json={
+    offer = client.post("/api/suppliers/offers", headers=h, json={
         "supplier_id": supplier["id"], "product_id": product["id"],
         "price": 12.5, "currency": "CNY"}).json()
     selected = client.put(f"/api/products/{product['id']}/selected-offer",
-                          headers=auth_headers, json={"offer_id": offer["id"]})
+                          headers=h, json={"offer_id": offer["id"]})
     assert selected.status_code == 200, selected.text
 
-    r = client.post("/api/shops/purge_demo_data", headers=auth_headers)
+    r = client.post("/api/shops/purge_demo_data", headers=h)
     assert r.status_code == 200, r.text
     deleted = r.json()["deleted"]
     assert deleted["products"] > 0, deleted

@@ -241,14 +241,19 @@ def test_stale_selection_is_flagged_not_silent(client, auth_headers):
 
     # 直库把选定指向不存在的报价 id：本库 FK 强制会拦，故临时关闭 PRAGMA 模拟
     # 「FK 未开启的直库损坏环境」（防御性诚实信号仍须存在）
+    from sqlalchemy import text
+
     db = SessionLocal()
     try:
-        from sqlalchemy import text
         db.execute(text("PRAGMA foreign_keys=OFF"))
         p = db.get(Product, pid)
         p.selected_offer_id = 99999999
         db.commit()
     finally:
+        # PRAGMA 是**连接级**状态：连接回池后会被后续用例复用。这里不恢复，
+        # test_tenant_id_foreign_keys 的「必须抛 IntegrityError」会静默失效
+        # （2026-10-20 全量跑实测：单跑绿、全量红）。
+        db.execute(text("PRAGMA foreign_keys=ON"))
         db.close()
 
     ov = client.get(f"/api/products/{pid}/overview", headers=auth_headers)
