@@ -24,6 +24,11 @@ BUSINESS_ACTIONS = {
 }
 PLATFORM_STATES = {"UNKNOWN", "NOT_SUBMITTED", "SUBMITTED", "UNDER_REVIEW", "ACCEPTED",
                    "ACTIVE", "PAUSED", "REJECTED", "OFFLINE"}
+# 证据核验取值（docs/PLATFORM_WORKFLOW_STATE_MODEL.md §1）。此前是四个状态字段中唯一
+# 没有集中常量集合的一个，只能散落在字符串字面量里、无法被单测断言（P0-1 F4）。
+# 注意与供应商域的小写枚举（manual/verified/unverified/scraped）区分：两者不可互串。
+VERIFICATION_STATES = frozenset({"UNKNOWN", "MANUAL_REPORTED", "PENDING_VERIFICATION",
+                                 "VERIFIED", "REJECTED", "EXPIRED"})
 FULFILLMENT_MODES = {"DROPSHIP", "PLATFORM_STOCK", "SELF_STOCK", "FACTORY_DIRECT"}
 
 

@@ -9,6 +9,7 @@ from ..models import AiAction, WorkflowStep
 from .launch_access import LaunchError
 from .launch_facts import load_launch_facts
 from .launch_rules import STEP_STATES, evaluate_readiness
+from .launch_status import is_activated
 from .profile_schema import ProfileDefinition
 
 # 有持久意图的 AiAction 状态：RUNNING 步骤只要命中其一即视为「在途」，恢复时只重读不重发。
@@ -32,7 +33,7 @@ def launch_plan(db, run):
 
 def activated_flag(run):
     """上线后失效分支开关（既有 refresh_launch 语义）：在售三态且已完成才激活整改阻断。"""
-    return run.platform_status in {"ACTIVE", "PAUSED", "OFFLINE"} and run.completed_at is not None
+    return is_activated(run.platform_status, run.completed_at)
 
 
 def recover_running_steps(db, run, steps) -> dict[str, dict]:

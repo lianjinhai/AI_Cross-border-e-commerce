@@ -303,7 +303,7 @@ def test_sync_refresh_and_mode_validation(client, auth_headers, api_env):
     unsupported = client.post(f"/api/launch/{run_id}/sync", headers=auth_headers,
                               json={"mode": "push", "expected_revision": revision})
     assert unsupported.status_code == 422
-    assert unsupported.json()["detail"]["supported"] == ["refresh"]   # AC-10.1
+    assert unsupported.json()["detail"]["supported"] == ["refresh", "platform_status"]   # AC-10.1
     injected = client.post(f"/api/launch/{run_id}/sync", headers=auth_headers,
                            json={"mode": "refresh", "expected_revision": revision,
                                  "platform_status": "ACTIVE"})

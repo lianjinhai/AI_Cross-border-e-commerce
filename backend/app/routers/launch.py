@@ -5,6 +5,7 @@ existing_launch_id?}``；写路径服务函数不 commit，由本层统一 commi
 路由声明顺序：``/context`` 必须早于 ``/{run_id}``，否则 ``context`` 会被当作 run_id。
 """
 
+from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -21,6 +22,7 @@ from ..workflows.launch_access import LaunchError, launch_context, owned_launch
 from ..workflows.launch_actions import execute_launch_action
 from ..workflows.launch_records import create_launch
 from ..workflows.launch_runtime import refresh_launch
+from ..workflows.launch_status_sync import sync_platform_status
 
 router = APIRouter(prefix="/launch", tags=["launch"])
 
@@ -50,6 +52,13 @@ class SyncIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     mode: str
     expected_revision: int
+    # mode=platform_status 专用：平台回执的原始状态与来源留痕（状态模型 §5）。
+    # 缺省值保证旧客户端只传 mode+expected_revision 时行为不变。
+    raw_status: str = Field(default="", max_length=256)
+    source: Literal["API", "MANUAL", "DEMO"] = "MANUAL"
+    source_time: datetime | None = None
+    external_reference: str = Field(default="", max_length=128)
+    source_revision: int | None = Field(default=None, ge=0)
 
 
 def _ctx(db, user):
@@ -160,10 +169,19 @@ def act(run_id: int, action: str, body: ActionIn,
 @router.post("/{run_id}/sync")
 def sync(run_id: int, body: SyncIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ctx = _ctx(db, user)
+    if body.mode == "platform_status":
+        try:
+            out = sync_platform_status(db, ctx, run_id, body.model_dump(), body.expected_revision)
+            db.commit()
+            launch = launch_dto.load_detail(db, ctx, run_id)
+            db.commit()
+            return {"refreshed": False, **out, "launch": launch}
+        except LaunchError as exc:
+            _fail(db, exc)
     if body.mode != "refresh":
         raise HTTPException(status_code=422, detail={"code": "SYNC_MODE_UNSUPPORTED",
-                                                     "message": "仅支持 refresh 同步模式",
-                                                     "supported": ["refresh"]})
+                                                     "message": "仅支持 refresh / platform_status 同步模式",
+                                                     "supported": ["refresh", "platform_status"]})
     try:
         run, _plan = refresh_launch(db, ctx, run_id, body.expected_revision)
         run.last_synced_at = utcnow()

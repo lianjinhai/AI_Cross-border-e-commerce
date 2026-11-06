@@ -26,6 +26,7 @@ from .launch_action_catalog import (
 from .launch_handlers import HANDLERS as BASE_HANDLERS
 from .launch_handlers import missing_blockers
 from .launch_plan import activated_flag, launch_plan
+from .launch_status import is_verified_online
 from .launch_submit import SUBMIT_HANDLERS
 from .transactions import ensure_write_transaction
 
@@ -202,8 +203,7 @@ def _action_gate(action, run, step, meta, plan, facts):
         if target.get("completion_satisfied") is not True:
             raise LaunchError("ACTION_PRECONDITION_FAILED", "完成条件尚未被服务端事实满足", 409,
                               blockers=missing_blockers(facts, step))
-    if meta.target == "run" and (run.execution_status == "COMPLETED"
-                                 or (run.platform_status == "ACTIVE" and run.verification_status == "VERIFIED")):
+    if meta.target == "run" and (run.execution_status == "COMPLETED" or is_verified_online(run)):
         raise LaunchError("ACTION_PRECONDITION_FAILED", "当前流程不能取消", 409)
 
 

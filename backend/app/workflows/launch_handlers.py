@@ -9,6 +9,7 @@ from ..models import AiAction, PlatformPublishAttempt, utcnow
 from .launch_access import LaunchError
 from .launch_action_catalog import ActionContext, StepEffect
 from .launch_state import facts_digest
+from .launch_status import is_verified_online
 
 # 基础 handler 注册表（文件末尾填充）；launch_submit.SUBMIT_HANDLERS 由
 # launch_actions 合并进完整目录，避免 launch_handlers 前向引用提交/核验 handler。
@@ -61,7 +62,7 @@ def cancel_run(ctx: ActionContext) -> StepEffect:
     run = ctx.run
     if run.ended_at is not None or run.execution_status == "CANCELLED":
         raise LaunchError("LAUNCH_ENDED", "已结束的流程不能重复取消", 409)
-    if run.platform_status == "ACTIVE" and run.verification_status == "VERIFIED":
+    if is_verified_online(run):
         raise LaunchError("ACTION_PRECONDITION_FAILED", "已核验在售的流程不能取消", 409)
     if run.execution_status == "COMPLETED":
         raise LaunchError("ACTION_PRECONDITION_FAILED", "已完成的流程不能取消", 409)

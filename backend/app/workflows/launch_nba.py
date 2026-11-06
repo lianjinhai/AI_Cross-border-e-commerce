@@ -8,6 +8,7 @@ AI 层只能在 ``allowed_actions`` 内解释或重排（子集），不得新�
 from datetime import datetime
 
 from .launch_action_catalog import PRICE_STOCK_ACTIONS, action_meta
+from .launch_status import is_verified_online
 
 # 外部确认者 actor：不依赖外部确认者的动作优先（安全依赖排序，设计 D6/PRD §5.2）。
 _EXTERNAL_ACTORS = frozenset({"PLATFORM", "REVIEWER", "FACTORY"})
@@ -25,7 +26,7 @@ def cancellable(run) -> bool:
         return False
     if run.execution_status == "COMPLETED":
         return False
-    return not (run.platform_status == "ACTIVE" and run.verification_status == "VERIFIED")
+    return not is_verified_online(run)
 
 
 def action_block_reason(action, meta, effective_status, plan_step, permissions, run):

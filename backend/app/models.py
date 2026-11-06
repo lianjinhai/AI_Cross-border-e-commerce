@@ -390,6 +390,12 @@ class PlatformPublishAttempt(Base):
     verification_status: Mapped[str] = mapped_column(String(24), default="UNKNOWN", server_default="UNKNOWN")
     external_object_type: Mapped[str] = mapped_column(String(32), default="UNKNOWN", server_default="UNKNOWN")
     raw_status: Mapped[str] = mapped_column(String(256), default="", server_default="")
+    # 外部事件来源留痕（状态模型 §5）：source=API/MANUAL/DEMO；source_time 为平台侧时间，
+    # received_at 为本地接收时间；source_revision 用于丢弃乱序旧事件，不回退状态。
+    source: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    source_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    external_reference: Mapped[str] = mapped_column(String(128), default="", server_default="")
+    source_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
     received_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     mapping_version: Mapped[str] = mapped_column(String(64), default="", server_default="")
     checkpoint: Mapped[dict] = mapped_column(JSON, default=dict)
