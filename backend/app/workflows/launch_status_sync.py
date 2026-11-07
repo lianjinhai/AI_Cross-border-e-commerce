@@ -12,7 +12,7 @@ from . import launch_state, launch_status
 from .kinds import PLATFORM_LAUNCH
 from .launch_access import LaunchError, launch_context, owned_launch
 from .launch_plan import launch_plan
-from .launch_rules import evaluate_readiness
+from .launch_rules import evaluate_readiness, revoked_codes
 from .transactions import ensure_write_transaction
 
 MAPPING_VERSION = "platform-status-v1"
@@ -93,7 +93,7 @@ def _recompute(definition, steps, run, facts, predicates, mapped):
     activated = launch_status.is_activated(mapped, run.completed_at)
     states = {step.step_code: step.step_status for step in steps}
     return evaluate_readiness(definition.model_dump(), states, world_facts, world_predicates,
-                              activated=activated)
+                              activated=activated, revoked=revoked_codes(steps))
 
 
 def _attempt(db, run):

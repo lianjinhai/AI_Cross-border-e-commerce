@@ -32,7 +32,6 @@ PAYLOAD_TEXT_LIMIT = 500
 
 DISABLED_STOCK = "备货领域服务未接入（后续批次）"
 DISABLED_COMPLIANCE = "合规材料服务未接入（后续批次）"
-DISABLED_LABEL = "标签服务未接入（后续批次）"
 DISABLED_EVIDENCE = "实物材料核验服务未接入（后续批次）"
 
 # COMPLIANCE 角色投影剔除集（设计 D8）：从动作清单完全移除，不是置灰。
@@ -142,10 +141,18 @@ BUSINESS_ACTION_META: dict[str, ActionMeta] = {
                              disabled_reason=DISABLED_COMPLIANCE),
     "VERIFY_ARTIFACT": _meta({"COMPLIANCE"}, ("launch:compliance_manage",), {"READY"},
                              disabled_reason=DISABLED_COMPLIANCE),
-    "GENERATE_LABEL": _meta({"LABEL"}, ("launch:label_manage",), {"READY"},
-                            disabled_reason=DISABLED_LABEL),
-    "REGENERATE_LABEL": _meta({"LABEL"}, ("launch:label_manage",), {"READY"},
-                              disabled_reason=DISABLED_LABEL),
+    # ---- 标签包（M2-E 接通）：只本地生成，依据不足当场 409 且零写入 ----
+    # 来源状态 = READY / BLOCKED / COMPLETED，三个都有真实来源：
+    #   READY     —— 首次生成；
+    #   BLOCKED   —— 依据失效后重新生成（只给 READY 会让用户卡死在阻断态，与
+    #                WAITING_EXTERNAL 那个坑同源：有出口的阻断才算真阻断）；
+    #   COMPLETED —— 已有一版且想再版（旧版永久保留，只增不改）。
+    "GENERATE_LABEL": _meta({"LABEL"}, ("launch:label_manage",),
+                            {"READY", "BLOCKED", "COMPLETED"},
+                            connected=True, optional=("note",)),
+    "REGENERATE_LABEL": _meta({"LABEL"}, ("launch:label_manage",),
+                              {"READY", "BLOCKED", "COMPLETED"},
+                              connected=True, optional=("note",)),
     "UPLOAD_PHYSICAL_EVIDENCE": _meta({"EVIDENCE"}, ("launch:compliance_manage",), {"READY"},
                                       disabled_reason=DISABLED_EVIDENCE),
     "VERIFY_EVIDENCE": _meta({"EVIDENCE"}, ("launch:compliance_manage",), {"READY"},

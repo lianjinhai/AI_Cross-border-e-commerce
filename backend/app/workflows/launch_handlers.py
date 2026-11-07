@@ -5,8 +5,8 @@ handler 只做领域前置校验并返回 StepEffect 断言（设计 D10），�
 提交/核验 handler 按设计 D1 二分集中在 launch_submit。
 """
 
-from ..models import AiAction, PlatformPublishAttempt, utcnow
-from ..services import pricing_rounds
+from ..models import AiAction, PlatformPublishAttempt, Product, utcnow
+from ..services import label_packages, pricing_rounds
 from .launch_access import LaunchError
 from .launch_action_catalog import ActionContext, StepEffect
 from .launch_repair import repair_action
@@ -232,6 +232,90 @@ def _price_effect(ctx: ActionContext, row, quote, *, status: str | None = None) 
                       evidence_refs=["price_round:%s" % row.id])
 
 
+def generate_label(ctx: ActionContext) -> StepEffect:
+    """GENERATE_LABEL（M2-E）：依据充分才生成第一版标签包。
+
+    语义边界（写在函数里，避免以后被当成平台往返）：
+    本批标签是**本地生成的标签包**——只拼出可核对的标签字段（SKU、品名、原产国、
+    已核验的认证声明与要求说明），**没有**打印、上传或向平台发送任何东西。
+    `LABEL_PREPARATION` 完成只代表「存在一版依据充分的标签包」。
+
+    依据不足时抛 409 并**逐条**给出缺什么（哪个要求缺证据 / 哪条已过期 / 该国要求未收录），
+    每条都带补齐入口；此时一行业务数据都不写。
+    """
+    return _generate(ctx, action="GENERATE")
+
+
+def regenerate_label(ctx: ActionContext) -> StepEffect:
+    """REGENERATE_LABEL（M2-E）：依据变化或需改版时追加新版本，旧版本永久保留。
+
+    没有旧版时 409：否则「重新生成」会凭空造出第一版，让依据失效这件事看起来
+    像「改过一版」——历史版本号与审计链就对不上了。
+    """
+    return _generate(ctx, action="REGENERATE")
+
+
+def _generate(ctx: ActionContext, *, action: str) -> StepEffect:
+    try:
+        row = label_packages.generate(
+            ctx.db, tenant_id=ctx.run.tenant_id, product=_product(ctx), shop_id=ctx.run.shop_id,
+            country=ctx.run.market, run_id=ctx.run.id,
+            step_code=ctx.step.step_code if ctx.step else "", action=action,
+            created_by=ctx.current.user_id, require_existing=(action == "REGENERATE"))
+    except label_packages.LabelBasisError as exc:
+        raise _label_blocked(ctx, exc) from exc
+    return _label_effect(ctx, row)
+
+
+def _product(ctx):
+    product = ctx.db.get(Product, ctx.run.product_id, populate_existing=True)
+    if product is None or product.tenant_id != ctx.run.tenant_id:
+        raise LaunchError("LAUNCH_TARGET_INVALID", "流程商品不存在或不属于当前租户", 409)
+    return product
+
+
+def _label_blocked(ctx, exc) -> LaunchError:
+    """依据不足的 409：每个缺项一条 blocker，都指向「去商品详情补目的国合规证据」。"""
+    step = ctx.step
+    business_type = step.business_type if step else "LABEL"
+    repair = repair_action(exc.code, business_type=business_type, product_id=ctx.run.product_id)
+    reasons = exc.reasons or [exc.message]
+    return LaunchError("ACTION_PRECONDITION_FAILED", exc.message, 409,
+                       blockers=[{"code": exc.code, "message": reason,
+                                  "step_code": step.step_code if step else "",
+                                  "owner_actor": step.actor if step else "SYSTEM",
+                                  "evidence_refs": [], "repair_action": dict(repair)}
+                                 for reason in reasons])
+
+
+def _label_effect(ctx: ActionContext, row) -> StepEffect:
+    """把刚写下的标签包转成收敛用的新事实与新谓词（不落 step.result 的调度字段）。
+
+    ``LABEL_PACKAGE`` 之所以现在就能置 True：这一版是用**本次实时依据**生成的，
+    指纹天然等于当前依据；下次请求若证据过期或被改，`launch_facts` 会重算出 False
+    并让步骤重新阻断。
+    """
+    facts = label_packages.label_facts(ctx.db, ctx.run.tenant_id, _product(ctx),
+                                       ctx.run.shop_id, row.destination_country) or {}
+    result = {"label_package_id": row.id, "label_version": row.version,
+              "destination_country": row.destination_country,
+              "content_digest": row.content_digest,
+              "basis_fingerprint": row.basis_fingerprint,
+              "open_items": list(row.open_items or [])}
+    receipt = {"step_code": ctx.step.step_code if ctx.step else "", "package_id": row.id,
+               "version": row.version, "action": row.action,
+               "destination_country": row.destination_country,
+               "content_digest": row.content_digest,
+               "marks": [item.get("requirement") for item in (row.content or {}).get("marks") or []],
+               "open_items": list(row.open_items or []),
+               "label_package_current": True,
+               "note": "本地生成的标签包；未打印、未上传、未向平台发送"}
+    return StepEffect(status="COMPLETED", result=result, receipt=receipt,
+                      facts={"label": facts},
+                      predicates={"verified_artifact": {"LABEL_PACKAGE": True}},
+                      evidence_refs=["label_package:%s" % row.id])
+
+
 def _reject_pending_external(ctx):
     """外部结果待核查时不重发（AC-8.2）：Attempt uncertain 或 AiAction EXECUTING。"""
     step = ctx.step
@@ -251,4 +335,5 @@ def _reject_pending_external(ctx):
 HANDLERS.update({"COMPLETE_DATA": complete_data, "RETRY": retry_step,
                  "CANCEL": cancel_run, "ABANDON_PRODUCT": cancel_run,
                  "REPORT_PRICE": report_price, "COUNTER_PRICE": counter_price,
-                 "ACCEPT_PRICE": accept_price})
+                 "ACCEPT_PRICE": accept_price,
+                 "GENERATE_LABEL": generate_label, "REGENERATE_LABEL": regenerate_label})

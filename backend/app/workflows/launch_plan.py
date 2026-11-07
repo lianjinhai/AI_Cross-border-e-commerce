@@ -8,7 +8,7 @@
 from ..models import AiAction, WorkflowStep
 from .launch_access import LaunchError
 from .launch_facts import load_launch_facts
-from .launch_rules import STEP_STATES, evaluate_readiness
+from .launch_rules import STEP_STATES, evaluate_readiness, revoked_codes
 from .launch_status import is_activated
 from .profile_schema import ProfileDefinition
 
@@ -27,7 +27,7 @@ def launch_plan(db, run):
     facts, predicates = load_launch_facts(db, run)
     plan = evaluate_readiness(
         definition.model_dump(), {step.step_code: step.step_status for step in steps},
-        facts, predicates, activated=activated_flag(run))
+        facts, predicates, activated=activated_flag(run), revoked=revoked_codes(steps))
     return definition, steps, facts, predicates, plan
 
 

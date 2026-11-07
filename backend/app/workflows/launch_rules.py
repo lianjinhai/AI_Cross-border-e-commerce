@@ -9,13 +9,21 @@ from .profile_schema import ProfileDefinition
 STEP_STATES = frozenset({"PENDING", "READY", "RUNNING", "WAITING_EXTERNAL", "WAITING_USER",
                          "WAITING_APPROVAL", "COMPLETED", "BLOCKED", "FAILED", "SKIPPED"})
 WAITING = frozenset({"RUNNING", "WAITING_EXTERNAL", "WAITING_USER", "WAITING_APPROVAL", "FAILED"})
-BLOCK_CODES = {"COMPLIANCE": "COMPLIANCE_BLOCK", "LABEL": "COMPLIANCE_BLOCK",
+BLOCK_CODES = {"COMPLIANCE": "COMPLIANCE_BLOCK", "LABEL": "LABEL_BASIS_MISSING",
                "EVIDENCE": "COMPLIANCE_BLOCK", "STOCK_PREPARATION": "STOCK_REQUIRED",
                "PRICE_REVIEW": "PRICE_UNACCEPTABLE", "HUMAN_DECISION": "USER_ACTION_REQUIRED"}
 
 
-def evaluate_readiness(snapshot, states, facts, predicates, *, activated=False, cancelled=False):
-    """只接受服务端事实。完成需专用 handler；此函数绝不自动写 COMPLETED。"""
+def evaluate_readiness(snapshot, states, facts, predicates, *, activated=False, cancelled=False,
+                       revoked=frozenset()):
+    """只接受服务端事实。完成需专用 handler；此函数绝不自动写 COMPLETED。
+
+    ``revoked``：完成曾被撤销过的步骤码集合（由 ``inputs_revision`` 派生，见
+    ``launch_plan.revoked_codes``）。这些步骤的完成已经作废，撤销理由（证据过期/被替换）
+    不会自己消失，因此不能在完成条件尚未重新满足时自动回到 READY——否则同一次请求里
+    「刷新写入 BLOCKED → 再求值一次就变 READY」会把阻断连同原因一起洗掉，
+    同一步骤的状态取决于被读了几次。
+    """
     definition = ProfileDefinition.model_validate(snapshot)
     nodes = {step.step_code: step for step in definition.steps}
     if set(states) != set(nodes) or any(state not in STEP_STATES for state in states.values()):
@@ -34,7 +42,7 @@ def evaluate_readiness(snapshot, states, facts, predicates, *, activated=False, 
         # 未接通，保持 READY + 禁用按钮 + 明确 disabled_reason，不伪装成「在等外部」。
         external_arrived = _external_arrived(step, facts, checks)
         status, reason = _status(step, states[code], applicable, deps, entered, complete,
-                                 activated, cancelled, external_arrived)
+                                 activated, cancelled, external_arrived, code in revoked)
         results[code] = {"step_code": code, "status": status, "applicable": applicable,
                          "completion_satisfied": complete, "blocking_reason": _blocker(step, reason, facts) if reason else {},
                          "invalidated": states[code] == "COMPLETED" and status != "COMPLETED"}
@@ -67,8 +75,18 @@ def _topological(nodes):
     return ordered
 
 
+def revoked_codes(steps) -> frozenset:
+    """完成曾被撤销过的步骤码集合（``evaluate_readiness`` 的 ``revoked`` 入参）。
+
+    ``input_revision`` 的唯一写入点是 ``launch_state.plan_changes`` 的「COMPLETED 被降级」
+    分支，所以 ``input_revision > 0`` 精确等价于「这一步的完成曾经作废过」——
+    它比 ``step.result`` 可靠（重试也会写 result，但那不是完成作废）。
+    """
+    return frozenset(step.step_code for step in steps if (step.input_revision or 0) > 0)
+
+
 def _status(step, old, applicable, dependencies, entered, complete, activated, cancelled,
-            external_arrived=None):
+            external_arrived=None, revoked=False):
     if cancelled:
         return old, ""
     if activated and old == "COMPLETED":
@@ -98,6 +116,10 @@ def _status(step, old, applicable, dependencies, entered, complete, activated, c
         # 无平台事实（None）或事实不满足（False，如 UNDER_REVIEW）都仍需等待；
         # 只有 True（ACCEPTED/ACTIVE）才放行到 READY。
         return "WAITING_EXTERNAL", ""
+    if revoked and complete is not True:
+        # 完成被撤销过、而完成条件仍未重新满足：保持阻断（BLOCKED 必须能解除，
+        # 解除的唯一途径是完成条件重新成立，而不是下一次读取）。
+        return "BLOCKED", "已完成步骤的依据已失效，需要重新确认"
     return "READY", ""
 
 
@@ -128,9 +150,28 @@ def _message(step, code, message, facts):
         if (isinstance(margin, (int, float)) and isinstance(floor, (int, float))
                 and margin < floor):
             return f"售价毛利 {margin:.1%} 低于最低要求 {floor:.1%}，不能进入核价"
-    if code == "COMPLIANCE_BLOCK" and step.business_type == "LABEL":
-        return "标签包缺少可用依据（LABEL_PACKAGE 未核验或已失效）" if message else message
+    if code == "LABEL_BASIS_MISSING":
+        return _label_message(message, facts)
     return message
+
+
+def _label_message(fallback, facts):
+    """标签依据不足的具体原因（M2-E）：逐条列出缺哪个要求的证据。
+
+    以前这里只写「LABEL_PACKAGE 未核验或已失效」——用户知道要补，但不知道补哪条。
+    现在把 `label.reasons` 里的事实搬出来（缺 CE 证据 / FCC 已过期 / 该国要求未收录），
+    与 409 时逐条给出的 blockers 保持同一口径。
+    """
+    label = facts.get("label") or {}
+    reasons = [str(item) for item in (label.get("reasons") or []) if item]
+    if reasons:
+        shown = "；".join(reasons[:3])
+        rest = "" if len(reasons) <= 3 else f"（共 {len(reasons)} 项）"
+        return f"标签依据不足，不能生成标签包：{shown}{rest}"
+    if label:
+        # 依据本身齐备但仍未拿到可用标签包：最可能是旧包的依据已被改动。
+        return "标签包的依据已变化（要求或证据被改动），需要重新生成"
+    return fallback
 
 
 def _summary(definition, results, activated, cancelled):

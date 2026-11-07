@@ -29,6 +29,14 @@ _BY_CODE = {
         "path": "/app/compliance", "connected": False,
         "reason": "材料上传与核验服务未接入（B03–B09），合规页可查看要求但不能在此完成补齐",
     },
+    # 标签依据不足（M2-E）：**不能再指去合规页**——那一页的「合规检测」卡片实际是
+    # listing 评审队列，与目的国准入证据无关，用户跑一趟白跑。真正能补的地方是
+    # 商品详情页的「目的国合规要求与证据」区块（读写 `GET/POST
+    # /api/cross-border/products/{id}/compliance`），所以这里指商品详情。
+    "LABEL_BASIS_MISSING": {
+        "label": "去商品详情补目的国合规证据", "kind": "ROUTE", "action": None,
+        "path": "/app/products", "connected": True, "reason": "",
+    },
     # 低价：M2-A 起核价轮次接通，定价页能算出「多少钱才过门槛」并看轮次历史。
     # 边界：这里给的是**找到达标售价**的入口；提交报价轮次仍在 Launch 动作内
     # （REPORT_PRICE 需要 run + revision 上下文，定价页不持有流程状态）。

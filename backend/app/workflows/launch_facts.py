@@ -1,7 +1,7 @@
 """Launch 服务端事实读取；未接入的领域事实保持 UNKNOWN，不能用请求载荷补齐。"""
 
 from ..models import Listing, PlatformPublishAttempt, Product, Shop, WorkflowStep
-from ..services import costing, pricing_rounds
+from ..services import costing, label_packages, pricing_rounds
 from ..services.asset_rights import evaluate_asset_rights
 from .launch_access import LaunchError
 
@@ -41,9 +41,14 @@ def _facts(db, run, product, listing, shop, attempt):
     rights = evaluate_asset_rights(db, run.tenant_id, product, shop)
     facts["assets"] = {"rights_fingerprint": rights["fingerprint"], "versions": rights["versions"],
                        "reasons": rights["reasons"]}
-    # StockPreparation/Label 等尚未接入的领域事实，不读取 UI 勾选或旧 risk_level 代替核验。
+    # 标签事实（M2-E）：依据 = 目的国准入要求 + 证据；「未收录要求」判为不充分（不是放行）。
+    label = label_packages.label_facts(db, run.tenant_id, product, run.shop_id, run.market)
+    if label is not None:
+        facts["label"] = label
+    # StockPreparation 等尚未接入的领域事实仍不读取 UI 勾选或旧 risk_level 代替核验。
     return facts, {"asset_rights_allowed": {"PUBLISHABLE": rights["allowed"]},
-                   "verified_artifact": {"ACTIVATION": _activation_verified(db, run)},
+                   "verified_artifact": {"ACTIVATION": _activation_verified(db, run),
+                                         "LABEL_PACKAGE": bool((label or {}).get("package_current"))},
                    "cost_snapshot_current": {
                        "PRICE_REVIEW": _cost_current(db, run)}}
 

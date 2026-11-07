@@ -11,7 +11,7 @@ from .launch_action_catalog import PRICE_STOCK_ACTIONS, action_meta
 from .launch_facts import launch_facts_from_rows
 from .launch_nba import action_block_reason, compute_nba, next_action_summary, recommendations
 from .launch_plan import activated_flag, launch_plan
-from .launch_rules import evaluate_readiness
+from .launch_rules import evaluate_readiness, revoked_codes
 from .launch_runtime import refresh_launch
 from .launch_state import deep_redact, facts_digest
 from .profile_schema import ProfileDefinition
@@ -154,7 +154,8 @@ def launch_list_item(db, run, current, *, product, shop, attempt, steps=None, li
         steps = db.query(WorkflowStep).filter_by(run_id=run.id).all()
     states = {step.step_code: step.step_status for step in steps}
     facts, predicates = launch_facts_from_rows(db, run, product, listing, shop, attempt)
-    plan = evaluate_readiness(definition.model_dump(), states, facts, predicates, activated=activated_flag(run))
+    plan = evaluate_readiness(definition.model_dump(), states, facts, predicates,
+                              activated=activated_flag(run), revoked=revoked_codes(steps))
     nba = _nba(plan, steps, definition, current, facts, predicates, run)
     item = {"id": run.id, "environment": run.environment, "product": product_ref(product),
             "store": store_ref(shop), "market": run.market, "fulfillment_mode": run.fulfillment_mode,

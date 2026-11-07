@@ -13,7 +13,7 @@ from sqlalchemy import func
 from ..models import AiAction, WorkflowEvent, utcnow
 from ..services.pii_redact import redact
 from .launch_plan import recover_running_steps
-from .launch_rules import WAITING, evaluate_readiness
+from .launch_rules import WAITING, evaluate_readiness, revoked_codes
 
 # 可落地的等待态：规则对 WAITING 是粘滞的（设计 R1），回执/核验事实在此显式落地。
 _LANDABLE_WAITS = frozenset(WAITING - {"FAILED"})
@@ -280,7 +280,8 @@ def converge(db, run, steps, plan, facts, predicates, definition, *, activated=F
             states[code] = migration["step_status"]
     if overrides or cancelled:
         plan = evaluate_readiness(definition.model_dump(), states, facts, predicates,
-                                  activated=activated, cancelled=cancelled)
+                                  activated=activated, cancelled=cancelled,
+                                  revoked=revoked_codes(steps))
     for _ in range(len(steps) + 1):
         if cancelled:
             break
@@ -299,5 +300,5 @@ def converge(db, run, steps, plan, facts, predicates, definition, *, activated=F
         if not settled:
             break
         plan = evaluate_readiness(definition.model_dump(), states, facts, predicates,
-                                  activated=activated)
+                                  activated=activated, revoked=revoked_codes(steps))
     return plan, overrides
