@@ -82,6 +82,14 @@ class Settings:
     build_sha: str = os.getenv("ERP_BUILD_SHA", "")
     build_time: str = os.getenv("ERP_BUILD_TIME", "")
 
+    # 素材上传存储根目录（M2-D）。
+    # **空 = 素材上传服务未接入**：此时上传接口一律 409 ASSET_UPLOAD_UNAVAILABLE 且零写入，
+    # 登记接口也不接受 asset:// 引用——宁可明确说「传不了」，也不让客户端编一个
+    # 64 位十六进制当 sha256 存进权利证据里。
+    # 配置后服务端自己读字节算哈希（见 services/asset_upload.py）。
+    # 边界：本地目录只保证单机持久与可回读；对象存储/CDN 仍在 B03–B09。
+    asset_upload_dir: str = os.getenv("ERP_ASSET_UPLOAD_DIR", "")
+
     # 反向代理信任开关（见 Caddyfile / docker-compose.tls.yml）
     #
     # 启用后应用采信 X-Forwarded-For / -Proto，使访问日志与 request.url 反映

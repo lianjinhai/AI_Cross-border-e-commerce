@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 
 from ..models import Product, ProductAsset, Shop, utcnow
 from ..workflows.transactions import ensure_write_transaction
+from . import asset_upload
 from .action_identity import fresh_context
 from .ai_actions import ActionError
 from .asset_schema import AssetRegistration
@@ -42,6 +43,35 @@ def _hash(value):
                                     separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
 
 
+def upload_context(db, ctx, product_id, shop_id):
+    """上传前校验：目标店铺在范围内且当前身份可写素材（不写库）。
+
+    单独暴露而不是让路由直接调 `_context`：上传不落库，但仍必须过同一套
+    范围/权限判定，否则「能上传」会变成绕过素材权限的旁路。
+    """
+    return _context(db, ctx, product_id, shop_id, "product:write")
+
+
+def _require_trustworthy_reference(request):
+    """哈希必须能对上文件：`asset://` 引用一律回存储重算，堵住客户端编造的假哈希。
+
+    外部 `https://` 引用本批不下载校验（会引入网络依赖与 SSRF 面），继续沿用旧语义：
+    `verification_status=MANUAL_REPORTED`（人工申报），且必须由**别人**核验才算数。
+    """
+    if not request.uri.startswith("asset://"):
+        return
+    try:
+        actual = asset_upload.verify_reference(request.uri)
+    except asset_upload.UploadUnavailable as exc:
+        raise AssetError("ASSET_UPLOAD_UNAVAILABLE", str(exc), 409) from exc
+    except asset_upload.UploadRejected as exc:
+        raise AssetError(exc.code, str(exc), 409) from exc
+    if actual != request.content_hash:
+        raise AssetError("ASSET_HASH_MISMATCH",
+                         "素材哈希与存储文件不一致：声明 %s… 实际 %s…"
+                         % (request.content_hash[:12], actual[:12]), 409)
+
+
 def _latest(db, tenant_id, product_id, asset_key):
     return db.query(ProductAsset).filter_by(tenant_id=tenant_id, product_id=product_id, asset_key=asset_key).order_by(
         ProductAsset.version.desc()).populate_existing().first()
@@ -53,6 +83,7 @@ def register_asset(db, ctx, product_id, shop_id, payload):
     current, shop = _context(db, ctx, product_id, shop_id, "product:write")
     if (request.market, request.platform) != (shop.market, shop.platform):
         raise AssetError("ASSET_USAGE_MISMATCH", "素材适用范围必须与目标店铺一致")
+    _require_trustworthy_reference(request)
     values = request.model_dump(exclude={"expected_version"})
     fingerprint = _hash(values)
     parent = _latest(db, current.legacy_tenant_id, product_id, request.asset_key)
