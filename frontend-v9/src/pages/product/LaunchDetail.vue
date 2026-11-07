@@ -17,6 +17,9 @@
           :since="detail.updated_at || detail.created_at || ''"
           hint="等待外部平台回执，流程尚未上线，请勿视为已发布" class="mb16" />
 
+        <!-- 阻断与补齐（P0-4）：阻断不能只给原因，必须同时给出下一步去哪 -->
+        <BlockerList v-if="detail.blockers && detail.blockers.length" :blockers="detail.blockers" class="mb16" />
+
         <el-row :gutter="16">
           <!-- GUIDED 侧边步骤导航（PROFESSIONAL 用完整时间线） -->
           <el-col :span="10">
@@ -40,6 +43,9 @@
                 <el-button size="small" type="primary" plain @click="openAction(lastActionEntry)">重试</el-button>
               </div>
             </el-alert>
+            <!-- 失败态同样要有补齐入口（P0-4）：裸 409 只能告诉用户「不行」，说不出「然后呢」 -->
+            <BlockerList v-if="lastError && lastError.blockers && lastError.blockers.length"
+              :blockers="lastError.blockers" class="mt12" />
             <!-- 每步 AI 建议（建议→证据→动作 三段式） -->
             <AiActionCard v-if="aiSuggestion.title" class="mt12" :suggestion="aiSuggestion"
               :evidence="aiSuggestion.evidence || []" :risks="aiSuggestion.risks || []"
@@ -125,6 +131,7 @@ import LaunchStatusSummary from '../../features/launch/LaunchStatusSummary.vue'
 import LaunchTimeline from '../../features/launch/LaunchTimeline.vue'
 import LaunchStepPanel from '../../features/launch/LaunchStepPanel.vue'
 import LaunchActionDialog from '../../features/launch/LaunchActionDialog.vue'
+import BlockerList from '../../features/launch/BlockerList.vue'
 import LaunchExperienceToggle from '../../features/launch/LaunchExperienceToggle.vue'
 import { errorEnvelope, actionReceiptView, isSafeReturnTo, loadDetail, loadEvents, loadSteps, syncLaunch, executionStatusMeta, platformStatusMeta } from '../../composables/launchCenter'
 import { fetchLaunches } from '../../api/domains/launch'
