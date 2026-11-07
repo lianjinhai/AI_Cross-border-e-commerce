@@ -33,6 +33,7 @@
 | `V9-1-S4` | 0 | `REPORT.md` | AI 内部链路（无截图） |
 | `V9-1-S5` | 0 | `REPORT.md` | 订单详情（无截图） |
 | `V9-1-P0` | 4 | `REPORT.md`、`P0-2-PLATFORM-STATUS.md`、`P0-2b-EXTERNAL-WAIT.md`、`P0-3-ROUND-HISTORY.md`、`P0-4-GATE-REPAIR.md` | 三状态枚举对齐与写入点审计（P0-1 只读分析）+ 平台状态摄入通道（P0-2，21 用例 + 迁移可逆）+ 执行态等待有生产者（P0-2b，11 用例）+ 多轮历史与唯一活跃槽（P0-3，16 用例）+ 三道门禁补齐入口与双 Profile 真机（P0-4，17 用例）；4 张图齐 |
+| `V9-1-M2` | 2 | `REPORT.md` | 核价报价轮次与低价阻断（M2-A）：只增不改的 `price_rounds` 历史 + 成本快照指纹重阻断 + 三个动作接通 + 定价页只读轮次；9 用例（含迁移可逆与越权 403）；真机两态截图齐 |
 
 `R3-1A`、`R3-1B`、`R3-2B` 三个批次没有独立报告，结论落在 `docs/FRONTEND_V9_PROGRESS.md` 的对应行。
 
@@ -64,4 +65,4 @@
 
 ---
 
-*最后同步：2026-11-07，基线 `ded178f`，新增 `V9-1-P0/P0-2-PLATFORM-STATUS.md`（P0-2 平台状态摄入通道，21 用例 + 迁移可逆实测）、`V9-1-P0/P0-2b-EXTERNAL-WAIT.md`（执行态等待有生产者，11 用例）、`V9-1-P0/P0-3-ROUND-HISTORY.md`（多轮历史与唯一活跃槽，16 用例）、`V9-1-P0/P0-4-GATE-REPAIR.md`（三道门禁补齐入口与双 Profile 真机，17 用例，日志见 `V9-1-P0/run-log.txt`），以及 `01-waiting-external-1440.png`、`02-verified-online-1440.png`、`03-blocked-lowprice-1440.png`、`04-transition-history-1440.png` 四张真机界面佐证。以本目录为准。*
+*最后同步：2026-11-07，基线 `1963887`，新增 `V9-1-M2/REPORT.md`（M2-A 核价：报价轮次与低价阻断，9 用例，日志见 `V9-1-M2/run-log.txt`，含迁移可逆与主库未写复核）与 `V9-1-M2/01-costing-normal-1440.png`、`V9-1-M2/02-costing-blocked-1440.png` 两张真机界面佐证；`V9-1-P0` 本批不变（4 图 4 报告）。以本目录为准。*
