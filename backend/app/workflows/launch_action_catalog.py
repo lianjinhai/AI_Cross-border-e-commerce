@@ -30,7 +30,6 @@ FORBIDDEN_PAYLOAD_KEYS = frozenset({
 # 载荷文本上限：备注与材料引用截断到 500 字符（防审计库被长文本撑爆）。
 PAYLOAD_TEXT_LIMIT = 500
 
-DISABLED_PRICE = "核价领域服务未接入（后续批次）"
 DISABLED_STOCK = "备货领域服务未接入（后续批次）"
 DISABLED_COMPLIANCE = "合规材料服务未接入（后续批次）"
 DISABLED_LABEL = "标签服务未接入（后续批次）"
@@ -86,6 +85,12 @@ class StepEffect:
     cancelled: bool = False            # 终止本轮（写 ended_at、释放 active_slot）
     receipt: dict | None = None        # 动作回执（事件与响应共用）
     external: dict | None = None       # {status, reference, type}
+    # 收敛重算用的新事实/新谓词（M2-A）：只在本事务内参与条件求值，**不落 step.result**。
+    # 为什么需要它：计划在 handler 之前算好，handler 刚写下的领域记录（如报价轮次）
+    # 在旧 facts 里还不存在；不给这条通道，PRICE_REVIEW 的完成条件在事务内永远读不到，
+    # 要么假失败、要么只能靠在 handler 里造一个 review_id 蒙过去。
+    facts: dict | None = None
+    predicates: dict | None = None
 
 
 def _meta(business_types, permissions, source_states, *, target="step", risk="MEDIUM",
@@ -120,13 +125,15 @@ BUSINESS_ACTION_META: dict[str, ActionMeta] = {
                     risk="HIGH", connected=True, required=("note", "confirm"), optional=()),
     "ABANDON_PRODUCT": _meta({"HUMAN_DECISION"}, ("launch:manage",), ALL_STEP_STATES, target="run",
                              risk="HIGH", connected=True, required=("note", "confirm"), optional=()),
+    # ---- 核价（M2-A 接通）：报价轮次只增不改，低价门禁在 handler 内阻断 ----
+    # 金额必须带币种：无 currency 一律 422，绝不默认 USD（否则毛利口径就是猜的）。
+    "REPORT_PRICE": _meta({"PRICE_REVIEW"}, ("launch:price_review",), {"READY"}, connected=True,
+                          required=("price", "currency"), optional=("note",),
+                          external_confirmer=True),
+    "ACCEPT_PRICE": _meta({"HUMAN_DECISION"}, ("launch:price_review",), {"READY"}, connected=True),
+    "COUNTER_PRICE": _meta({"HUMAN_DECISION"}, ("launch:price_review",), {"READY"}, connected=True,
+                           required=("price", "currency"), optional=("note",)),
     # ---- 未接通（B03-B09 领域服务建设中）：直接调用 409 ACTION_NOT_ALLOWED ----
-    "REPORT_PRICE": _meta({"PRICE_REVIEW"}, ("launch:price_review",), {"READY"},
-                          disabled_reason=DISABLED_PRICE, external_confirmer=True),
-    "ACCEPT_PRICE": _meta({"HUMAN_DECISION"}, ("launch:price_review",), {"READY"},
-                          disabled_reason=DISABLED_PRICE),
-    "COUNTER_PRICE": _meta({"HUMAN_DECISION"}, ("launch:price_review",), {"READY"},
-                           disabled_reason=DISABLED_PRICE),
     "REQUEST_STOCK": _meta({"STOCK_PREPARATION"}, ("launch:stock_prepare",), {"READY"},
                            disabled_reason=DISABLED_STOCK),
     "CONFIRM_STOCK": _meta({"STOCK_PREPARATION"}, ("launch:stock_prepare",), {"READY"},

@@ -6,6 +6,7 @@ handler 只做领域前置校验并返回 StepEffect 断言（设计 D10），�
 """
 
 from ..models import AiAction, PlatformPublishAttempt, utcnow
+from ..services import pricing_rounds
 from .launch_access import LaunchError
 from .launch_action_catalog import ActionContext, StepEffect
 from .launch_repair import repair_action
@@ -86,6 +87,129 @@ def missing_blockers(facts, step):
             for reason in reasons]
 
 
+def report_price(ctx: ActionContext) -> StepEffect:
+    """REPORT_PRICE（M2-A）：落一轮**我方申报价**，过低价门禁后完成「平台核价」步骤。
+
+    语义边界（写在函数里，避免以后被当成平台往返）：
+    本批核价是**本地报价轮次**——记录申报价、成本来源快照与门槛判定，由人工在
+    PRICE_DECISION 决策；**没有**向平台发送报价的适配器，所以这里不写任何外部引用，
+    也不声称「平台已核价」。`PRICE_REVIEW` 完成只代表本地评审记录成立。
+    """
+    quote = _price_quote(ctx)
+    _require_margin_ok(ctx.step, quote)
+    row = pricing_rounds.append(
+        ctx.db, tenant_id=ctx.run.tenant_id, product_id=ctx.run.product_id, action="REPORT",
+        quote_result=quote, run_id=ctx.run.id, step_code=ctx.step.step_code,
+        created_by=ctx.current.user_id)
+    return _price_effect(ctx, row, quote, status="COMPLETED")
+
+
+def counter_price(ctx: ActionContext) -> StepEffect:
+    """COUNTER_PRICE（M2-A）：还价 = 新报一轮，决策置 COUNTER，决策步骤**不**完成。
+
+    还价后必须重新有一轮被接受，`PRICE_DECISION` 才可能完成——否则「还了价却直接放行」
+    会把没谈拢的价格当成谈拢了。
+    """
+    quote = _price_quote(ctx)
+    _require_margin_ok(ctx.step, quote)
+    row = pricing_rounds.append(
+        ctx.db, tenant_id=ctx.run.tenant_id, product_id=ctx.run.product_id, action="COUNTER",
+        quote_result=quote, run_id=ctx.run.id, step_code=ctx.step.step_code,
+        created_by=ctx.current.user_id, decision=_decision(ctx, "COUNTER"))
+    return _price_effect(ctx, row, quote)
+
+
+def accept_price(ctx: ActionContext) -> StepEffect:
+    """ACCEPT_PRICE（M2-A）：接受最新报价轮次；接受前**按当前成本重算**，不拿旧快照放行。
+
+    成本可能已经变了（供应商调价、汇率变动），所以接受时重算一次毛利：
+    重算不过门禁就当场重新阻断，而不是让一个「当时能过」的价在成本变化后静默生效。
+    """
+    review = pricing_rounds.latest_review(ctx.db, ctx.run.tenant_id, ctx.run.product_id,
+                                          run_id=ctx.run.id)
+    if review is None:
+        raise LaunchError("ACTION_PRECONDITION_FAILED", "还没有可接受的价格：请先申报报价轮次", 409,
+                          blockers=[{"code": "USER_ACTION_REQUIRED",
+                                     "message": "还没有报价轮次，先申报一轮再决定接受与否",
+                                     "step_code": ctx.step.step_code,
+                                     "owner_actor": ctx.step.actor, "evidence_refs": [],
+                                     "repair_action": repair_action("USER_ACTION_REQUIRED")}])
+    quote = _quote(ctx, review.price, review.currency)
+    _require_margin_ok(ctx.step, quote)
+    row = pricing_rounds.append(
+        ctx.db, tenant_id=ctx.run.tenant_id, product_id=ctx.run.product_id, action="ACCEPT",
+        quote_result=quote, run_id=ctx.run.id, step_code=ctx.step.step_code,
+        created_by=ctx.current.user_id, decision=_decision(ctx, "ACCEPT", source=review))
+    return _price_effect(ctx, row, quote, status="COMPLETED")
+
+
+def _price_quote(ctx: ActionContext) -> dict:
+    """从载荷取价与币种（币种必填）并算一轮毛利；类型错误 422、算不出成本 409。"""
+    price = ctx.payload.get("price")
+    if isinstance(price, bool) or not isinstance(price, (int, float, str)):
+        raise LaunchError("ACTION_PAYLOAD_INVALID", "报价必须是数字", 422)
+    return _quote(ctx, price, ctx.payload.get("currency"))
+
+
+def _quote(ctx: ActionContext, price, currency) -> dict:
+    try:
+        return pricing_rounds.quote(ctx.db, ctx.run.tenant_id, ctx.run.product_id,
+                                    price, currency, shop_id=ctx.run.shop_id)
+    except pricing_rounds.PriceRoundError as exc:
+        status = 422 if exc.code in {"CURRENCY_REQUIRED", "PRICE_INVALID"} else 409
+        raise LaunchError("ACTION_PAYLOAD_INVALID" if status == 422 else "ACTION_PRECONDITION_FAILED",
+                          exc.message, status) from exc
+
+
+def _require_margin_ok(step, quote):
+    """低价门禁：毛利低于门槛即阻断，原因带两个具体数字，补齐入口指向定价页。"""
+    if quote["margin_ok"]:
+        return
+    repair = repair_action("PRICE_UNACCEPTABLE", business_type=step.business_type)
+    raise LaunchError(
+        "ACTION_PRECONDITION_FAILED",
+        "售价毛利 %.1f%% 低于最低要求 %.1f%%，不能提交核价" % (
+            quote["margin"] * 100, quote["min_margin"] * 100), 409,
+        blockers=[{"code": "PRICE_UNACCEPTABLE",
+                   "message": "售价毛利 %.1f%% 低于最低要求 %.1f%%，不能提交核价" % (
+                       quote["margin"] * 100, quote["min_margin"] * 100),
+                   "step_code": step.step_code, "owner_actor": step.actor,
+                   "evidence_refs": [], "repair_action": repair}])
+
+
+def _decision(ctx: ActionContext, decision: str, source=None) -> dict:
+    """人工决定留痕：谁、什么时候、依据哪一轮、备注原文（note 已由载荷契约截断）。"""
+    return {"decision": decision, "by": ctx.current.user_id,
+            "actor_role": getattr(ctx.current, "role", ""),
+            "at": utcnow().isoformat(), "note": ctx.payload.get("note", ""),
+            "source_round_id": source.id if source is not None else None}
+
+
+def _price_effect(ctx: ActionContext, row, quote, *, status: str | None = None) -> StepEffect:
+    """把刚写下的轮次转成收敛用的新事实与新谓词（不落 step.result 的调度字段）。
+
+    ``cost_snapshot_current`` 之所以现在就能置 True：轮次是用**本次实时成本**算出来的，
+    指纹天然等于当前成本；下次请求若成本已变，`launch_facts` 会重算出 False 并重新阻断。
+    """
+    facts = pricing_rounds.pricing_facts(ctx.db, ctx.run.tenant_id, ctx.run.product_id,
+                                         run_id=ctx.run.id)
+    result = {"pricing_round_id": row.id, "round_no": row.round_no, "action": row.action,
+              "price": row.price, "currency": row.currency, "margin": row.margin,
+              "min_margin": row.min_margin, "margin_ok": bool(row.margin_ok),
+              "cost_fingerprint": row.cost_fingerprint}
+    receipt = {"step_code": ctx.step.step_code, "round_id": row.id, "round_no": row.round_no,
+               "action": row.action, "price": row.price, "currency": row.currency,
+               "margin": row.margin, "min_margin": row.min_margin,
+               "margin_ok": bool(row.margin_ok), "target_margin": quote["target_margin"],
+               "decision": (row.decision or {}).get("decision"),
+               "cost_snapshot_current": True,
+               "note": "本地报价轮次；未向平台发送报价（无核价适配器）"}
+    return StepEffect(status=status, result=result, receipt=receipt,
+                      facts={"pricing": facts},
+                      predicates={"cost_snapshot_current": {"PRICE_REVIEW": True}},
+                      evidence_refs=["price_round:%s" % row.id])
+
+
 def _reject_pending_external(ctx):
     """外部结果待核查时不重发（AC-8.2）：Attempt uncertain 或 AiAction EXECUTING。"""
     step = ctx.step
@@ -103,4 +227,6 @@ def _reject_pending_external(ctx):
 
 
 HANDLERS.update({"COMPLETE_DATA": complete_data, "RETRY": retry_step,
-                 "CANCEL": cancel_run, "ABANDON_PRODUCT": cancel_run})
+                 "CANCEL": cancel_run, "ABANDON_PRODUCT": cancel_run,
+                 "REPORT_PRICE": report_price, "COUNTER_PRICE": counter_price,
+                 "ACCEPT_PRICE": accept_price})

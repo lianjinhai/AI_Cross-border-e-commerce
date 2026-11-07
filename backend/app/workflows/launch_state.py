@@ -209,11 +209,18 @@ def platform_receipt(facts: dict) -> dict | None:
     return receipt or None
 
 
-def asserted_world(effect_run_fields, effect_result, step, facts, predicates):
+def asserted_world(effect_run_fields, effect_result, step, facts, predicates,
+                   asserted_facts=None, asserted_predicates=None):
     """handler 断言后的新世界事实（收敛重算基底）：run 字段镜像进 facts，核验记录派生谓词。
 
-    plan_changes 仍以旧持久状态为基准，两者分工保证「断言 -> 重算 -> diff」不丢变更；
-    当前只镜像 platform_status（facts.platform.status 的唯一来源）与 ACTIVATION 核验谓词。
+    plan_changes 仍以旧持久状态为基准，两者分工保证「断言 -> 重算 -> diff」不丢变更。
+
+    两条通道：
+    - 历史特判：``platform_status`` 与 ``PLATFORM_ACTIVATION`` 核验谓词（保持原语义）；
+    - 通用通道（M2-A）：handler 显式给出的 ``asserted_facts`` / ``asserted_predicates``，
+      逐层**浅合并**进 world（``{"pricing": {...}}`` 合并到同名键，不整块覆盖）。
+      只影响本次收敛重算，不写库、不进 step.result——事实的唯一持久来源仍是 DB，
+      下次请求会由 ``launch_facts`` 重新读出来。
     """
     world_facts, world_predicates = deepcopy(facts), deepcopy(predicates)
     for name, value in (effect_run_fields or {}).items():
@@ -222,6 +229,16 @@ def asserted_world(effect_run_fields, effect_result, step, facts, predicates):
     if step is not None and step.business_type == "PLATFORM_ACTIVATION":
         if ((effect_result or {}).get("activation_verification") or {}).get("current"):
             world_predicates.setdefault("verified_artifact", {})["ACTIVATION"] = True
+    for name, value in (asserted_facts or {}).items():
+        if isinstance(value, dict) and isinstance(world_facts.get(name), dict):
+            world_facts[name] = {**world_facts[name], **value}
+        else:
+            world_facts[name] = value
+    for name, value in (asserted_predicates or {}).items():
+        if isinstance(value, dict):
+            world_predicates[name] = {**(world_predicates.get(name) or {}), **value}
+        else:
+            world_predicates[name] = value
     return world_facts, world_predicates
 
 

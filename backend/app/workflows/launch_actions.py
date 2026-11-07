@@ -140,7 +140,8 @@ def _finish(db, current, run, steps, expected_revision, action, step_code, effec
         if migration:
             assertions[step_code] = migration
     world_facts, world_predicates = launch_state.asserted_world(
-        effect.run_fields, effect.result, target, facts, predicates)
+        effect.run_fields, effect.result, target, facts, predicates,
+        asserted_facts=effect.facts, asserted_predicates=effect.predicates)
     plan, overrides = launch_state.converge(db, run, steps, plan, world_facts, world_predicates,
                                             definition, activated=activated_flag(run),
                                             cancelled=effect.cancelled, assertions=assertions)

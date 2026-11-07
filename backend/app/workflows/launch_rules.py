@@ -123,7 +123,10 @@ def _message(step, code, message, facts):
     if code == "PRICE_UNACCEPTABLE":
         pricing = facts.get("pricing") or {}
         margin, floor = pricing.get("margin"), pricing.get("min_margin")
-        if isinstance(margin, (int, float)) and isinstance(floor, (int, float)):
+        # 只有确实低于门槛时才改写成「毛利 X% 低于 Y%」；否则（如成本快照失效导致的重阻断）
+        # 保留原原因，避免出现「毛利 89.5% 低于最低要求 15.0%」这种自相矛盾的文案。
+        if (isinstance(margin, (int, float)) and isinstance(floor, (int, float))
+                and margin < floor):
             return f"售价毛利 {margin:.1%} 低于最低要求 {floor:.1%}，不能进入核价"
     if code == "COMPLIANCE_BLOCK" and step.business_type == "LABEL":
         return "标签包缺少可用依据（LABEL_PACKAGE 未核验或已失效）" if message else message

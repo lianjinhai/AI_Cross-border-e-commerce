@@ -27,11 +27,12 @@ _BY_CODE = {
         "path": "/app/compliance", "connected": False,
         "reason": "材料上传与核验服务未接入（B03–B09），合规页可查看要求但不能在此完成补齐",
     },
-    # 低价
+    # 低价：M2-A 起核价轮次接通，定价页能算出「多少钱才过门槛」并看轮次历史。
+    # 边界：这里给的是**找到达标售价**的入口；提交报价轮次仍在 Launch 动作内
+    # （REPORT_PRICE 需要 run + revision 上下文，定价页不持有流程状态）。
     "PRICE_UNACCEPTABLE": {
-        "label": "前往定价与利润试算", "kind": "ROUTE", "action": None,
-        "path": "/app/pricing", "connected": False,
-        "reason": "核价领域服务未接入（B03–B09），定价页可试算但不能提交核价轮次",
+        "label": "去定价页测算达标售价", "kind": "ROUTE", "action": None,
+        "path": "/app/pricing", "connected": True, "reason": "",
     },
     "SUPPLY_UNAVAILABLE": {
         "label": "查看货源与采购", "kind": "ROUTE", "action": None,
