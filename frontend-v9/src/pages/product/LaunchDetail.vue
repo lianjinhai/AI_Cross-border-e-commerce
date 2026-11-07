@@ -47,6 +47,50 @@
           </el-col>
         </el-row>
 
+        <!-- 轮次历史（P0-3）：同一销售对象仅一个活跃槽，历史轮次只读回看 -->
+        <el-card shadow="never" class="mt16">
+          <template #header>
+            <span class="card-title">轮次历史</span>
+            <span class="muted round-hint">{{ roundsHint }}</span>
+          </template>
+          <el-alert v-if="roundsView.anomalies.length" type="error" :closable="false" show-icon class="mb8"
+            :title="roundsView.anomalies[0]" />
+          <el-table :data="roundsView.rounds" size="small" v-loading="loadingRounds">
+            <el-table-column label="轮次" width="90">
+              <template #default="{ row }">第 {{ row.round }} 轮</template>
+            </el-table-column>
+            <el-table-column label="槽位" width="110">
+              <template #default="{ row }">
+                <el-tag :type="row.is_history ? 'info' : 'success'" size="small" effect="light">
+                  {{ row.slot_label }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="执行状态" width="130">
+              <template #default="{ row }">
+                <el-tag :type="executionStatusMeta(row.execution_status).tag" size="small" effect="light">
+                  {{ executionStatusMeta(row.execution_status).text }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="平台状态" width="120">
+              <template #default="{ row }">
+                <el-tag :type="platformStatusMeta(row.platform_status).tag" size="small" effect="light">
+                  {{ platformStatusMeta(row.platform_status).text }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="created_at" label="创建时间" width="170" />
+            <el-table-column label="" width="90">
+              <template #default="{ row }">
+                <span v-if="row.is_current" class="muted">当前查看</span>
+                <el-button v-else link type="primary" size="small" @click="goRound(row)">查看</el-button>
+              </template>
+            </el-table-column>
+            <template #empty><EmptyState reason="NO_DATA" hint="暂无轮次记录" /></template>
+          </el-table>
+        </el-card>
+
         <!-- 事件流 -->
         <el-card shadow="never" class="mt16">
           <template #header><span class="card-title">事件流</span></template>
@@ -71,7 +115,7 @@
  * 上线流程详情（UX-C）：GUIDED 侧边步骤导航 + 每步 AI 建议；动作失败给原因与重试；
  * 无权限呈 NoPermissionState（SectionState nopermission 态）。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '../../components/PageHeader.vue'
 import SectionState from '../../components/SectionState.vue'
@@ -82,13 +126,28 @@ import LaunchTimeline from '../../features/launch/LaunchTimeline.vue'
 import LaunchStepPanel from '../../features/launch/LaunchStepPanel.vue'
 import LaunchActionDialog from '../../features/launch/LaunchActionDialog.vue'
 import LaunchExperienceToggle from '../../features/launch/LaunchExperienceToggle.vue'
-import { errorEnvelope, actionReceiptView, isSafeReturnTo, loadDetail, loadEvents, loadSteps, syncLaunch } from '../../composables/launchCenter'
+import { errorEnvelope, actionReceiptView, isSafeReturnTo, loadDetail, loadEvents, loadSteps, syncLaunch, executionStatusMeta, platformStatusMeta } from '../../composables/launchCenter'
+import { fetchLaunches } from '../../api/domains/launch'
+import { buildRoundChain, roundChainHint } from '../../shared/launchRounds'
 import WaitingExternalState from '../../features/launch/WaitingExternalState.vue'
 import { safeReturnToTasks } from '../../shared/taskCenterView'
 
 const route = useRoute()
 const router = useRouter()
-const runId = Number(route.params.id)
+// 轮次跳转属于「同路由不同参数」，组件会被复用；用响应式 id + watch 重新拉数据，
+// 否则点历史轮次的「查看」会看到上一轮的内容。
+const runId = ref(Number(route.params.id))
+watch(() => route.params.id, (next) => {
+  const id = Number(next)
+  if (!id || id === runId.value) return
+  runId.value = id
+  detail.value = {}
+  activeCode.value = ''
+  lastError.value = null
+  lastActionEntry.value = null
+  lastReceipt.value = null
+  loadAll()
+})
 
 /**
  * 回跳目标规范化（J1/J2 共用着陆页）：
@@ -122,6 +181,9 @@ const activeActionEntry = ref({})
 const lastError = ref(null)
 const lastActionEntry = ref(null)
 const lastReceipt = ref(null)
+const loadingRounds = ref(false)
+/** 轮次链（P0-3）：同一销售对象的全部轮次 + 活跃槽标记。 */
+const roundsView = ref({ rounds: [], activeCount: 0, anomalies: [] })
 
 const effectiveMode = computed(() => detail.value.effective_experience_mode || 'GUIDED')
 // E10：动作可执行性由后端 available_actions（已按当前用户权限计算）决定，
@@ -131,6 +193,12 @@ const activeStep = computed(() => steps.value.find((s) => s.step_code === active
 
 /** 每步 AI 建议：来自步骤 DTO 的 ai_advice 字段；后端未给则不渲染（禁伪造）。 */
 const aiSuggestion = computed(() => activeStep.value?.ai_advice || {})
+
+/** 轮次提示：活跃槽为什么还在、历史轮次为什么只读。 */
+const roundsHint = computed(() => roundChainHint({
+  currentIsHistory: Boolean(detail.value.is_history),
+  activeCount: roundsView.value.activeCount,
+}))
 
 const detailState = computed(() => {
   if (forbidden.value) return 'nopermission'
@@ -155,24 +223,71 @@ async function loadAll() {
   error.value = ''
   forbidden.value = false
   try {
-    detail.value = await loadDetail(runId)
-    const stepData = await loadSteps(runId)
-    steps.value = stepData.steps || stepData || []
-    if (!activeCode.value) {
-      // 默认聚焦第一个非完成步骤（全部完成则聚焦首个）。
-      const focus = steps.value.find((s) => s.step_status !== 'COMPLETED') || steps.value[0]
-      activeCode.value = focus?.step_code || ''
-    }
-    await loadEventList()
+    detail.value = await loadDetail(runId.value)
   } catch (e) {
     if (e?.response?.status === 403) forbidden.value = true
     else error.value = errorEnvelope(e).message
+    return
   }
+  // 步骤 / 事件 / 轮次三路互不连带：任一失败只降级自己，不拖垮整页。
+  await Promise.all([loadStepList(), loadEventList(), loadRounds()])
+}
+
+/**
+ * 步骤列表：后端 `/launch/{id}/steps` 返回 `{items, revision, profile}`。
+ * 这里兼容裸数组与旧 `steps` 字段，并强制归一为数组——否则后续 `.find`
+ * 会在对象上抛错，连带把同页的轮次/事件加载全部跳过。
+ */
+async function loadStepList() {
+  try {
+    const data = await loadSteps(runId.value)
+    const list = Array.isArray(data) ? data : (data?.items || data?.steps || [])
+    steps.value = Array.isArray(list) ? list : []
+  } catch {
+    steps.value = []
+  }
+  if (!activeCode.value) {
+    // 默认聚焦第一个非完成步骤（全部完成则聚焦首个）。
+    const focus = steps.value.find((s) => s.step_status !== 'COMPLETED') || steps.value[0]
+    activeCode.value = focus?.step_code || ''
+  }
+}
+
+/**
+ * 轮次链：按当前流程的销售对象（商品 + 店铺）取全部轮次（含历史）。
+ * 查询走既有列表接口的 include_history，不复用第二套读模型。
+ */
+async function loadRounds() {
+  const productId = detail.value?.product?.id
+  const shopId = detail.value?.store?.id
+  if (!productId || !shopId) {
+    roundsView.value = { rounds: [], activeCount: 0, anomalies: [] }
+    return
+  }
+  loadingRounds.value = true
+  try {
+    // page_size 取后端上限：轮次按销售对象收窄后数量有限，用默认 20 页会静默截断，
+    // 导致「第 N 轮」编号失真；真超上限时由 buildRoundChain 报截断异常。
+    const data = await fetchLaunches({
+      filters: { product_id: productId, shop_id: shopId, include_history: true, page_size: 200 },
+    })
+    roundsView.value = buildRoundChain(data?.items || [], runId.value, data?.total ?? null)
+  } catch {
+    // 轮次读失败不影响主详情：降级为空链，不伪造轮次。
+    roundsView.value = { rounds: [], activeCount: 0, anomalies: [] }
+  } finally {
+    loadingRounds.value = false
+  }
+}
+
+function goRound(row) {
+  if (!row?.id || row.id === runId.value) return
+  router.push(`/app/launch/${row.id}`)
 }
 
 async function loadEventList() {
   loadingEvents.value = true
-  try { events.value = (await loadEvents(runId)).items || [] }
+  try { events.value = (await loadEvents(runId.value)).items || [] }
   catch { events.value = [] }
   finally { loadingEvents.value = false }
 }
@@ -180,7 +295,7 @@ async function loadEventList() {
 async function doSync() {
   syncing.value = true
   try {
-    await syncLaunch(runId, revision.value)
+    await syncLaunch(runId.value, revision.value)
     await loadAll()
   } catch (e) {
     lastError.value = errorEnvelope(e)
@@ -203,9 +318,11 @@ onMounted(loadAll)
 </script>
 
 <style scoped>
+.mb8 { margin-bottom: 8px; }
 .mb16 { margin-bottom: 16px; }
 .mt12 { margin-top: 12px; }
 .mt16 { margin-top: 16px; }
+.round-hint { margin-left: 8px; font-weight: 400; }
 .card-title { font-weight: 600; }
 .retry-line { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
 .receipt-line { font-size: 13px; margin-top: 4px; }

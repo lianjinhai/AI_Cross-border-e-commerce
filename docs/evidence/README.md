@@ -32,7 +32,7 @@
 | `V9-1-S3` | 0 | `REPORT.md` | AI 能力矩阵（无截图） |
 | `V9-1-S4` | 0 | `REPORT.md` | AI 内部链路（无截图） |
 | `V9-1-S5` | 0 | `REPORT.md` | 订单详情（无截图） |
-| `V9-1-P0` | 2 | `REPORT.md`、`P0-2-PLATFORM-STATUS.md`、`P0-2b-EXTERNAL-WAIT.md` | 三状态枚举对齐与写入点审计（P0-1 只读分析）+ 平台状态摄入通道（P0-2，21 用例 + 迁移可逆）+ 执行态等待有生产者（P0-2b，11 用例，图 1 为真实流程）；余下 2 张随 P0-3/4 补齐 |
+| `V9-1-P0` | 3 | `REPORT.md`、`P0-2-PLATFORM-STATUS.md`、`P0-2b-EXTERNAL-WAIT.md`、`P0-3-ROUND-HISTORY.md` | 三状态枚举对齐与写入点审计（P0-1 只读分析）+ 平台状态摄入通道（P0-2，21 用例 + 迁移可逆）+ 执行态等待有生产者（P0-2b，11 用例，图 1 为真实流程）+ 多轮历史与唯一活跃槽（P0-3，16 用例，图 4 为真实三轮）；余下 1 张随 P0-4 补齐 |
 
 `R3-1A`、`R3-1B`、`R3-2B` 三个批次没有独立报告，结论落在 `docs/FRONTEND_V9_PROGRESS.md` 的对应行。
 
@@ -64,4 +64,4 @@
 
 ---
 
-*最后同步：2026-11-07，基线 `74802fe`，新增 `V9-1-P0/P0-2-PLATFORM-STATUS.md`（P0-2 平台状态摄入通道，21 用例 + 迁移可逆实测）与 `V9-1-P0/01-waiting-external-1440.png`、`02-verified-online-1440.png` 两张真机界面佐证。以本目录为准。*
+*最后同步：2026-11-07，基线 `ded178f`，新增 `V9-1-P0/P0-2-PLATFORM-STATUS.md`（P0-2 平台状态摄入通道，21 用例 + 迁移可逆实测）、`V9-1-P0/P0-2b-EXTERNAL-WAIT.md`（执行态等待有生产者，11 用例）、`V9-1-P0/P0-3-ROUND-HISTORY.md`（多轮历史与唯一活跃槽，16 用例），以及 `V9-1-P0/01-waiting-external-1440.png`、`02-verified-online-1440.png`、`04-transition-history-1440.png` 三张真机界面佐证。以本目录为准。*
