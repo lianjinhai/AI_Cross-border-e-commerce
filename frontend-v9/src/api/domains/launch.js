@@ -36,7 +36,13 @@ export async function runStepAction(id, stepId, action, payload = {}, opts = {})
   )).data
 }
 
-/** 同步流程：POST /launch/{id}/sync（仅支持 refresh 模式）→ 同步回执。 */
+/**
+ * 同步流程（刷新）：POST /launch/{id}/sync，mode='refresh' → 同步回执。
+ *
+ * 注意：后端 `sync` 还支持 `mode='platform_status'`（P0-2 平台状态摄入，
+ * 见 docs/CONTRACT.md）。**前端尚未接入该模式**——没有摄入入口，别在这里
+ * 假装能推平台状态；接入前须先有设计稿与权限口径。
+ */
 export async function syncLaunch(id, expectedRevision) {
   return (await api.post(`/launch/${id}/sync`,
     { mode: 'refresh', expected_revision: expectedRevision },
