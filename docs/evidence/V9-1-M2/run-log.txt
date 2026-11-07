@@ -108,3 +108,68 @@ refresh_launch / execute_launch_action）造出本地契约样本 M2A_SCREEN_PRO
 主库复核：sha256 = d79bd66967789ddef0a5d326446ef498045d62dc527726ec56abfacd4e29be3c（与开头一致）
 主库未执行任何迁移与写入；副本库与临时脚本均在仓库外，不入仓。
 本批**不调用任何真实平台接口**：没有核价适配器，报价轮次只落本地，不冒充「平台已核价」。
+
+============================================================
+V9-1-M2-D 素材上传（2026-11-07）真机记录
+============================================================
+
+0. 基线
+------------------------------------------------------------
+主库：backend/erp.db   sha256 = d79bd66967789ddef0a5d326446ef498045d62dc527726ec56abfacd4e29be3c
+隔离：python scripts/launch_e2e.py --profile simple --port 8125 --keep
+      → 副本库 backend/backups/launch_e2e/launch-simple.db（已 gitignore）
+      → 种子商品 id=63、销售店铺 id=13（shopee / SG）、Profile SIMPLE_CONTRACT
+      → 隔离性校验：before/after sha256 与行数（7517）一致，主库未被写入
+
+1. 缺失态（未配置 ERP_ASSET_UPLOAD_DIR）
+------------------------------------------------------------
+启动：uvicorn app.main:app --port 8126 + ERP_DB_URL=<副本库> + ERP_FRONTEND_DIST=<临时 dist>
+      （不设 ERP_ASSET_UPLOAD_DIR）
+
+GET /api/products/63/assets/upload-capability?shop_id=13
+  {"connected":false,
+   "reason":"素材上传服务未接入（未配置 ERP_ASSET_UPLOAD_DIR）",
+   "max_bytes":8388608,"content_types":["image/jpeg","image/png","image/webp"]}
+
+POST /api/products/63/assets/upload（multipart shop_id=13 + 真实 PNG 203046 字节）
+  HTTP 409
+  {"detail":{"code":"ASSET_UPLOAD_UNAVAILABLE",
+             "message":"素材上传服务未接入（未配置 ERP_ASSET_UPLOAD_DIR）"}}
+
+product_assets 行数（product_id=63）：拒绝前 2 → 拒绝后 2（**零写入**）
+
+界面（1440 视口，真浏览器）：
+  · 素材区黄色说明条：「素材上传服务未接入（未配置 ERP_ASSET_UPLOAD_DIR）——只能查看与登记
+    已有素材（含外链 URI），不能上传新文件；系统不会用客户端声明的哈希凑合。」
+  · 「上传素材」按钮 disabled（is enabled → false）；素材表仍显示历史 2 行，不做假空态
+图片：docs/evidence/V9-1-M2/08-asset-missing-1440.png
+
+2. 接入态（配置 ERP_ASSET_UPLOAD_DIR 指向临时目录后重启同一副本库）
+------------------------------------------------------------
+GET  /api/products/63/assets/upload-capability?shop_id=13 → 200
+POST /api/products/63/assets/upload（同一张 PNG）
+  → 200 {"uri":"asset://905afc6fe9e4640a1e932655b09d9e69399a76cc37f3cba…/main-photo.png",
+         "content_hash":"905afc6f…","size":203046,"content_type":"image/png","stored":true}
+  → 哈希由服务端读字节算出；前端把 URI 与哈希**只读回填**进登记表单（截图 07b）
+POST /api/products/63/assets（asset_key=main-photo，expected_version=0，OWNED，
+     source=「本系统上传：main-photo.png」）→ 200，版本 1
+GET  /api/products/63/assets?shop_id=13&page_num=1&page_size=20
+  → main       https://example.com/main.jpg              版本 1  自有权利  人工申报(未核验)
+  → main-photo asset://905afc6f…/main-photo.png          版本 1  自有权利  人工申报(未核验)
+图片：docs/evidence/V9-1-M2/07-asset-normal-1440.png
+      docs/evidence/V9-1-M2/07b-asset-upload-dialog-1440.png
+
+3. 自动化回归
+------------------------------------------------------------
+pytest tests/test_asset_upload.py                         8 passed
+pytest -k "launch or asset or publish"                  291 passed
+npx vitest run --reporter=json                61 files / 777 tests（0 failed）
+npx vite build                                          通过
+ruff check app                                          零告警
+python scripts/check_docs_consistency.py --json         total=0
+
+4. 收尾
+------------------------------------------------------------
+主库复核：sha256 = d79bd66967789ddef0a5d326446ef498045d62dc527726ec56abfacd4e29be3c（与开头一致）
+所有写入只发生在副本库与仓库外的临时存储目录；截图与日志外无新增产物入仓。
+本批**不调用任何真实平台接口**，也不声称素材已核验：上传只解决「哈希是谁算的」。

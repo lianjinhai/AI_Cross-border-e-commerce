@@ -75,7 +75,7 @@ CANCEL 仅允许未核验 ACTIVE 的流程，已有外部副作用时先核查�
 
 ## 6. 阻断原因与 NBA
 
-blocker.code 固定为 MISSING_DATA、PLATFORM_PENDING、COMPLIANCE_BLOCK、PRICE_UNACCEPTABLE、SUPPLY_UNAVAILABLE、STOCK_REQUIRED、USER_ACTION_REQUIRED、EXTERNAL_SERVICE_REQUIRED、PLATFORM_ERROR；另有 API 错误码不混用。每项含 message、step_code、owner_actor、evidence_refs、repair_action，可同时返回多项。
+blocker.code 固定为 MISSING_DATA、ASSET_RIGHTS_MISSING、PLATFORM_PENDING、COMPLIANCE_BLOCK、PRICE_UNACCEPTABLE、SUPPLY_UNAVAILABLE、STOCK_REQUIRED、USER_ACTION_REQUIRED、EXTERNAL_SERVICE_REQUIRED、PLATFORM_ERROR；另有 API 错误码不混用。每项含 message、step_code、owner_actor、evidence_refs、repair_action，可同时返回多项。`ASSET_RIGHTS_MISSING` 专指素材/权利证据缺口（M2-D）：入口指向商品详情素材区，`repair_action.connected` 随素材上传服务是否接入翻转；不得折回 MISSING_DATA 让用户去「补充商品资料」。
 
 NBA = 服务端合法动作集合中的首选项，默认按安全依赖、阻断解除、到期时间、sequence 排序。AI 排序须仍为同一合法集合子集；若建议已过期返回 executable=false 和原因。所有动作携带 expected_revision、不可变证据指纹，提交后重新校验。
 

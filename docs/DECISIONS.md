@@ -3507,3 +3507,27 @@ PostgreSQL 与独立任务队列未动。
 **判别力**：`test_purge_clears_ai_actions_so_reused_row_ids_do_not_block_publish` 覆盖了「清理 → 计数里 `ai_actions` 真被删 → 重建同构对象 → 发布仍能进 PENDING_APPROVAL」；把 `_PURGE_PLAN` 里那行删掉，该用例立刻红（实测报 `ai_actions` 未删）。
 
 **兼容与回退**：只加一次 DELETE，不改表结构、不改接口签名；`deleted` 计数多一个 `ai_actions` 键（前端未按固定键集渲染）。回退=从计划里去掉该行，无需数据修复。
+
+## D66：素材哈希只能由服务端算；缺素材不再指去「补充商品资料」（2026-11-07，V9-1-M2-D）
+
+**背景**：素材登记 `POST /api/products/{id}/assets` 收的是客户端声明的 `content_hash`，而 `asset_schema.AssetRegistration` 只能校验它是 `^[a-f0-9]{64}$`——任何人编一个「看起来像 sha256」的串都能过。于是「图片权利证据」成了一张没人能复核的空头承诺，正是 R3-1B 里「不得生成假哈希」要挡的东西。同一批还发现两处错位：
+
+1. **哈希无出处**：外部 URI 只登记不下载是对的（不引入隐式抓取），但本系统自己的素材也没有可信哈希入口；
+2. **指路指错**：素材权利不通过时 `missing_blockers` 一律返回 `MISSING_DATA` → `ACTION COMPLETE_DATA`「补充商品资料」，用户点进去只能改标题分类，补不出图片授权证据；
+3. **前端死路**：`ProductDetail.loadAssets` 里 `assetReadyFlag = true` 引用了一个从未声明的变量（strict mode 下 ReferenceError），被 `try/catch` 吞成「素材加载失败」——素材表在任何环境都渲染不出来。
+
+**决策**：
+1. **哈希收回到服务端**。新增 `POST /api/products/{id}/assets/upload`（multipart：`shop_id` + `file`）：文件落 `ERP_ASSET_UPLOAD_DIR`，服务端读字节算 sha256，返回 `{uri: asset://<sha256>/<name>, content_hash, size, content_type, stored}`。存储目录是**能力开关**，未配置 = 上传服务未接入 → 409 `ASSET_UPLOAD_UNAVAILABLE` 且**零写入**（不落盘、不写库、不降级成「先登记再说」）。
+2. **登记时引用必须可复核**。`asset://` 引用回存储**重算**哈希比对（不一致 409 `ASSET_HASH_MISMATCH`，文件不在 409 `ASSET_FILE_MISSING`）；外部 `https` 引用仍只登记不下载，但**不因登记而变成已核验**——核验依旧走 `POST .../verify` 的独立门禁。
+3. **缺项指向对的地方**。新增阻断码 `ASSET_RIGHTS_MISSING`（`launch_repair._BY_CODE`）：`DATA_PREPARATION` 步骤的素材/权利缺口走它，入口是商品详情页的素材登记区而非 `COMPLETE_DATA`；`connected` 随上传能力翻转，未接入时 `connected=false` 并写明「能看不能传」。材料类（COMPLIANCE/LABEL/EVIDENCE）仍按原样落 `MISSING_DATA` → 合规页。
+4. **前端 fail-closed**。上传能力取不到（请求失败）与后端明确未接入**同样禁用**上传按钮，并展示后端给的原因；经本系统上传的哈希在登记表单里**只读回填**，不留改写入口。
+
+**边界（不得当成已接入）**：
+- 本地目录只保证**单机**持久与回读；多副本 / 对象存储 / CDN / 防盗链仍属 B03–B09，未接入。
+- 只接受 `image/jpeg`、`image/png`、`image/webp`，单文件 ≤ 8 MiB；超限是明确拒绝（413），不静默截断。
+- 上传成功 ≠ 权利成立：`rights_status` / `rights_evidence_ref` 与核验状态仍由登记与核验门禁决定。
+- Launch 侧**不加** `UPLOAD_ASSET` 之类动作：素材登记是商品级操作，复用既有 `/products/{id}/assets*` 接口，按「禁止重复 Service」原则不再造一条流程内通道。
+
+**判别力**：`test_asset_upload.py` 8 条覆盖「未接入 409 + 零素材行」「服务端哈希 + 版本回读 + 追加版本」「编造哈希 409」「引用不存在文件 409」「类型/超限拒绝」「只读写账号 403」；把 `product_assets._require_trustworthy_reference(request)` 去掉，其中 3 条立刻红（实测）。`test_launch_gate_repair` 覆盖 `ASSET_RIGHTS_MISSING` 在「未接入/已接入」两种能力下的 `connected` 与入口路径，以及 LABEL 步骤不被抢走。
+
+**兼容与回退**：只新增端点与阻断码，既有 `POST /assets` 签名与字段不变（`asset://` 之外的行为完全不变）；`ASSET_RIGHTS_MISSING` 是新增码，前端 `launchRepair` 对未知码按 `ROUTE` 渲染。回退=清空 `ERP_ASSET_UPLOAD_DIR`（上传自动变成显式 409），或在 `_missing_code` 里退回单一 `MISSING_DATA`。
