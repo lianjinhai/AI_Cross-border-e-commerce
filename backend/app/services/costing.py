@@ -296,11 +296,15 @@ def calc_profit(db: Session, tenant_id: int, product_id: int, price: float | Non
         "holding_cost_cny": _quantize(holding_cost),
     }
     sel_state, sel_limits = offer_state(db, tenant_id, product)
+    rules = setting_for(db, tenant_id, "rules", DEFAULT_RULES)
     return {
         "product_id": product_id,
         "purchase_cost": ce["purchase_cny"], "logistics_cost": ce["logistics_cny"],
         "platform_fee_rate": ce["fee_rate"], "ads_cost": ce["ads_cny"],
         "price": price, "profit": profit, "margin": margin, "currency": "USD", "fx": fx,
+        # 毛利门槛随结果一起返回（M2-A）：页面要能解释「为什么这个价不能报」，
+        # 门槛只能来自这一处配置，不能让前端自己写死 15%。
+        "min_margin": float(rules["min_margin"]), "target_margin": float(rules["target_margin"]),
         # ---- 跨境到岸成本明细（D58）----
         "hs_code": ce["hs_code"], "destination_country": ce["destination_country"],
         "duty_cost": ce["duty_cny"], "import_vat_cost": ce["import_vat_cny"],

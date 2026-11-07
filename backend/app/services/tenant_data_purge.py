@@ -36,6 +36,7 @@ from ..models import (
     OrderFee,
     OrderLine,
     PlatformPublishAttempt,
+    PriceRound,
     PricingRecord,
     Product,
     ProductAsset,
@@ -68,6 +69,7 @@ _CYCLE_BREAKS = frozenset({
 _PURGE_PLAN = (
     (WorkflowEvent, "workflow_events"),                     # → workflow_steps / workflow_runs
     (WorkflowStep, "workflow_steps"),                       # → workflow_runs
+    (PriceRound, "price_rounds"),                           # → workflow_runs / products（M2-A 核价轮次）
     (WorkflowRun, "workflow_runs"),                         # → listings / products
     (ProductAsset, "product_assets"),                       # → products；有素材时门禁拒绝清理
     (Message, "messages"),                                   # → conversations

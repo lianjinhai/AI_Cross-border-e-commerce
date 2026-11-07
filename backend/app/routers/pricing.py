@@ -10,6 +10,7 @@ from ..db import get_db
 from ..models import PricingRecord, Product, User
 from ..pagination import PageNum, PageSize
 from ..serialize import page, to_dict
+from ..services import pricing_rounds
 from ..services.ai_actions import ActionError
 from ..services.workspace_context import resolve_workspace_context
 
@@ -50,6 +51,27 @@ def list_records(product_id: int | None = None, page_num: int = PageNum, page_si
         d["product_title"] = titles.get(r.product_id, "")
         items.append(d)
     return page(items, total, page_num, page_size)
+
+
+@router.get("/rounds")
+def list_rounds(product_id: int, limit: int = 50, user: User = Depends(get_current_user),
+                db: Session = Depends(get_db)):
+    """核价报价轮次历史（M2-A，只读）：只增不改的报价记录，新→旧。
+
+    写入口在 Launch 动作（`REPORT_PRICE`/`ACCEPT_PRICE`/`COUNTER_PRICE`），
+    这里只读——不允许从定价页绕过流程写轮次，否则「谁批的、依据哪份成本」就断了。
+    """
+    p = db.get(Product, product_id)
+    if not p or p.tenant_id != user.tenant_id:
+        raise HTTPException(status_code=404, detail="商品不存在")
+    rows = pricing_rounds.history(db, user.tenant_id, product_id, limit=limit)
+    items = []
+    for row in rows:
+        d = to_dict(row)
+        # 币种没有就不给符号，由前端显「—」；后端不替金额猜一个币种。
+        d["currency"] = row.currency or None
+        items.append(d)
+    return {"items": items, "total": len(items)}
 
 
 @router.post("/calc")

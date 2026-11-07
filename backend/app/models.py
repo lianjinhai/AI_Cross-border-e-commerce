@@ -534,6 +534,48 @@ class PricingRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class PriceRound(Base):
+    """核价报价轮次（M2-A）：只增不改的报价历史，每轮绑定当时的成本来源快照。
+
+    「不得覆盖已有报价历史」的落法：本表**没有 update/delete 代码路径**，每次报价/还价
+    都是插入新行；``round_no`` 按 ``(tenant_id, product_id)`` 递增且有唯一约束兜底，
+    并发下不会出现两轮同号。
+
+    ``cost_fingerprint`` 是「这一轮用的成本是不是还是当前成本」的唯一判据：采购价、
+    报价来源 offer、汇率、佣金率、成本合计或毛利门槛任一变化，旧轮次的指纹就对不上，
+    ``cost_snapshot_current`` 立刻转 False，核价需要重新走一遍——不是一次性通过永久生效。
+
+    ``PricingRecord`` 是 PricingAgent 的成本拆解快照，与本表不是一回事：那张表记录
+    「算过一次利润」，本表记录「报过一个价、谁批的、依据哪份成本」。
+    """
+    __tablename__ = "price_rounds"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "product_id", "round_no", name="uq_price_rounds_tenant_product_no"),
+        Index("ix_price_rounds_product_created", "tenant_id", "product_id", "id"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_price_rounds_tenant_id_tenants"), index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    # 轮次归属的流程（可空：定价页手工试报的轮次不属于任何 run）。
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("workflow_runs.id", name="fk_price_rounds_run_id_workflow_runs"),
+        nullable=True, index=True)
+    step_code: Mapped[str] = mapped_column(String(48), default="")
+    round_no: Mapped[int] = mapped_column(Integer, default=1)
+    action: Mapped[str] = mapped_column(String(16), default="REPORT")  # REPORT/ACCEPT/COUNTER
+    price: Mapped[float] = mapped_column(Float, default=0)             # 申报价（外币）
+    currency: Mapped[str] = mapped_column(String(8), default="")       # 必带，空串表示未知
+    margin: Mapped[float] = mapped_column(Float, default=0)            # 本轮售价的利润率 0-1
+    min_margin: Mapped[float] = mapped_column(Float, default=0)        # 本轮适用的毛利门槛
+    margin_ok: Mapped[bool] = mapped_column(Boolean, default=False)    # 是否过低价门禁
+    cost_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)    # 成本来源快照
+    cost_fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    decision: Mapped[dict] = mapped_column(JSON, default=dict)         # 人工决定留痕
+    created_by: Mapped[int] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class AdCampaign(Base):
     __tablename__ = "ad_campaigns"
     id: Mapped[int] = mapped_column(primary_key=True)
