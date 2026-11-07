@@ -26,6 +26,7 @@ from .launch_action_catalog import (
 from .launch_handlers import HANDLERS as BASE_HANDLERS
 from .launch_handlers import missing_blockers
 from .launch_plan import activated_flag, launch_plan
+from .launch_repair import repair_action
 from .launch_status import is_verified_online
 from .launch_submit import SUBMIT_HANDLERS
 from .transactions import ensure_write_transaction
@@ -226,7 +227,8 @@ def _step_state_conflict(step):
     reason = step.blocking_reason or {}
     blockers = [reason] if reason else [{"code": "STEP_STATE_CONFLICT", "message": "步骤状态不满足执行条件",
                                          "step_code": step.step_code, "owner_actor": step.actor,
-                                         "evidence_refs": [], "repair_action": None}]
+                                         "evidence_refs": [],
+                                         "repair_action": repair_action("STEP_STATE_CONFLICT")}]
     return LaunchError("STEP_STATE_CONFLICT", "步骤当前状态不允许该动作", 409, blockers=blockers)
 
 

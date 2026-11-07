@@ -3,6 +3,7 @@
 from copy import deepcopy
 
 from .conditions import evaluate_condition
+from .launch_repair import repair_action
 from .profile_schema import ProfileDefinition
 
 STEP_STATES = frozenset({"PENDING", "READY", "RUNNING", "WAITING_EXTERNAL", "WAITING_USER",
@@ -35,7 +36,7 @@ def evaluate_readiness(snapshot, states, facts, predicates, *, activated=False, 
         status, reason = _status(step, states[code], applicable, deps, entered, complete,
                                  activated, cancelled, external_arrived)
         results[code] = {"step_code": code, "status": status, "applicable": applicable,
-                         "completion_satisfied": complete, "blocking_reason": _blocker(step, reason) if reason else {},
+                         "completion_satisfied": complete, "blocking_reason": _blocker(step, reason, facts) if reason else {},
                          "invalidated": states[code] == "COMPLETED" and status != "COMPLETED"}
         checks["dependency_completed"][code] = status == "COMPLETED"
     return _summary(definition, results, activated, cancelled)
@@ -106,9 +107,27 @@ def _awaits_external(step):
 
 
 
-def _blocker(step, message):
-    return {"code": BLOCK_CODES.get(step.business_type, "MISSING_DATA"), "message": message,
-            "step_code": step.step_code, "owner_actor": step.actor, "evidence_refs": [], "repair_action": None}
+def _blocker(step, message, facts=None):
+    """阻断项三要素：阻断码 + 原因 + 补齐动作（P0-4）。"""
+    code = BLOCK_CODES.get(step.business_type, "MISSING_DATA")
+    facts = facts if isinstance(facts, dict) else {}
+    product = facts.get("product") or {}
+    return {"code": code, "message": _message(step, code, message, facts),
+            "step_code": step.step_code, "owner_actor": step.actor, "evidence_refs": [],
+            "repair_action": repair_action(code, business_type=step.business_type,
+                                           product_id=product.get("id"))}
+
+
+def _message(step, code, message, facts):
+    """把通用原因细化成说人话的具体原因；无法细化时保留原样，不编造细节。"""
+    if code == "PRICE_UNACCEPTABLE":
+        pricing = facts.get("pricing") or {}
+        margin, floor = pricing.get("margin"), pricing.get("min_margin")
+        if isinstance(margin, (int, float)) and isinstance(floor, (int, float)):
+            return f"售价毛利 {margin:.1%} 低于最低要求 {floor:.1%}，不能进入核价"
+    if code == "COMPLIANCE_BLOCK" and step.business_type == "LABEL":
+        return "标签包缺少可用依据（LABEL_PACKAGE 未核验或已失效）" if message else message
+    return message
 
 
 def _summary(definition, results, activated, cancelled):

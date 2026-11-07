@@ -8,6 +8,7 @@ handler 只做领域前置校验并返回 StepEffect 断言（设计 D10），�
 from ..models import AiAction, PlatformPublishAttempt, utcnow
 from .launch_access import LaunchError
 from .launch_action_catalog import ActionContext, StepEffect
+from .launch_repair import repair_action
 from .launch_state import facts_digest
 from .launch_status import is_verified_online
 
@@ -73,10 +74,15 @@ def cancel_run(ctx: ActionContext) -> StepEffect:
 
 
 def missing_blockers(facts, step):
-    """把素材权利等具体缺项转成 blockers（AC-5.2：前端可逐条展示）。"""
+    """把素材权利等具体缺项转成 blockers（AC-5.2：前端可逐条展示）。
+
+    P0-4：每项都带补齐入口，前端才能给出「下一步去哪」，而不是只有一句原因。
+    """
     reasons = (facts.get("assets") or {}).get("reasons") or ["完成条件尚未满足"]
+    product_id = (facts.get("product") or {}).get("id")
+    action = repair_action("MISSING_DATA", business_type=step.business_type, product_id=product_id)
     return [{"code": "MISSING_DATA", "message": reason, "step_code": step.step_code,
-             "owner_actor": step.actor, "evidence_refs": [], "repair_action": None}
+             "owner_actor": step.actor, "evidence_refs": [], "repair_action": dict(action)}
             for reason in reasons]
 
 

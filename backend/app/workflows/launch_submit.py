@@ -11,6 +11,7 @@ from ..services.action_system import submit_action
 from ..services.ai_actions import ActionError
 from .launch_access import LaunchError
 from .launch_action_catalog import ActionContext, StepEffect
+from .launch_repair import repair_action
 
 # 提交/核验 handler 注册表；由 launch_actions 与 launch_handlers.HANDLERS 合并。
 SUBMIT_HANDLERS = {"SUBMIT_PLATFORM": None, "CONFIRM_ACTIVATION": None}
@@ -107,10 +108,15 @@ def _reject_self_verification(ctx):
 
 
 def _blockers(exc, step):
-    """领域失败转 409 时附具体缺项（AC-6.1/6.6）：消息入 blockers 供前端展示。"""
+    """领域失败转 409 时附具体缺项（AC-6.1/6.6）：消息入 blockers 供前端展示。
+
+    P0-4：附补齐入口，否则前端只知道失败、不知道下一步。
+    """
     return [{"code": "ACTION_PRECONDITION_FAILED", "message": str(exc)[:500],
              "step_code": step.step_code, "owner_actor": step.actor,
-             "evidence_refs": [], "repair_action": None}]
+             "evidence_refs": [],
+             "repair_action": repair_action("ACTION_PRECONDITION_FAILED",
+                                            business_type=step.business_type)}]
 
 
 SUBMIT_HANDLERS.update({"SUBMIT_PLATFORM": submit_platform, "CONFIRM_ACTIVATION": confirm_activation})

@@ -1,6 +1,7 @@
 """Launch 服务端事实读取；未接入的领域事实保持 UNKNOWN，不能用请求载荷补齐。"""
 
 from ..models import Listing, PlatformPublishAttempt, Product, Shop, WorkflowStep
+from ..services import costing
 from ..services.asset_rights import evaluate_asset_rights
 from .launch_access import LaunchError
 
@@ -27,8 +28,11 @@ def _facts(db, run, product, listing, shop, attempt):
             or shop.platform != run.platform or shop.market != run.market
             or shop.fulfillment_mode != run.fulfillment_mode or listing.platform != run.platform):
         raise LaunchError("LAUNCH_CONTEXT_CHANGED", "店铺经营上下文已变化，需要核对当前流程", 409)
-    facts = {"product": {"title": product.title, "category": product.category},
+    facts = {"product": {"id": product.id, "title": product.title, "category": product.category},
              "listing": {"title": listing.title}, "platform": {"status": run.platform_status}}
+    pricing = _pricing(db, run)
+    if pricing is not None:
+        facts["pricing"] = pricing
     receipt = _receipt(run, shop, attempt)
     if receipt is not None:
         # 提交回执只支持 submission 条件，绝不据此设置 ACTIVE/VERIFIED。
@@ -40,6 +44,26 @@ def _facts(db, run, product, listing, shop, attempt):
     # PriceReview/StockPreparation 等尚未接入的领域事实，不读取 UI 勾选或旧 risk_level 代替核验。
     return facts, {"asset_rights_allowed": {"PUBLISHABLE": rights["allowed"]},
                    "verified_artifact": {"ACTIVATION": _activation_verified(db, run)}}
+
+
+def _pricing(db, run):
+    """低价门禁（P0-4）用的定价事实：取既有 `costing.calc_profit` 的毛利口径。
+
+    注意口径边界：这里读的是**本地利润试算**（`min_margin` 租户设置，默认 15%），
+    不是平台核价轮次 `PriceReview`——后者属 B03–B09 未接入，不能用本事实冒充已核价。
+    算不出来时返回 None：条件求值为 UNKNOWN，步骤会因「缺少进入条件资料」阻断，
+    而不是被默认放行。
+    """
+    try:
+        result = costing.calc_profit(db, run.tenant_id, run.product_id, shop_id=run.shop_id)
+        rules = costing.setting_for(db, run.tenant_id, "rules", costing.DEFAULT_RULES)
+        margin, floor = result["margin"], rules["min_margin"]
+        if not isinstance(margin, (int, float)) or not isinstance(floor, (int, float)):
+            return None
+        return {"price": result["price"], "margin": margin, "min_margin": floor,
+                "target_margin": rules["target_margin"], "margin_ok": margin >= floor}
+    except (ValueError, TypeError, KeyError, ArithmeticError):
+        return None
 
 
 def _attempt(db, run):
