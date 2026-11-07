@@ -27,12 +27,27 @@ def evaluate_readiness(snapshot, states, facts, predicates, *, activated=False, 
         applicable = evaluate_condition(step.applicability_condition, facts, checks)
         entered = evaluate_condition(step.entry_condition, facts, checks)
         complete = evaluate_condition(step.completion_condition, facts, checks)
-        status, reason = _status(step, states[code], applicable, deps, entered, complete, activated, cancelled)
+        # 状态模型 §3：WAITING_EXTERNAL 的出口是「可信新外部事实到达」。
+        # 只对 PLATFORM_ACTIVATION 求值：它是唯一有真实外部事实源（platform.status）
+        # 且 handler 已接通的 EXTERNAL_WAIT 类型；其余（如 PRICE_REVIEW）属 B03-B09
+        # 未接通，保持 READY + 禁用按钮 + 明确 disabled_reason，不伪装成「在等外部」。
+        external_arrived = _external_arrived(step, facts, checks)
+        status, reason = _status(step, states[code], applicable, deps, entered, complete,
+                                 activated, cancelled, external_arrived)
         results[code] = {"step_code": code, "status": status, "applicable": applicable,
                          "completion_satisfied": complete, "blocking_reason": _blocker(step, reason) if reason else {},
                          "invalidated": states[code] == "COMPLETED" and status != "COMPLETED"}
         checks["dependency_completed"][code] = status == "COMPLETED"
     return _summary(definition, results, activated, cancelled)
+
+
+def _external_arrived(step, facts, checks):
+    """平台是否已给出可信接受事实（ACCEPTED/ACTIVE）；非在售核验类步骤返回 None。"""
+    if step.business_type != "PLATFORM_ACTIVATION":
+        return None
+    return evaluate_condition({"in": {"field": "platform.status", "value": ["ACCEPTED", "ACTIVE"]}},
+                              facts, checks)
+
 
 
 def _topological(nodes):
@@ -51,7 +66,8 @@ def _topological(nodes):
     return ordered
 
 
-def _status(step, old, applicable, dependencies, entered, complete, activated, cancelled):
+def _status(step, old, applicable, dependencies, entered, complete, activated, cancelled,
+            external_arrived=None):
     if cancelled:
         return old, ""
     if activated and old == "COMPLETED":
@@ -72,8 +88,22 @@ def _status(step, old, applicable, dependencies, entered, complete, activated, c
     if entered is not True:
         return "BLOCKED", "缺少进入条件资料" if entered is None else "进入条件未满足"
     if old in WAITING:
+        # 状态模型 §3 的唯一出口：可信新外部事实到达才回到 READY（外部意图已发出，
+        # 但没有平台接受事实时就该一直等，不能把等待步骤放进可执行列表）。
+        if old == "WAITING_EXTERNAL" and external_arrived is True:
+            return "READY", ""
         return old, ""
+    if external_arrived is not True and _awaits_external(step):
+        # 无平台事实（None）或事实不满足（False，如 UNDER_REVIEW）都仍需等待；
+        # 只有 True（ACCEPTED/ACTIVE）才放行到 READY。
+        return "WAITING_EXTERNAL", ""
     return "READY", ""
+
+
+def _awaits_external(step):
+    """在售核验类步骤在依赖满足后就开始等平台接受，而不是直接给用户一个「核验」按钮。"""
+    return step.business_type == "PLATFORM_ACTIVATION" and step.execution_mode == "EXTERNAL_WAIT"
+
 
 
 def _blocker(step, message):

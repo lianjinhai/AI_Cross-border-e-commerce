@@ -109,8 +109,10 @@ BUSINESS_ACTION_META: dict[str, ActionMeta] = {
                              external_confirmer=True),
     # 在售核验的 COMPLETED 来源状态支持误判更正（AC-7.5）：新事件 + history 追加，
     # 不擦除历史核验记录；本轮回流只有 READY（首次核验）与 COMPLETED（更正）两种入口。
+    # WAITING_EXTERNAL 也放行：平台可能已在售但我们尚未收到 ACCEPTED 事实，
+    # 此时人工去平台核对（source=MANUAL）是合法路径，不冒充 API 核验。
     "CONFIRM_ACTIVATION": _meta({"PLATFORM_ACTIVATION"}, ("launch:submit", "compliance:approve"),
-                                {"READY", "COMPLETED"}, risk="HIGH", connected=True,
+                                {"READY", "COMPLETED", "WAITING_EXTERNAL"}, risk="HIGH", connected=True,
                                 external_confirmer=True, required=(), optional=("material_ref", "note")),
     # RETRY 是框架级动作（适用于任意失败步骤），不在 Profile available_actions 词表中。
     "RETRY": _meta(ALL_BUSINESS_TYPES, ("launch:manage",), {"FAILED"}, connected=True, framework=True),

@@ -144,13 +144,17 @@ test_attempt_provenance_is_recorded
 建议：新开一个单元（暂记 **P0-2b**）补 `EXTERNAL_WAIT` 步骤进入等待态的写入，并同步补测试。
 本批不擅自扩范围，避免把「补摄入」和「补执行态」混在一个提交里。
 
+> **后续（2026-11-07）**：该缺口已由 P0-2b 补掉，见 `P0-2b-EXTERNAL-WAIT.md`。
+> 补的过程中发现本段最初设想的方案是错的（「依赖满足就进等待」会堵死提交与核验动作），
+> 最终按状态模型 §3 的「入口—出口」两条迁移实现。图 1 已随之重拍，现在是真实流程。
+
 ## 4. 明确没有做的事（不得包装成已完成）
 
 - **没有接任何真实平台 API。** 摄入入口现在是 HTTP 端点，由调用方推数据进来。Shopify/Amazon 等真实回传仍是 `WAITING_EXTERNAL`。
 - **前端没有入口。** `frontend-v9` 里还没有触发 `mode=platform_status` 的界面，当前只能靠 curl / 测试驱动。
 - **管理端没有映射编辑器。** `Profile.status_mapping` 仍只能应用内写库，没有 HTTP 端点。
 - **`verification_status` 的人工核验界面仍未做。** 所以 `is_verified_online()` 虽然可达，实操上还需人工置 `VERIFIED`。
-- **`EXTERNAL_WAIT` 步骤不会自动进 `WAITING_EXTERNAL`**（见 §3.5）。执行态的这一缺口留给 P0-2b，本批未动。
+- **`EXTERNAL_WAIT` 步骤不会自动进 `WAITING_EXTERNAL`**（见 §3.5）。已由 P0-2b 补掉。
 
 因此本批的正确表述是：**「摄入通道已建，在售判定在链路上可达」**，**不是**「平台已对接」或「已上线」。
 

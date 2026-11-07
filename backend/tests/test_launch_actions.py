@@ -410,7 +410,9 @@ def test_submit_approval_lands_completed_without_active(env):
     # 提交回执绝不等于在售（AC-6.4）。
     current = _run(db, run.id)
     assert current.platform_status != "ACTIVE" and current.verification_status != "VERIFIED"
-    assert _step(db, run.id, "ACTIVE").step_status == "READY"
+    # 提交完成只说明外部意图已发出；平台还没给 ACCEPTED/ACTIVE 事实，
+    # 在售核验步骤应停在 WAITING_EXTERNAL（状态模型 §3），不是直接丢给用户一个核验按钮。
+    assert _step(db, run.id, "ACTIVE").step_status == "WAITING_EXTERNAL"
 
 
 # -------------------------------------------------------- FR-7 CONFIRM_ACTIVATION
@@ -421,7 +423,9 @@ def test_confirm_requires_material_and_note(env):
     run = _start(db, contexts["admin"], product, shops[0])
     _advance_to_submission(db, contexts["admin"], run.id)
     _land_submission(db, contexts["admin"], product, run, "sub-4")
-    assert _step(db, run.id, "ACTIVE").step_status == "READY"
+    # 等待态也允许核验（平台可能已在售而 ACCEPTED 事实未到），
+    # 但材料/备注缺失仍必须 409 —— 状态放行不等于校验放行。
+    assert _step(db, run.id, "ACTIVE").step_status == "WAITING_EXTERNAL"
     with pytest.raises(LaunchError) as rejected:
         _exec(db, contexts["admin"], run.id, "CONFIRM_ACTIVATION", "ACTIVE", "act-1", payload={"material_ref": ""})
     assert rejected.value.code == "ACTION_PRECONDITION_FAILED"
