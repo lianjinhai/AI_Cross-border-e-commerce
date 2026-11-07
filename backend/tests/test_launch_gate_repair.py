@@ -78,19 +78,52 @@ def _assert_three_parts(blocker, code):
 
 # ------------------------------------------------------------------ 门禁一：缺材料
 
-def test_missing_material_gate_blocks_and_points_to_the_product():
-    """正例：素材权利不通过时前置不满足，409 的每一项都带补齐入口。"""
+def test_missing_asset_gate_points_at_asset_registration_not_product_copy(monkeypatch):
+    """正例：素材权利不通过时前置不满足，409 的每一项都带补齐入口。
+
+    入口必须指向**素材与权利登记**，不能是 `COMPLETE_DATA`/「补充商品资料」——
+    缺的是图片授权证据，去改标题分类补不出来（M2-D 修的就是这个错位）。
+    """
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "asset_upload_dir", "")
     step = SimpleNamespace(step_code="INFORMATION", business_type="DATA_PREPARATION", actor="USER")
     blockers = missing_blockers(_facts(), step)
 
     assert len(blockers) == 1
-    _assert_three_parts(blockers[0], "MISSING_DATA")
+    _assert_three_parts(blockers[0], "ASSET_RIGHTS_MISSING")
     assert blockers[0]["message"] == "缺少可发布图片"
-    # 资料补齐是真实接通的动作，入口收敛到具体商品详情页。
-    assert blockers[0]["repair_action"]["kind"] == "ACTION"
-    assert blockers[0]["repair_action"]["action"] == "COMPLETE_DATA"
-    assert blockers[0]["repair_action"]["path"] == "/app/products/42"
-    assert blockers[0]["repair_action"]["connected"] is True
+    repair = blockers[0]["repair_action"]
+    assert repair["kind"] == "ROUTE"
+    # 不是资料动作：`COMPLETE_DATA` 会直接 409（完成条件仍不满足），给这个入口等于死路。
+    assert repair["action"] is None
+    assert repair["path"] == "/app/products/42"
+    # 缺上传服务时只能说「能看不能传」，不能造一个点了没反应的按钮。
+    assert repair["connected"] is False
+    assert "ERP_ASSET_UPLOAD_DIR" in repair["reason"]
+
+
+def test_asset_gate_entry_becomes_usable_when_upload_is_connected(monkeypatch, tmp_path):
+    """反例（同一入口的另一半）：接好上传服务后，入口转为可完成且不再需要免责说明。"""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "asset_upload_dir", str(tmp_path / "asset-store"))
+    step = SimpleNamespace(step_code="PRODUCT_INFORMATION", business_type="DATA_PREPARATION", actor="USER")
+    blocker = missing_blockers(_facts(), step)[0]
+
+    assert blocker["code"] == "ASSET_RIGHTS_MISSING"
+    assert blocker["repair_action"]["connected"] is True
+    assert blocker["repair_action"]["reason"] == ""
+
+
+def test_label_step_gap_still_points_at_compliance_not_assets():
+    """材料类步骤不受影响：标签包缺口仍走合规页，不会被素材入口抢走。"""
+    step = SimpleNamespace(step_code="LABEL_PREPARATION", business_type="LABEL", actor="SYSTEM")
+    blocker = missing_blockers(_facts(), step)[0]
+
+    assert blocker["code"] == "MISSING_DATA"
+    assert blocker["repair_action"]["path"] == "/app/compliance"
+    assert blocker["repair_action"]["connected"] is False
 
 
 def test_missing_material_gate_passes_when_materials_are_complete():
@@ -169,7 +202,8 @@ def test_label_evidence_gate_passes_when_label_verified():
 @pytest.mark.parametrize("code", sorted(set(BLOCK_CODES.values())
                                         | {"STEP_STATE_CONFLICT", "ACTION_PRECONDITION_FAILED",
                                            "PLATFORM_PENDING", "PLATFORM_ERROR",
-                                           "EXTERNAL_SERVICE_REQUIRED", "SUPPLY_UNAVAILABLE"}))
+                                           "EXTERNAL_SERVICE_REQUIRED", "SUPPLY_UNAVAILABLE",
+                                           "ASSET_RIGHTS_MISSING"}))
 def test_repair_action_never_null(code):
     """补齐入口永不缺席：未知码也要有兜底入口，不能退回 `repair_action: None`。"""
     repair = repair_action(code, business_type="DATA_PREPARATION", product_id=42)

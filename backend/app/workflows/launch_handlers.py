@@ -74,15 +74,37 @@ def cancel_run(ctx: ActionContext) -> StepEffect:
                                "note": ctx.payload.get("note", "")})
 
 
+#: 素材权利没有具体缺项时的兜底原因（`evaluate_asset_rights` 通过但完成条件仍未满足）。
+GENERIC_MISSING_REASON = "完成条件尚未满足"
+
+
+def _missing_code(step, asset_reasons):
+    """缺项归属哪个阻断码：素材/权利缺口 ≠ 商品资料缺口。
+
+    以前一律 `MISSING_DATA`，于是「缺图片权利证据」的用户被指去「补充商品资料」，
+    到了商品页才发现那里根本没有素材与授权入口——跑一趟白跑。
+    `asset_rights_allowed` 参与完成条件的只有 `DATA_PREPARATION` 与
+    `PLATFORM_ACTIVATION`；后者没有 `COMPLETE_DATA` 动作，所以这里只区分资料类步骤，
+    材料类（COMPLIANCE/LABEL/EVIDENCE）仍按原样落到 `MISSING_DATA` → 合规页。
+    """
+    if asset_reasons and step.business_type == "DATA_PREPARATION":
+        return "ASSET_RIGHTS_MISSING"
+    return "MISSING_DATA"
+
+
 def missing_blockers(facts, step):
     """把素材权利等具体缺项转成 blockers（AC-5.2：前端可逐条展示）。
 
     P0-4：每项都带补齐入口，前端才能给出「下一步去哪」，而不是只有一句原因。
+    M2-D：入口要指对地方——缺素材就给素材登记入口，缺商品资料才给 `COMPLETE_DATA`。
     """
-    reasons = (facts.get("assets") or {}).get("reasons") or ["完成条件尚未满足"]
+    asset_reasons = list((facts.get("assets") or {}).get("reasons") or [])
+    reasons = asset_reasons or [GENERIC_MISSING_REASON]
     product_id = (facts.get("product") or {}).get("id")
-    action = repair_action("MISSING_DATA", business_type=step.business_type, product_id=product_id)
-    return [{"code": "MISSING_DATA", "message": reason, "step_code": step.step_code,
+    code = _missing_code(step, asset_reasons)
+    # 一次构造：`asset://` 上传能力一致，所以整批缺项共用同一个补齐入口。
+    action = repair_action(code, business_type=step.business_type, product_id=product_id)
+    return [{"code": code, "message": reason, "step_code": step.step_code,
              "owner_actor": step.actor, "evidence_refs": [], "repair_action": dict(action)}
             for reason in reasons]
 

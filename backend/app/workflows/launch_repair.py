@@ -13,6 +13,8 @@
    让「没有入口」本身也是一条显式信息，而不是空白。
 """
 
+from ..services import asset_upload
+
 # 阻断码（状态模型 §6 固定枚举）→ 补齐入口。
 # kind: ROUTE 跳页面 / ACTION 触发 Launch 动作 / UNAVAILABLE 能力未接入
 _BY_CODE = {
@@ -37,6 +39,14 @@ _BY_CODE = {
     "SUPPLY_UNAVAILABLE": {
         "label": "查看货源与采购", "kind": "ROUTE", "action": None,
         "path": "/app/supply/purchases", "connected": True, "reason": "",
+    },
+    # 素材/权利缺口（M2-D）：与「缺商品资料」分开。缺的是**图片权利证据**，
+    # 去商品资料页补标题分类是白跑一趟；该补的是素材登记与授权证据。
+    # `connected` 由上传能力决定（见下方 repair_action 的后处理），
+    # 没接上传服务时只能看不能传，必须如实说。
+    "ASSET_RIGHTS_MISSING": {
+        "label": "去商品详情登记素材与权利证据", "kind": "ROUTE", "action": None,
+        "path": "/app/products", "connected": True, "reason": "",
     },
     "STOCK_REQUIRED": {
         "label": "发起备货申请", "kind": "ACTION", "action": "REQUEST_STOCK",
@@ -85,6 +95,16 @@ def repair_action(code, *, business_type=None, product_id=None):
     # 缺资料但属于材料类步骤：素材/合规/标签的补齐落在合规页，而不是商品资料。
     if code == "MISSING_DATA" and business_type in {"COMPLIANCE", "LABEL", "EVIDENCE"}:
         action = dict(_BY_CODE["COMPLIANCE_BLOCK"])
+
+    # 素材缺口能不能真补齐取决于上传服务在不在：没接就标成不可完成并给原因，
+    # 不能让用户点进去以后才发现「哈希填不出来」。
+    if code == "ASSET_RIGHTS_MISSING":
+        capability = asset_upload.capability()
+        if not capability["connected"]:
+            action["connected"] = False
+            action["reason"] = (
+                "素材上传服务未接入（未配置 ERP_ASSET_UPLOAD_DIR）：商品页可查看素材区，"
+                "但不能登记新素材，也不会用客户端声明的哈希凑合")
 
     if type(product_id) is int and product_id > 0:
         if action["path"] == "/app/products":
