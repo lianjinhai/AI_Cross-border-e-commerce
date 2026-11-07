@@ -237,12 +237,22 @@
               <el-select v-model="assetShopId" placeholder="选择目标店铺" size="small" style="width:240px" @change="onAssetShopChange">
                 <el-option v-for="opt in shopOptions" :key="opt.id" :label="opt.label" :value="opt.id" />
               </el-select>
+              <!-- 上传：能力未接入时禁用（不造点不动的按钮），原因见下方提示条 -->
+              <el-upload class="upload-inline" :auto-upload="false" :show-file-list="false"
+                :accept="uploadGate.accept" :disabled="!canUpload" :on-change="onFilePicked">
+                <el-button v-if="canWrite()" size="small" :disabled="!canUpload" :loading="uploading">
+                  上传素材
+                </el-button>
+              </el-upload>
               <el-button v-if="canWrite()" size="small" :disabled="!assetShopId" @click="assetDialog = true">
                 登记素材
               </el-button>
             </div>
           </div>
         </template>
+        <el-alert v-if="assetShopId && uploadCapability && !uploadCapability.connected"
+          type="warning" :closable="false" show-icon class="mb12" title="素材上传服务未接入"
+          :description="`${uploadCapability.reason}——只能查看与登记已有素材（含外链 URI），不能上传新文件；系统不会用客户端声明的哈希凑合。`" />
         <template v-if="!assetShopId">
           <EmptyState reason="NO_DATA" hint="请先在上方选择目标店铺，素材按店铺的市场/平台隔离展示" />
         </template>
@@ -316,8 +326,12 @@
               <el-option v-for="t in ASSET_TYPES" :key="t.value" :label="t.label" :value="t.value" />
             </el-select>
           </el-form-item>
-          <el-form-item label="URI"><el-input v-model="assetForm.uri" placeholder="https://…" /></el-form-item>
-          <el-form-item label="内容哈希"><el-input v-model="assetForm.content_hash" placeholder="sha256 64位十六进制" /></el-form-item>
+          <el-form-item label="URI"><el-input v-model="assetForm.uri" placeholder="https://… 或上传后回填的 asset://…" /></el-form-item>
+          <el-form-item label="内容哈希">
+            <!-- 经本系统上传的素材：哈希由服务端算，这里只读回填，杜绝手填「看起来像 sha256」的串 -->
+            <el-input v-model="assetForm.content_hash" :readonly="hashFromUpload"
+              :placeholder="hashFromUpload ? '由服务端按字节计算' : '外链素材请填真实 sha256（64 位十六进制）'" />
+          </el-form-item>
           <el-form-item label="权利状态">
             <el-select v-model="assetForm.rights_status" style="width:100%">
               <el-option label="自有权利" value="OWNED" />
@@ -333,8 +347,8 @@
           <el-form-item label="来源"><el-input v-model="assetForm.source" placeholder="素材来源说明（必填）" /></el-form-item>
         </el-form>
         <div v-if="contentHashGap" class="asset-gap-hint">
-          内容哈希需为 64 位 sha256 十六进制（后端 AssetRegistration.content_hash）。当前尚无素材上传/哈希服务，
-          请填写素材文件的真实哈希，未知时不要提交。
+          内容哈希需为 64 位 sha256 十六进制（后端 AssetRegistration.content_hash）。经本系统上传的素材
+          由服务端算出并回填；外链素材填真实哈希，未知时不要提交——后端会拒绝编造的哈希。
         </div>
         <template #footer>
           <el-button @click="assetDialog = false">取消</el-button>
@@ -386,13 +400,16 @@ import ErrorState from '../../components/ErrorState.vue'
 import SectionState from '../../components/SectionState.vue'
 import { canApprove, canWrite } from '../../permissions/permissions'
 import {
-  addAsset, fetchAssets, fetchChannels, fetchProduct, fetchProductOverview, isAssetContentHash, standardize, verifyAsset,
+  addAsset, fetchAssetUploadCapability, fetchAssets, fetchChannels, fetchProduct, fetchProductOverview,
+  isAssetContentHash, standardize, uploadAsset, verifyAsset,
 } from '../../api/domains/products'
 import { fetchOffers } from '../../api/domains/suppliers'
 import { fetchShops } from '../../api/domains/shops'
 import { loadSessionProfile } from '../../shared/onboardingProfile'
 import {
-  assetPageItems, assetRowView, buildLaunchDeepLink, buildShopOptions, launchItemView, normalizeChannels, offersViewModel, overviewViewModel, performanceViewModel, sectionErrorText, shopContext, verifyErrorKind,
+  assetHashOrigin, assetPageItems, assetRowView, assetUploadGate, buildLaunchDeepLink, buildShopOptions,
+  launchItemView, normalizeChannels, offersViewModel, overviewViewModel, performanceViewModel,
+  sectionErrorText, shopContext, verifyErrorKind,
 } from '../../shared/productDetailView'
 
 /** 登记表单类型选项（asset_schema.py asset_type Literal 域）。 */
@@ -502,6 +519,15 @@ const verifyForm = reactive({ decision: 'VERIFIED', evidence_ref: '', reason: ''
 const verifyingRow = ref(null)
 const verifyError = ref('')
 
+// ── 素材上传（M2-D）：能力来自后端，未接入就禁用而不是假装可用 ──
+/** 上传能力快照 {connected, reason, max_bytes, content_types}；null = 尚未取得（不假设可用）。 */
+const uploadCapability = ref(null)
+const uploading = ref(false)
+const uploadGate = computed(() => assetUploadGate(uploadCapability.value))
+const canUpload = computed(() => assetShopId.value != null && uploadGate.value.connected)
+/** 哈希来源：`asset://` 即本系统上传（服务端算），表单里只读回填，不留改写入口。 */
+const hashFromUpload = computed(() => assetHashOrigin(assetForm.uri) === 'server')
+
 const contentHashGap = computed(() => !isAssetContentHash(assetForm.content_hash))
 
 async function load() {
@@ -552,7 +578,6 @@ async function loadAssets() {
   try {
     const data = await fetchAssets(route.params.id, { shopId: assetShopId.value })
     assetRows.value = assetPageItems(data).map((a) => decorateAssetRow(assetRowView(a)))
-    assetReadyFlag.value = true
   } catch (e) {
     // E06：素材失败不当空，保留旧数据并独立报错
     assetError.value = sectionErrorText(e, '素材加载失败')
@@ -560,6 +585,50 @@ async function loadAssets() {
     assetLoading.value = false
   }
 }
+
+/**
+ * 读取上传能力（M2-D）：与素材列表并行、失败独立降级。
+ *
+ * 能力取不到时 `uploadCapability` 保持 null → `canUpload` 为 false（fail-closed）：
+ * 宁可多一次「先去配置」，也不能让用户传上去才发现后端根本没接存储。
+ */
+async function loadUploadCapability() {
+  uploadCapability.value = null
+  if (!assetShopId.value) return
+  try {
+    uploadCapability.value = await fetchAssetUploadCapability(route.params.id, { shopId: assetShopId.value })
+  } catch {
+    uploadCapability.value = null // 取不到就不放行上传，不按「大概能用」猜
+  }
+}
+
+/** el-upload 手动模式：拿到原始文件后自己发请求，不用它内置的上传通道。 */
+async function onFilePicked(uploadFile) {
+  const raw = uploadFile?.raw
+  if (!raw || !canUpload.value) return
+  const limit = uploadGate.value.maxBytes
+  if (limit != null && raw.size > limit) {
+    return ElMessage.warning(`文件 ${raw.name} 超过上限 ${Math.round(limit / 1024 / 1024)} MiB`)
+  }
+  uploading.value = true
+  try {
+    const saved = await uploadAsset(route.params.id, raw, { shopId: assetShopId.value })
+    // 哈希与 URI 都由服务端给出，这里只回填（只读），不提供改写入口。
+    assetForm.uri = saved.uri
+    assetForm.content_hash = saved.content_hash
+    if (!assetForm.source.trim()) assetForm.source = `本系统上传：${raw.name}`
+    assetDialog.value = true
+    ElMessage.success('已上传，哈希由服务端计算——请补全权利信息后登记')
+  } catch {
+    // 错误码与原因由请求层统一提示；这里清掉半截状态，避免把失败的上传当已回填
+    assetForm.uri = ''
+    assetForm.content_hash = ''
+  } finally {
+    uploading.value = false
+  }
+}
+
+/** 登记表单是否允许改动哈希：`asset://` 引用由服务端算，只读回填；外链才由用户自填。 */
 
 /** 展示态补充（判定结果在 shared/productDetailView 单点计算，模板只消费稳定字段）。 */
 function decorateAssetRow(view) {
@@ -672,6 +741,7 @@ function onAssetShopChange() {
   assetRows.value = []
   assetError.value = ''
   loadAssets()
+  loadUploadCapability()
 }
 
 /**
@@ -712,6 +782,11 @@ onMounted(load)
 .link { color: var(--color-primary); }
 .ml4 { margin-left: 4px; }
 .dim { color: var(--v91-text-muted, var(--color-text-secondary, #909399)); font-size: 12px; }
+
+/* 素材工具区：选择店铺 + 上传 + 登记同一行，按钮基线对齐 */
+.asset-tools { display: flex; align-items: center; gap: 8px; }
+.upload-inline { display: inline-flex; }
+.asset-gap-hint { margin-top: 8px; font-size: 12px; color: var(--color-warning, #E6A23C); line-height: 1.6; }
 
 /* 概览：阶段色调（B3 stageTone） */
 .stage-line { display: flex; align-items: center; gap: 10px; }

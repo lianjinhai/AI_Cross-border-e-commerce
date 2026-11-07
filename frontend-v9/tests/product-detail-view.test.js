@@ -308,6 +308,53 @@ import {
   supplierVerificationLabel,
 } from '../src/shared/productDetailView'
 
+// ── M2-D：素材上传门禁与哈希来源（组件逻辑抽成纯函数才能测；本仓无 @vue/test-utils） ──
+import { assetHashOrigin, assetUploadGate } from '../src/shared/productDetailView'
+
+describe('M2-D assetUploadGate', () => {
+  it('未取得能力时 fail-closed：不放行，且给出可读原因', () => {
+    const gate = assetUploadGate(null)
+    expect(gate.connected).toBe(false)
+    expect(gate.reason).toContain('尚未取得')
+    expect(gate.maxBytes).toBeNull()
+    // 拿不到 content_types 也给保守默认值，文件选择框不至于接受任意类型
+    expect(gate.accept).toBe('image/jpeg,image/png,image/webp')
+  })
+
+  it('后端明确未接入：不放行，原样透出后端原因（含配置项名）', () => {
+    const gate = assetUploadGate({
+      connected: false,
+      reason: '素材上传服务未接入（未配置 ERP_ASSET_UPLOAD_DIR）',
+      max_bytes: 8388608,
+      content_types: ['image/jpeg', 'image/png', 'image/webp'],
+    })
+    expect(gate.connected).toBe(false)
+    expect(gate.reason).toContain('ERP_ASSET_UPLOAD_DIR')
+    expect(gate.maxBytes).toBe(8388608)
+  })
+
+  it('接入之后放行：connected 为 true 且不再有免责原因', () => {
+    const gate = assetUploadGate({
+      connected: true, reason: '', max_bytes: 8388608, content_types: ['image/png'],
+    })
+    expect(gate.connected).toBe(true)
+    expect(gate.reason).toBe('')
+    expect(gate.accept).toBe('image/png')
+  })
+})
+
+describe('M2-D assetHashOrigin', () => {
+  it('asset:// 引用 = 服务端算过 → 只读回填', () => {
+    expect(assetHashOrigin('asset://' + 'a'.repeat(64) + '/main.png')).toBe('server')
+  })
+
+  it('外链 URI / 空值 = 用户自填，不被误判成服务端哈希', () => {
+    expect(assetHashOrigin('https://example.com/a.jpg')).toBe('manual')
+    expect(assetHashOrigin('')).toBe('manual')
+    expect(assetHashOrigin(null)).toBe('manual')
+  })
+})
+
 describe('B3 stageTone', () => {
   it('缺口阶段 amber / 就绪 blue / 经营 success / 未知 neutral', () => {
     expect(stageTone('NO_SUPPLY')).toBe('amber')

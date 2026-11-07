@@ -332,6 +332,33 @@ export function assetPageItems(response = {}) {
   return Array.isArray(response?.items) ? response.items : []
 }
 
+/**
+ * 素材上传能力 → 前端门禁（M2-D）：**fail-closed**。
+ *
+ * 能力未取得（`null`，含请求失败）与「后端明确未接入」都不放行上传——宁可让用户
+ * 先去配置存储，也不能让他传完才在 409 上知道服务没接。`accept` 只用于文件选择框
+ * 过滤；类型与大小的真门禁在后端（`asset_upload.save`），前端过滤不算校验。
+ */
+export function assetUploadGate(capability = null) {
+  const connected = capability?.connected === true
+  const types = Array.isArray(capability?.content_types) ? capability.content_types : []
+  return {
+    connected,
+    reason: connected ? '' : (capability?.reason || '尚未取得上传能力，不按「大概能用」放行'),
+    maxBytes: typeof capability?.max_bytes === 'number' ? capability.max_bytes : null,
+    accept: types.length ? types.join(',') : 'image/jpeg,image/png,image/webp',
+  }
+}
+
+/**
+ * 哈希来源：`asset://`（本系统上传、服务端算过）→ `'server'`，登记表单里只读回填；
+ * 其它（外链 URI）→ `'manual'`，由用户自填，后端仍校验是 64 位 sha256 并对
+ * `asset://` 引用回存储重算比对。
+ */
+export function assetHashOrigin(uri = '') {
+  return String(uri || '').startsWith('asset://') ? 'server' : 'manual'
+}
+
 /** 店铺选项（渠道 shop 列表优先，否则 shops API items）→ {id,label}。 */
 export function buildShopOptions(channelsShops = [], extraShops = []) {
   const seen = new Set()

@@ -103,6 +103,41 @@ export async function addAsset(id, data = {}) {
 }
 
 /**
+ * 素材上传能力（M2-D）：GET /products/{id}/assets/upload-capability?shop_id=...
+ * → {connected, reason, max_bytes, content_types[]}。
+ *
+ * `connected=false` = 后端未配置 `ERP_ASSET_UPLOAD_DIR`（上传服务未接入）。
+ * 此时前端**必须**禁用上传按钮并展示 reason，不能让用户点了才发现传不了；
+ * 也不得退化成「手工填哈希」——哈希只能由服务端按字节算出。
+ */
+export async function fetchAssetUploadCapability(id, { shopId } = {}) {
+  if (!Number.isInteger(shopId) || shopId < 1) {
+    throw new Error('上传能力必须指定目标店铺 shop_id（缺店铺上下文，禁止猜测默认店铺）')
+  }
+  return (await api.get(`/products/${id}/assets/upload-capability`, {
+    params: { shop_id: shopId },
+  })).data
+}
+
+/**
+ * 上传素材字节（M2-D）：POST /products/{id}/assets/upload（multipart：shop_id + file）
+ * → {uri: 'asset://<sha256>/<name>', content_hash, size, content_type, stored}。
+ *
+ * 返回的 `uri` 与 `content_hash` 是服务端读字节算出来的，前端只做**回填**（只读），
+ * 不得改写；登记时后端会按引用回存储重算比对，编造哈希会被 409 ASSET_HASH_MISMATCH 拒绝。
+ */
+export async function uploadAsset(id, file, { shopId } = {}) {
+  if (!Number.isInteger(shopId) || shopId < 1) {
+    throw new Error('上传素材必须指定目标店铺 shop_id')
+  }
+  if (!file) throw new Error('未选择文件')
+  const body = new FormData()
+  body.append('shop_id', String(shopId))
+  body.append('file', file)
+  return (await api.post(`/products/${id}/assets/upload`, body)).data
+}
+
+/**
  * 素材核验（E05）：POST /products/{id}/assets/{assetId}/verify。
  * 后端 ReviewIn 必填 {shop_id, expected_version, decision: VERIFIED|REJECTED,
  * evidence_ref, reason}；仅合规审批人（compliance:approve）可调用。
