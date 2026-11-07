@@ -116,10 +116,11 @@ def test_catalog_covers_every_registered_business_action():
     registered = set().union(*BUSINESS_ACTIONS.values()) | {"RETRY", "CANCEL"}
     assert registered == set(BUSINESS_ACTION_META)
     connected = {action for action, meta in BUSINESS_ACTION_META.items() if meta.connected}
-    # M2-A：核价三动作（申报/接受/还价）已接通，其余领域动作（备货/材料/标签/实物）仍未接通。
+    # M2-A 核价三动作 + M2-E 标签两动作已接通；其余领域动作（备货/材料/实物）仍未接通。
     assert connected == {"COMPLETE_DATA", "SUBMIT_PLATFORM", "CONFIRM_ACTIVATION", "RETRY",
                          "CANCEL", "ABANDON_PRODUCT",
-                         "REPORT_PRICE", "ACCEPT_PRICE", "COUNTER_PRICE"}
+                         "REPORT_PRICE", "ACCEPT_PRICE", "COUNTER_PRICE",
+                         "GENERATE_LABEL", "REGENERATE_LABEL"}
     for action in connected:
         assert BUSINESS_ACTION_META[action].disabled_reason == ""
     for action, meta in BUSINESS_ACTION_META.items():
@@ -393,7 +394,8 @@ def test_launch_facts_extension_reasons_receipt_and_activation(state_db):
     assert facts["assets"]["reasons"] == ["缺少可发布图片"]
     assert facts["assets"]["rights_fingerprint"]
     assert "submission_receipt" not in facts["platform"]
-    assert predicates["verified_artifact"] == {"ACTIVATION": False}
+    # 未生成标签包时 LABEL_PACKAGE 明确为 False（不是 UNKNOWN）：这是「还没有」，能说清。
+    assert predicates["verified_artifact"] == {"ACTIVATION": False, "LABEL_PACKAGE": False}
     attempt = PlatformPublishAttempt(tenant_id=run.tenant_id, listing_id=run.listing_id,
                                      shop_id=run.shop_id, platform="shopee",
                                      idempotency_key="state-receipt", status="succeeded",
@@ -408,7 +410,7 @@ def test_launch_facts_extension_reasons_receipt_and_activation(state_db):
     steps["ACTIVATION"].result = {"activation_verification": {"current": {"reviewer_id": 7}}}
     db.flush()
     _, predicates = load_launch_facts(db, run)
-    assert predicates["verified_artifact"] == {"ACTIVATION": True}
+    assert predicates["verified_artifact"] == {"ACTIVATION": True, "LABEL_PACKAGE": False}
 
 
 def test_launch_facts_from_rows_uses_provided_main_rows(state_db):

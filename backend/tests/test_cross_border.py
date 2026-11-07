@@ -533,6 +533,28 @@ def test_compliance_evidence_endpoint(client, auth_headers):
     assert final.json()["passed"] is True, final.text
 
 
+def test_label_packages_endpoint_is_read_only(client, auth_headers):
+    """M2-E：标签包只有只读入口——写入必须经 Launch 动作（依据门禁 + revision CAS）。
+
+    这里锁两件事：① 没有标签包时返回空列表且不报错（新库不是错误场景）；
+    ② 该路径不接受 POST，避免出现绕过依据门禁的第二个写入口。
+    """
+    product = client.post("/api/products", headers=auth_headers, json={
+        "title": f"标签包接口探针-{time.time_ns()}", "category": "电子产品"})
+    assert product.status_code == 200, product.text
+    pid = product.json()["id"]
+
+    listing = client.get(f"/api/cross-border/products/{pid}/labels", headers=auth_headers)
+    assert listing.status_code == 200, listing.text
+    assert listing.json()["items"] == []
+    # 没给 shop_id/country 时不猜，也就不会给出一个假的「依据齐备」判定
+    assert "basis" not in listing.json()
+    assert client.post(f"/api/cross-border/products/{pid}/labels",
+                       headers=auth_headers).status_code == 405
+    assert client.get("/api/cross-border/products/999999/labels",
+                      headers=auth_headers).status_code == 404
+
+
 def test_destination_gate_is_opt_in(case):
     """上架门禁的目的国准入默认不阻断；开启后缺证据才阻断。"""
     from types import SimpleNamespace

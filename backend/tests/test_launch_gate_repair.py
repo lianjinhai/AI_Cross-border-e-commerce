@@ -3,7 +3,7 @@
 三道门禁：
 - **缺材料**：素材权利不通过 → `COMPLETE_DATA` 前置不满足，409 带具体缺项
 - **低价**：毛利低于 `min_margin` → `PRICE_UNACCEPTABLE`
-- **标签依据不足**：`LABEL_PACKAGE` 未核验 → `COMPLIANCE_BLOCK`
+- **标签依据不足**：`LABEL_PACKAGE` 未核验或已失效 → `LABEL_BASIS_MISSING`
 
 每道门禁一正一反。正例同时断言三要素——**阻断码 + 原因 + 补齐动作**；
 反例断言未触发时不产生阻断（防止门禁过宽把正常流程卡死）。
@@ -116,14 +116,17 @@ def test_asset_gate_entry_becomes_usable_when_upload_is_connected(monkeypatch, t
     assert blocker["repair_action"]["reason"] == ""
 
 
-def test_label_step_gap_still_points_at_compliance_not_assets():
-    """材料类步骤不受影响：标签包缺口仍走合规页，不会被素材入口抢走。"""
+def test_label_step_gap_is_not_hijacked_by_the_asset_entry():
+    """标签步骤不会被素材入口抢走；标签依据缺口的真实入口由 LABEL_BASIS_MISSING 提供。"""
     step = SimpleNamespace(step_code="LABEL_PREPARATION", business_type="LABEL", actor="SYSTEM")
     blocker = missing_blockers(_facts(), step)[0]
 
+    # 素材缺口不冒充标签依据缺口（`ASSET_RIGHTS_MISSING` 只属于资料类步骤）。
     assert blocker["code"] == "MISSING_DATA"
-    assert blocker["repair_action"]["path"] == "/app/compliance"
-    assert blocker["repair_action"]["connected"] is False
+    # M2-E：真正能补「目的国准入证据」的是商品详情页，不是合规页的 listing 评审队列。
+    repair = repair_action("LABEL_BASIS_MISSING", business_type="LABEL", product_id=42)
+    assert repair["path"] == "/app/products/42"
+    assert repair["connected"] is True
 
 
 def test_missing_material_gate_passes_when_materials_are_complete():
@@ -173,18 +176,27 @@ def test_low_margin_gate_passes_above_floor():
 
 # ------------------------------------------------------------------ 门禁三：标签依据不足
 
-def test_label_evidence_gate_blocks_and_points_to_compliance():
-    """正例：标签包未核验 → COMPLIANCE_BLOCK，入口指向合规页并要求补材料。"""
+def test_label_evidence_gate_blocks_and_points_at_the_product_compliance_block():
+    """正例：标签包未核验 → LABEL_BASIS_MISSING，原因逐条点名缺哪条依据。
+
+    M2-E 之前这里指 `/app/compliance`，而那一页的「合规检测」卡片实际是 listing 评审
+    队列——与目的国准入证据无关。真正能补的地方是商品详情页的
+    「目的国合规要求与证据」区块，所以入口改成商品详情。
+    """
     profile = _gate_profile(LABEL_PREPARATION={"entry_condition": {"verified_artifact": "LABEL_PACKAGE"}})
     states = _reached(profile, "PRODUCT_INFORMATION", "PLATFORM_ATTRIBUTES", "MARKET_COMPLIANCE")
-    plan = evaluate_readiness(profile, states, _facts(), _checks(label_package=False))
+    facts = _facts() | {"label": {"country": "EU", "covered": True, "complete": False,
+                                  "package_current": False,
+                                  "reasons": ["缺 CE 证据：欧盟 CE 标志强制要求"]}}
+    plan = evaluate_readiness(profile, states, facts, _checks(label_package=False))
 
     blocker = plan["steps"]["LABEL_PREPARATION"]["blocking_reason"]
     assert plan["steps"]["LABEL_PREPARATION"]["status"] == "BLOCKED"
-    _assert_three_parts(blocker, "COMPLIANCE_BLOCK")
-    assert "标签包" in blocker["message"]
-    assert blocker["repair_action"]["path"] == "/app/compliance"
-    assert blocker["repair_action"]["connected"] is False
+    _assert_three_parts(blocker, "LABEL_BASIS_MISSING")
+    assert "缺 CE 证据" in blocker["message"], "原因必须点名缺的是哪一条依据"
+    assert blocker["repair_action"]["path"] == "/app/products/42"
+    assert blocker["repair_action"]["connected"] is True
+    assert blocker["repair_action"]["reason"] == ""
 
 
 def test_label_evidence_gate_passes_when_label_verified():
@@ -214,8 +226,13 @@ def test_repair_action_never_null(code):
         assert repair["reason"].strip()
 
 
-def test_material_steps_do_not_point_at_the_product_page():
-    """材料类步骤的补齐落在合规页：商品详情页并不能上传或核验材料。"""
-    repair = repair_action("MISSING_DATA", business_type="LABEL", product_id=42)
+def test_material_steps_keep_the_compliance_entry_for_missing_material_service():
+    """`MISSING_DATA` 落在材料类步骤时仍指合规页：材料上传/核验服务本身未接入。
+
+    这条和标签依据缺口是两件事：能补的是「目的国准入证据」（商品详情，M2-E 已接通），
+    未接通的是「材料上传与核验」（B03–B09），后者必须如实标 `connected=False`。
+    """
+    repair = repair_action("MISSING_DATA", business_type="COMPLIANCE", product_id=42)
     assert repair["path"] == "/app/compliance"
     assert repair["connected"] is False
+    assert repair["reason"].strip()

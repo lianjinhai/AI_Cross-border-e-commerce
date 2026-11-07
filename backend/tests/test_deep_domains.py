@@ -25,12 +25,25 @@ class TestFunctionDomain:
     """非法状态流转、边界数值、幂等性——全部必须给出可读中文错误而非 500。"""
 
     def test_illegal_order_ship(self, client, auth_headers):
-        """pending 订单直接发货 -> 400（不是 500）。"""
-        r = client.post("/api/orders/sync", headers=auth_headers, json={"platform": "demo:shopee", "count": 2})
-        assert r.status_code == 200, r.text
-        oid = r.json()["items"][0]["id"]
-        client.put(f"/api/orders/{oid}/status", headers=auth_headers, json={"status": "pending"})
-        r = client.post(f"/api/orders/{oid}/ship", headers=auth_headers)
+        """pending 订单直接发货 -> 400（不是 500）。
+
+        自己导一条 pending 订单，不再取演示同步的 `items[0]`：演示同步的状态是随机的
+        （同文件下一条用例的注释也如实写了这一点），而且 `items[0]` 是哪一单取决于此前
+        累计的演示订单量——全量跑时它常常已经是 paid/终态，PUT pending 被拒后 ship 直接 200，
+        这条用例就**单跑绿、全量红**，看起来像新功能引入的回归。
+        """
+        product = client.post("/api/products", headers=auth_headers,
+                              json={"title": "Ship Guard Probe", "category": "家居"})
+        assert product.status_code == 200, product.text
+        external_no = f"SHIP-GUARD-{product.json()['id']}"
+        imported = client.post("/api/orders/import", headers=auth_headers, json={
+            "csv_text": "external_no,platform,amount,qty,status,sku\n"
+                        f"{external_no},shopee,12,1,pending,{product.json()['sku']}"})
+        assert imported.status_code == 200 and imported.json()["imported"] == 1, imported.text
+        order = client.get("/api/orders", headers=auth_headers,
+                           params={"keyword": external_no}).json()["items"][0]
+        assert order["status"] == "pending"
+        r = client.post(f"/api/orders/{order['id']}/ship", headers=auth_headers)
         assert r.status_code == 400 and "已付款" in r.json()["detail"]
 
     def test_refund_terminal_state_rejected(self, client, auth_headers):

@@ -119,7 +119,11 @@ def test_migration_table_list_matches_model_metadata(client):
                  "business_profiles",
                  # price_rounds 由 Revision 32（M2-A 核价轮次）新建，同理不回改 Revision 16
                  # 清单；其 tenant_id → tenants.id 由元数据级契约与 test_launch_price_rounds 核对。
-                 "price_rounds"}
+                 "price_rounds",
+                 # label_packages 由 Revision 33（M2-E 标签包）新建，同理不回改 Revision 16
+                 # 清单；其 tenant_id → tenants.id 由元数据级契约、test_launch_label_packages
+                 # 与 test_label_packages_migration（真实历史库）共同核对。
+                 "label_packages"}
 
     assert listed == expected, (
         "迁移清单与模型层不一致——漏补：%s；多补：%s"
