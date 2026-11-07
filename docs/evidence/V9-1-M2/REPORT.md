@@ -108,7 +108,12 @@ all[ present(pricing.review_id), cost_snapshot_current(PRICE_REVIEW) ]
    按设计拒绝 409「已发布内容或目标店铺发生变化」。守卫判定没错，错的是 id 复用让两个不同实体撞了。
 
 判别力：断开上述任一环该用例即绿，单跑该文件恒绿。修法涉及「清理演示数据是否连审批记录
-一起删」这一语义取舍（审计保留 vs 引用完整性），已作为独立任务登记，不在本批改（§5 第 6 条）。
+一起删」这一语义取舍（审计保留 vs 引用完整性），当时单独立项不在本批改。
+
+> **后续（2026-11-07 收口后）**：该缺陷已按 `docs/DECISIONS.md` **D65** 修复——`ai_actions`
+> 进 `_PURGE_PLAN`，并补了回归 `test_purge_clears_ai_actions_so_reused_row_ids_do_not_block_publish`
+> （把计划里那行删掉该用例立刻红）。修复后后端全量 **1051 tests / 0 failed**。本报告上面的
+> 「1050 / 1 failed」保留为 M2-A 交付当时的真实快照，不作事后美化。
 
 ## 4. 顺手修掉的既有缺陷
 
@@ -138,9 +143,9 @@ all[ present(pricing.review_id), cost_snapshot_current(PRICE_REVIEW) ]
 4. **定价页不能提交轮次**。写入口只有 Launch 动作——定价页没有 run/revision 上下文，
    允许它写就会让「谁批的、依据哪份成本」断链。
 5. `ACCEPT_PRICE` 接受的是**最新一轮**，不支持指定历史某轮（没有 UI 也没有载荷字段）。
-6. **全量回归还剩 1 条既有失败**（§3 末尾已给完整根因）：清理演示数据不删 `ai_actions`，
-   清理后 id 复用让发布意图守卫误判。修它要动「清理语义 + 审计保留」的边界，
-   已单独登记任务；本批不夹带，也不把它写成「已修」。
+6. **全量回归的那条既有失败已修（D65）**：清理演示数据不删 `ai_actions`，清理后 id 复用让
+   发布意图守卫误判。修复是「审批记录随被审批对象一起清」，不是放宽守卫；上线流程的审批证据
+   仍由 `DemoPurgeBlocked` 保护（存在 PLATFORM_LAUNCH 运行时清理入口直接拒绝）。
 7. `ruff check .` 的 8 条告警全在 `tests/`（`test_product_overview.py` 4 条、
    `test_selected_offer.py` 2 条、`test_business_profile.py` / `test_orders_shop_scope.py` 各 1 条），
    均为存量未用变量/未用导入，**不在本批新增**；`ruff check app` 为零。
