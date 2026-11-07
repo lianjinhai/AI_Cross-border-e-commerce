@@ -75,7 +75,7 @@ CANCEL 仅允许未核验 ACTIVE 的流程，已有外部副作用时先核查�
 
 ## 6. 阻断原因与 NBA
 
-blocker.code 固定为 MISSING_DATA、ASSET_RIGHTS_MISSING、PLATFORM_PENDING、COMPLIANCE_BLOCK、PRICE_UNACCEPTABLE、SUPPLY_UNAVAILABLE、STOCK_REQUIRED、USER_ACTION_REQUIRED、EXTERNAL_SERVICE_REQUIRED、PLATFORM_ERROR；另有 API 错误码不混用。每项含 message、step_code、owner_actor、evidence_refs、repair_action，可同时返回多项。`ASSET_RIGHTS_MISSING` 专指素材/权利证据缺口（M2-D）：入口指向商品详情素材区，`repair_action.connected` 随素材上传服务是否接入翻转；不得折回 MISSING_DATA 让用户去「补充商品资料」。
+blocker.code 固定为 MISSING_DATA、ASSET_RIGHTS_MISSING、LABEL_BASIS_MISSING、PLATFORM_PENDING、COMPLIANCE_BLOCK、PRICE_UNACCEPTABLE、SUPPLY_UNAVAILABLE、STOCK_REQUIRED、USER_ACTION_REQUIRED、EXTERNAL_SERVICE_REQUIRED、PLATFORM_ERROR；另有 API 错误码不混用。每项含 message、step_code、owner_actor、evidence_refs、repair_action，可同时返回多项。`ASSET_RIGHTS_MISSING` 专指素材/权利证据缺口（M2-D）：入口指向商品详情素材区，`repair_action.connected` 随素材上传服务是否接入翻转；不得折回 MISSING_DATA 让用户去「补充商品资料」。`LABEL_BASIS_MISSING` 专指标签依据缺口（M2-E）：目的国准入要求未收录、某条要求缺证据或已过期、或已生成的标签包依据已变；入口指向商品详情页「目的国合规要求与证据」区块（`connected=true`），原因必须逐条点名缺哪一条，**不得**折回 COMPLIANCE_BLOCK 把用户指去 `/app/compliance`（那一页是 listing 评审队列，补不出目的国证据）。标签包的完成条件 `verified_artifact: LABEL_PACKAGE` 只由 `GENERATE_LABEL`/`REGENERATE_LABEL` 产生；依据失效时步骤从 COMPLETED 退回 BLOCKED，而 BLOCKED 是该动作的合法来源状态（否则用户在阻断态里无路可走）。
 
 NBA = 服务端合法动作集合中的首选项，默认按安全依赖、阻断解除、到期时间、sequence 排序。AI 排序须仍为同一合法集合子集；若建议已过期返回 executable=false 和原因。所有动作携带 expected_revision、不可变证据指纹，提交后重新校验。
 

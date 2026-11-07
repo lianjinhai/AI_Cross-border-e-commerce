@@ -3531,3 +3531,30 @@ PostgreSQL 与独立任务队列未动。
 **判别力**：`test_asset_upload.py` 8 条覆盖「未接入 409 + 零素材行」「服务端哈希 + 版本回读 + 追加版本」「编造哈希 409」「引用不存在文件 409」「类型/超限拒绝」「只读写账号 403」；把 `product_assets._require_trustworthy_reference(request)` 去掉，其中 3 条立刻红（实测）。`test_launch_gate_repair` 覆盖 `ASSET_RIGHTS_MISSING` 在「未接入/已接入」两种能力下的 `connected` 与入口路径，以及 LABEL 步骤不被抢走。
 
 **兼容与回退**：只新增端点与阻断码，既有 `POST /assets` 签名与字段不变（`asset://` 之外的行为完全不变）；`ASSET_RIGHTS_MISSING` 是新增码，前端 `launchRepair` 对未知码按 `ROUTE` 渲染。回退=清空 `ERP_ASSET_UPLOAD_DIR`（上传自动变成显式 409），或在 `_missing_code` 里退回单一 `MISSING_DATA`。
+
+
+## D67：标签包由依据证据生成，不靠布尔值假装完成；「要求未收录」判为未知（2026-11-07，V9-1-M2-E）
+
+**背景**：`LABEL_PREPARATION` 的完成条件是 `verified_artifact: LABEL_PACKAGE`，但**全仓没有任何生产者**——`launch_facts` 只给 `ACTIVATION`，`GENERATE_LABEL`/`REGENERATE_LABEL` 又整整齐齐挂在 `connected=False`（`DISABLED_LABEL`"标签服务未接入"）上。结果这个步骤只有两种命运：永远「未完成」，或者被人塞一个假布尔值让它「看起来完成了」。同一批还发现三处错位：
+
+1. **指路指错**：`BLOCK_CODES["LABEL"]` 走 `COMPLIANCE_BLOCK` → `/app/compliance`，而那一页的「合规检测」卡片自称 `API_GAP · 后端未接入`、实际是 listing 评审队列，与目的国准入证据毫无关系；
+2. **依据源就在仓里却没人用**：`compliance_registry.check_evidence()` 已有 HTTP 入口（`GET/POST /api/cross-border/products/{id}/compliance`），前端从未调用；
+3. **沉默的绿灯**：`check_evidence` 对「该国一条要求都没收录」返回 `required=[]` 且 `passed=True`。照抄这个 True，任何没做过目的国调研的市场都会拿到一张「无需认证」的标签——误报绿灯比漏报更危险。
+
+**决策**：
+1. **标签包是真实落库的工件**。新增表 `label_packages`（Revision 33，`UNIQUE(tenant, product, shop, destination_country, version)`）与服务 `services/label_packages.py`：依据解析**一律复用** `compliance_registry.check_evidence`，不另写一份要求表（禁止重复 Service）。
+2. **「没查到要求」≠「没有要求」**。`requirements == []` 时 `covered=False`，判为**依据不足**并阻断，文案显式写「未收录 ≠ 无需认证，请先录入该国/该类目要求」。这是本批唯一一条会让部分市场无法生成标签的判断，且是刻意的。
+3. **认证声明只能来自已核验证据**。`content["marks"]` 每一项都对应一条 `evidence_ref` 非空且未过期的 `product_compliance_evidence`；缺证据就不生成，绝不用「大概是 CE」填充。依据不足 → 409 + **逐条** blocker（缺哪条证据 / 哪条已过期 / 该国未收录），每条带补齐入口，**零写入**（不落表、revision 不变）。
+4. **依据一变，旧包当场失效**。`basis_fingerprint` 覆盖「要求集 + 每条要求的证据引用 + 有效期」；每次判定都用 `at=now` 重新解析（过期要求会从 `satisfied` 挪进 `expired`，指纹自然失配），`verified_artifact.LABEL_PACKAGE` 转 False，步骤从 COMPLETED 退回 BLOCKED。**BLOCKED 是合法生成入口**（`source_states={READY,BLOCKED,COMPLETED}`）——只给 READY 会让用户在阻断态里无路可走，与 `WAITING_EXTERNAL` 那个坑同源。
+5. **只增不改，且只有一个写入口**。没有 update/delete 代码路径；`REGENERATE_LABEL` 必须已有旧版（否则 409 `LABEL_PACKAGE_ABSENT`，避免「重新生成」凭空造第一版）。只读端点 `GET /api/cross-border/products/{id}/labels` 只回答「印出去过哪几版、依据还能不能对上」，**不接受 POST**。
+6. **补齐入口指向能补的地方**。新增阻断码 `LABEL_BASIS_MISSING` → 商品详情页新加的「目的国合规要求与证据」区块（读写既有 compliance 端点），`connected=True`。页面上必须有真能补的地方，否则这个入口又是一次白跑。
+
+**边界（不得当成已接入）**：
+- 只**本地生成**标签字段：不打印、不上传、不向平台发送，回执 `note` 明写这一句。
+- `open_items` 记录本系统**没有数据源**的字段（进口商 / 责任人或授权代表 / 批号 / 生产日期 / 原产国未登记）。它们不阻断生成（属店铺授权材料，不是合规证据），但必须同时出现在回执与界面，不得当成已齐备。
+- **未收录要求的市场（默认档案下的 SG 等）无法生成标签**，直到租户录入要求行（`POST /api/cross-border/compliance-rules`）或合规员书面确认后补录。这是数据缺口，不是「无需认证」。
+- 认证真实性由 `evidence_ref` 本身负责：本系统只保证「有证据且未过期」，不做发证机构验真（B03–B09）。
+
+**判别力**：`tests/test_launch_label_packages.py` 10 条（依据缺失 409 且零写入 / **未收录国家必须阻断** / 过期后已完成的步骤重阻断 / 证据被替换即失配 / 无旧版不许重生成 / 正例落库+认证声明挂证据 / 版本只增不改 / 只读角色 403 / 服务层缺项逐条 / 租户补录要求行后从「未收录」变为「有依据」）；`tests/test_label_packages_migration.py` 覆盖可逆性与唯一约束。把 `requirements == []` 也算作 `complete` 后，`test_uncovered_country_is_blocked_not_silently_passed` 立刻红。`test_launch_gate_repair` 同时锁住「LABEL 缺口不再指 `/app/compliance`」与「素材入口不抢走标签步骤」。
+
+**兼容与回退**：纯新增表 + 新增阻断码 + 两个动作接通；存量库升级后 `LABEL_PACKAGE` 为 `False`（与升级前的 UNKNOWN 表现一致：步骤仍未完成），既有流程行为不变。回退=把两动作 `connected` 置回 False 并恢复 `DISABLED_LABEL`、`BLOCK_CODES["LABEL"]` 回 `COMPLIANCE_BLOCK`；表可 `alembic downgrade`（有标签包数据时**拒绝**有损降级，那是合规审计凭据）。
