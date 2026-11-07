@@ -3487,3 +3487,23 @@ PostgreSQL 与独立任务队列未动。
 4. **外键环显式断环**：`_CYCLE_BREAKS` 登记无法拓扑排序的互引边，清理前先置空引用列（`products.selected_offer_id`），静态顺序守护对这些边豁免；新增同类互引必须同时登记并补置空语句，否则清理会在真实数据上 500。
 
 **兼容与回退**：仅新增只读端点与清理前置语句，不改既有表结构与写路径；回退只涉及本批提交，不改迁移。外部发布/物流/结算能力仍单列 BLOCKED，不因内部端点补齐而宣布实网验证通过。
+
+## D65：清理演示数据须连审批记录一起清（`ai_actions` 进 `_PURGE_PLAN`）（2026-11-07，FIX-PURGE）
+
+**背景**：全量回归长期有 1 条红——`test_listing_actions` 的「发布步必须暂停等审批」用例偶发把 run 判成 `failed`，报 409「已发布内容或目标店铺发生变化」。追到底是一条真实缺陷链：
+
+1. `POST /api/shops/purge_demo_data` 按 `_PURGE_PLAN` 清空演示租户的 products / listings；
+2. `ai_actions` 不在计划里，审批记录残留并继续指向已删除的 listing；
+3. SQLite 的 `INTEGER PRIMARY KEY` 在整表删除后会**复用行号**，新建 listing 拿到同一个 id；
+4. 发布意图守卫 `_existing_intent` 命中「同 target 的 SUCCESS 提案 + 不同 fingerprint」→ 按设计拒绝 409。
+
+守卫判定没错，错的是「两个不同实体撞了同一个 id」。生产里「清完演示数据再上新」同样会踩，只是概率低。
+
+**决策**：
+1. **`ai_actions` 进 `_PURGE_PLAN`**（放在最前，它只有 `tenants` 一条外键，不受拓扑序约束）。语义是「审批记录随被审批对象一起清」——清理已经把被审批的 listing / product / 订单删了，留下指向空对象的审批行没有任何审计价值，只会制造 id 碰撞。
+2. **审批证据的保护边界不变**：存在任一 `PLATFORM_LAUNCH` 运行（`flow_kind=PLATFORM_LAUNCH`）时 `purge_tenant_demo_data` 直接抛 `DemoPurgeBlocked`，上线流程的审批链不会被这个入口静默清掉；`workflow_events` / `workflow_steps` 本来就在清理范围内，口径一致。
+3. **不改意图守卫的判定**。它是防「已发布内容被改后二次发布」的正确护栏，为了绕开 id 复用而放宽它会引入真正的发布风险；断链点选在清理侧。若将来还需要防「非清理路径下的行号复用」，再单独评估给 listings 换 `AUTOINCREMENT`。
+
+**判别力**：`test_purge_clears_ai_actions_so_reused_row_ids_do_not_block_publish` 覆盖了「清理 → 计数里 `ai_actions` 真被删 → 重建同构对象 → 发布仍能进 PENDING_APPROVAL」；把 `_PURGE_PLAN` 里那行删掉，该用例立刻红（实测报 `ai_actions` 未删）。
+
+**兼容与回退**：只加一次 DELETE，不改表结构、不改接口签名；`deleted` 计数多一个 `ai_actions` 键（前端未按固定键集渲染）。回退=从计划里去掉该行，无需数据修复。

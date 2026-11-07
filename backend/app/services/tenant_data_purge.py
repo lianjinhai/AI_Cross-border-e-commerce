@@ -12,7 +12,10 @@
 设计原则：
     1. 子表在前、父表在后（严格按外键拓扑序，见 _PURGE_PLAN 注释）；
     2. 只删演示业务数据，不碰账号、设置、店铺授权配置与知识库；
-    3. 全程单事务提交，失败整体回滚，不留下半清空状态。
+    3. 全程单事务提交，失败整体回滚，不留下半清空状态；
+    4. **审批记录（`ai_actions`）随被审批对象一起清**（D65）：它对 listings/products
+       只有松散引用（无外键），单独留下会在行号被复用后让新对象撞上旧提案。
+       上线流程的审批证据另有保护——存在 PLATFORM_LAUNCH 运行时本函数直接拒绝清理。
 
 复用方：routers/shops.py 的 POST /api/shops/purge_demo_data。
 """
@@ -21,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from ..models import (
     AdCampaign,
+    AiAction,
     ComplianceReport,
     Conversation,
     ForecastOutcome,
@@ -67,6 +71,12 @@ _CYCLE_BREAKS = frozenset({
 
 # 删除顺序 = 外键拓扑序（被引用者必须后删）。每一项都含 tenant_id，按租户隔离。
 _PURGE_PLAN = (
+    # 审批记录排在业务对象之前：它的 target_id 是指向 listings/products 的**松散引用**
+    # （没有外键），若跟着对象一起留下，SQLite 删表后会**复用行号**，新建对象拿到同一个 id
+    # 时发布意图守卫 `_existing_intent` 会把「另一个实体」判成「已发布内容变了」→ 409。
+    # 见 D65。它只有 tenants 一条外键，位置不受拓扑约束，这里放最前面一是语义（连同被
+    # 审批的对象一起清），二是让计数先于任何业务表。
+    (AiAction, "ai_actions"),
     (WorkflowEvent, "workflow_events"),                     # → workflow_steps / workflow_runs
     (WorkflowStep, "workflow_steps"),                       # → workflow_runs
     (PriceRound, "price_rounds"),                           # → workflow_runs / products（M2-A 核价轮次）

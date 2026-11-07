@@ -253,3 +253,88 @@ def test_purge_succeeds_when_product_has_selected_offer(client):
     with engine.connect() as conn:
         violations = conn.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
     assert violations == [], f"清理后仍存在外键违规: {violations}"
+
+
+def _fresh_rule_pack(client):
+    """发布前必须有 30 天内的平台规则包，否则发布被硬门禁拦（与业务无关）。
+
+    本模块按规范 §8 T-2 不 import 其它测试模块，故就地声明；逻辑与
+    `test_listing_actions` 里的同名夹具一致：删掉同平台旧包，写一份今天的。
+    """
+    from datetime import datetime
+
+    from app.db import SessionLocal
+    from app.models import PlatformRulePack
+    from app.services.platform_rules import DEFAULT_RULE_PACKS
+
+    base = DEFAULT_RULE_PACKS["shopee"]
+    with SessionLocal() as db:
+        db.query(PlatformRulePack).filter(PlatformRulePack.platform == "shopee").delete()
+        db.add(PlatformRulePack(
+            tenant_id=None, platform="shopee", version=datetime.utcnow().strftime("%Y-%m-%d"),
+            rules=base["rules"], source_url=base["source_url"],
+            updated_at=datetime.utcnow()))
+        db.commit()
+
+
+def test_purge_clears_ai_actions_so_reused_row_ids_do_not_block_publish(client):
+    """回归（D65）：清理演示数据必须连审批记录一起清（`ai_actions`）。
+
+    真实缺陷链：清理只删 products / listings，`ai_actions` 残留并继续指向已删除的
+    listing；SQLite 的 `INTEGER PRIMARY KEY` 在整表删除后会**复用行号**，于是新建的
+    listing 拿到同一个 id；发布意图守卫 `_existing_intent` 看到「同 target 的 SUCCESS
+    提案 + 不同 fingerprint」，按设计拒绝 409「已发布内容或目标店铺发生变化」——
+    把一个全新对象误判成「已发布过又改内容」。
+
+    断链点选在清理侧（审批记录随对象一起清），因此断言两件事：
+    ① 清理返回的计数里 `ai_actions` 真的被删了；② 清理后新建对象能正常进入待审批。
+    """
+    from app.db import SessionLocal
+    from app.models import AiAction
+
+    h = _isolated_admin_headers(client)
+    _fresh_rule_pack(client)
+
+    product = client.post("/api/products", headers=h, json={
+        "title": "清理后发布回归商品", "category": "家居", "attrs": {},
+        "images": ["https://example.com/purge-publish.jpg"]}).json()
+    draft = client.post("/api/listings/generate", headers=h,
+                        json={"product_id": product["id"], "platform": "shopee"})
+    assert draft.status_code == 200, draft.text
+    first_listing = draft.json()["id"]
+
+    pending = client.post(f"/api/listings/{first_listing}/publish", headers=h)
+    assert pending.status_code == 200, pending.text
+    action_id = pending.json()["action_id"]
+    approved = client.post(f"/api/actions/{action_id}/approve", headers=h,
+                           json={"note": "清理回归：批准发布"})
+    assert approved.status_code == 200, approved.text
+    with SessionLocal() as db:
+        tenant_id = db.get(AiAction, action_id).tenant_id
+    executed = client.post(f"/api/actions/{action_id}/execute", headers=h)
+    assert executed.status_code == 200, executed.text
+    assert executed.json()["status"] == "SUCCESS"
+    with SessionLocal() as db:
+        assert db.query(AiAction).filter(AiAction.tenant_id == tenant_id).count() > 0
+
+    purged = client.post("/api/shops/purge_demo_data", headers=h)
+    assert purged.status_code == 200, purged.text
+    deleted = purged.json()["deleted"]
+    assert deleted.get("ai_actions", 0) > 0, (
+        "清理必须连审批记录一起删，否则行号复用后会撞上旧 SUCCESS 提案：%s" % deleted)
+    with SessionLocal() as db:
+        assert db.query(AiAction).filter(AiAction.tenant_id == tenant_id).count() == 0
+
+    # 清理后重建同构对象：行号极可能被复用，此时发布必须仍能正常发起
+    again = client.post("/api/products", headers=h, json={
+        "title": "清理后重建商品", "category": "家居", "attrs": {},
+        "images": ["https://example.com/purge-publish-2.jpg"]}).json()
+    rebuilt = client.post("/api/listings/generate", headers=h,
+                          json={"product_id": again["id"], "platform": "shopee"})
+    assert rebuilt.status_code == 200, rebuilt.text
+    second_listing = rebuilt.json()["id"]
+    republish = client.post(f"/api/listings/{second_listing}/publish", headers=h)
+    assert republish.status_code == 200, (
+        "清理后新对象被旧审批记录挡住（旧 listing=%s，新 listing=%s）：%s"
+        % (first_listing, second_listing, republish.text))
+    assert republish.json()["status"] == "PENDING_APPROVAL", republish.text
