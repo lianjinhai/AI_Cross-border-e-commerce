@@ -1,0 +1,169 @@
+P0-4 真机运行日志
+==================
+环境：Windows / Git Bash / 系统 Python 3.11
+基线：main @ c494a2d（P0-3 收口后）
+所有真机操作均在**隔离副本库**上完成；业务主库 erp.db 只被只读读取。
+
+主库指纹（贯穿全程，未变）：
+  sha256 = d79bd66967789ddef0a5d326446ef498045d62dc527726ec56abfacd4e29be3c
+  rows   = 7517
+
+------------------------------------------------------------
+1. 单元测试 / 门禁
+------------------------------------------------------------
+$ cd backend && pytest tests/test_launch_gate_repair.py -q
+  17 passed
+    —— 其中三道门禁正反例 6 条：
+       test_missing_material_gate_blocks_and_points_to_the_product       (正)
+       test_missing_material_gate_passes_when_materials_are_complete     (反)
+       test_low_margin_gate_blocks_with_numeric_reason_and_pricing_entry (正)
+       test_low_margin_gate_passes_above_floor                           (反)
+       test_label_evidence_gate_blocks_and_points_to_compliance          (正)
+       test_label_evidence_gate_passes_when_label_verified               (反)
+    —— 另 11 条补齐入口契约参数化用例（含未知码兜底）
+
+$ cd backend && pytest -q -k launch
+  171 passed, 870 deselected
+
+$ cd backend && ruff check app/workflows/launch_repair.py app/workflows/launch_rules.py \
+      app/workflows/launch_handlers.py app/workflows/launch_actions.py \
+      app/workflows/launch_submit.py app/workflows/launch_facts.py \
+      tests/test_launch_gate_repair.py scripts/launch_e2e.py
+  All checks passed!
+
+$ cd frontend-v9 && npx vitest run tests/launch-repair.test.js
+  12 passed
+
+------------------------------------------------------------
+2. 双 Profile 真机（scripts/launch_e2e.py）
+------------------------------------------------------------
+脚本本轮新增 --profile {probe,simple,complex}；probe 为原 ACTION_PROBE 行为，默认不变。
+
+$ cd backend && python scripts/launch_e2e.py --port 8136 --profile simple
+  ...
+  PASS  5. GET /launch/{id}/steps：profile={'key': 'SIMPLE_CONTRACT', ...}
+       期望 profile_key=SIMPLE_CONTRACT
+  PASS  6. POST actions/COMPLETE_DATA：revision=2→3 step=COMPLETED
+  PASS  6b. 阻断项三要素齐全：阻断数=0 缺要素=0
+  PASS  9. workflow_runs.revision == HTTP 终值：db=3 http=3
+  PASS  10. 目标步骤 COMPLETED：INFORMATION=COMPLETED
+  === 7. 隔离性校验（主库必须未被写入）===
+    before sha256=d79bd66967789ddef0a5d326446ef498 rows=7517
+    after  sha256=d79bd66967789ddef0a5d326446ef498 rows=7517
+    PASS  业务主库未被写入（隔离性成立）
+  ==== 汇总 ====
+  共 15 步：PASS 15 / FAIL 0
+  ==== 结果：全部通过（exit=0）====
+
+$ cd backend && python scripts/launch_e2e.py --port 8137 --profile complex
+  ...
+  PASS  5. GET /launch/{id}/steps：profile={'key': 'COMPLEX_CONTRACT', ...}
+  PASS  10. 目标步骤 COMPLETED：PRODUCT_INFORMATION=COMPLETED
+    before sha256=d79bd66967789ddef0a5d326446ef498 rows=7517
+    after  sha256=d79bd66967789ddef0a5d326446ef498 rows=7517
+  PASS  业务主库未被写入（隔离性成立）
+  共 15 步：PASS 15 / FAIL 0（exit=0）
+
+$ cd backend && python scripts/launch_e2e.py --port 8135        # probe（回归，确认默认行为未变）
+  共 15 步：PASS 15 / FAIL 0（exit=0）
+
+------------------------------------------------------------
+3. 界面佐证环境（隔离副本库 + 真 uvicorn）
+------------------------------------------------------------
+$ cp backend/erp.db{,-wal,-shm} -> %TEMP%/p04_shot/     # 冷备，主库只读
+$ ERP_DB_URL=sqlite:///%TEMP%/p04_shot/erp.db python -m alembic upgrade head
+$ P04_DB=%TEMP%/p04_shot/erp.db python %TEMP%/p04_seed.py
+  BLOCKED_PRODUCT 63 / LOWPRICE_PRODUCT 64 / SHOP 13
+  —— 种子只备数据，门禁由服务端规则算出，阻断不是塞进去的
+$ ERP_DB_URL=... ERP_FRONTEND_DIST=<repo>/frontend-v9/dist \
+  python -m uvicorn app.main:app --port 8014
+  GET /api/build-info -> frontend_dir=frontend-v9  dist_exists=true
+
+------------------------------------------------------------
+4. 门禁一：缺材料（有图无权利记录）
+------------------------------------------------------------
+POST /api/launch  {product_id:63, shop_id:13, environment:"CONTRACT_TEST"}  -> run 36
+POST /api/launch/36/actions/COMPLETE_DATA  step_code=INFO
+-> HTTP 409
+
+{
+  "detail": {
+    "code": "ACTION_PRECONDITION_FAILED",
+    "message": "完成条件尚未被服务端事实满足",
+    "blockers": [
+      {
+        "code": "MISSING_DATA",
+        "message": "图片缺少唯一的当前权利记录：https://example.com/p04-blocked.jpg",
+        "step_code": "INFO",
+        "owner_actor": "USER",
+        "evidence_refs": [],
+        "repair_action": {
+          "label": "补充商品资料",
+          "kind": "ACTION",
+          "action": "COMPLETE_DATA",
+          "path": "/app/products/63",
+          "connected": true,
+          "reason": ""
+        }
+      }
+    ]
+  }
+}
+
+三要素判定：阻断码 MISSING_DATA / 原因「图片缺少唯一的当前权利记录」/
+补齐动作 ACTION COMPLETE_DATA -> /app/products/63（connected=true，资料步骤可直接补）
+
+------------------------------------------------------------
+5. 门禁二：低价（售价毛利低于 min_margin）
+------------------------------------------------------------
+POST /api/launch  {product_id:64, shop_id:13, ...}  -> run 37
+POST /api/launch/37/actions/COMPLETE_DATA  step_code=INFO  -> HTTP 200（资料齐全，正常完成 1/3）
+GET  /api/launch/37
+-> execution_status = "BLOCKED"，progress = 1/3
+
+"blockers": [
+  {
+    "code": "PRICE_UNACCEPTABLE",
+    "message": "售价毛利 -27.5% 低于最低要求 15.0%，不能进入核价",
+    "step_code": "PRICE_REVIEW",
+    "owner_actor": "PLATFORM",
+    "evidence_refs": [],
+    "repair_action": {
+      "label": "前往定价与利润试算",
+      "kind": "ROUTE",
+      "action": null,
+      "path": "/app/pricing",
+      "connected": false,
+      "reason": "核价领域服务未接入（B03–B09），定价页可试算但不能提交核价轮次"
+    }
+  }
+]
+
+三要素判定：阻断码 PRICE_UNACCEPTABLE / 原因带具体百分比（-27.5% vs 15.0%）/
+补齐动作 ROUTE -> /app/pricing（connected=false，如实标注核价服务未接入）
+
+------------------------------------------------------------
+6. 界面佐证
+------------------------------------------------------------
+agent-browser（1440x900 视口，全页）打开 /app/launch/37：
+
+  === BLOCKER 区 ===
+  阻断与补齐
+  阻断 1 项，其中 1 项当前无法在流程内完成
+  PRICE_UNACCEPTABLE
+  售价毛利 -27.5% 低于最低要求 15.0%，不能进入核价
+  PRICE_REVIEW
+  核价领域服务未接入（B03–B09），定价页可试算但不能提交核价轮次
+  前往定价与利润试算
+  === CONSOLE ===
+  （无报错）
+
+图片：docs/evidence/V9-1-P0/03-blocked-lowprice-1440.png
+阻断面同屏可见：状态汇总「已阻断 完成 1/3」、阻断卡片（码 + 原因 + 补齐按钮 + 未接入说明）、
+时间线「平台核价 已阻断」并带同一原因、可执行动作 REPORT_PRICE 灰显「该能力尚未接入」。
+
+------------------------------------------------------------
+7. 收尾
+------------------------------------------------------------
+主库复核：sha256 = d79bd66967789ddef0a5d326446ef498045d62dc527726ec56abfacd4e29be3c（与开头一致）
+未对主库执行任何写操作；未调用任何真实平台接口。

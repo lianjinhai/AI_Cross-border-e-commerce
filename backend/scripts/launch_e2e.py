@@ -44,6 +44,12 @@ _PLATFORM = "launchprobe"
 _PROFILE_KEY = "ACTION_PROBE"
 _STEP_CODE = "INFO"
 _CREATE_KEY = "launch-e2e-create"
+# 双 Profile 真机（P0-4）：`contract_profiles` 里的简单/复杂样本各跑一遍。
+# 注意 step_code 必须是该 Profile 里第一个可 COMPLETE_DATA 的资料步骤。
+_PROFILE_STEP_CODES = {"probe": _STEP_CODE, "simple": "INFORMATION",
+                       "complex": "PRODUCT_INFORMATION"}
+_PROFILE_KEYS = {"probe": _PROFILE_KEY, "simple": "SIMPLE_CONTRACT", "complex": "COMPLEX_CONTRACT"}
+_CREATE_KEYS = {"probe": _CREATE_KEY, "simple": "launch-e2e-simple", "complex": "launch-e2e-complex"}
 # DTO 契约：响应中绝不出现价格/成本/利润率/备货数量字段（AC-3.2/AC-9，递归断言）。
 _FORBIDDEN_KEYS = frozenset({"price", "cost", "margin", "profit", "stock", "stock_qty",
                              "supply_price", "cost_price", "profit_rate", "cost_snapshot"})
@@ -214,11 +220,12 @@ def _probe_profile(version: int = 1) -> dict:
             "steps": steps}
 
 
-def _seed_copy(env) -> dict:
+def _seed_copy(env, profile_name="probe") -> dict:
     """在启动 uvicorn 之前，用应用内服务把 Launch 前置数据写进隔离副本库。
 
     必须在**首次** import app.* 之前设置 ERP_DB_URL，否则 `app.db` 的引擎会绑定到主库。
-    本函数是脚本内唯一 import app.* 的地方。
+    本函数是脚本内唯一 import app.* 的地方（`contract_profiles` 也在 env 生效后才导入，
+    否则会把 `app.config` 提前求值，隔离基座失效）。
     """
     os.environ.update(env)  # ERP_DB_URL / ERP_JWT_SECRET / ... 生效于 app.config 类体求值之前
     import app.db as app_db
@@ -226,33 +233,54 @@ def _seed_copy(env) -> dict:
     from app.services.workspace_context import resolve_workspace_context
     from app.workflows.profiles import create_profile, publish_profile
 
+    definition = _profile_definition(profile_name)
+    platform = definition["platform"]
+    # Profile 里写 "ANY" 的维度取一个具体值：店铺必须给出明确市场与履约模式才能创建流程。
+    market = "SG" if definition["market"] == "ANY" else definition["market"]
+    fulfillment = ("DROPSHIP" if definition["fulfillment_mode"] == "ANY"
+                   else definition["fulfillment_mode"])
+    business_mode = definition.get("business_mode") or ""
+    business_mode = "" if business_mode == "ANY" else business_mode
+
     with app_db.SessionLocal() as db:
         admin = db.query(User).filter_by(username="admin").one()
         ctx = resolve_workspace_context(db, admin)
         tenant = ctx.legacy_tenant_id
-        product = Product(tenant_id=tenant, sku="launch-e2e", title="Launch E2E product",
-                          category="家居", images=["https://example.com/main.jpg"],
-                          attrs={"destination_country": "SG"})
-        shop = Shop(tenant_id=tenant, platform=_PLATFORM, shop_name="E2E sales",
-                    market="SG", fulfillment_mode="DROPSHIP", role="sales", is_demo=True)
+        product = Product(tenant_id=tenant, sku=f"launch-e2e-{profile_name}",
+                          title="Launch E2E product", category="家居",
+                          images=["https://example.com/main.jpg"],
+                          attrs={"destination_country": market})
+        shop = Shop(tenant_id=tenant, platform=platform, shop_name="E2E sales",
+                    market=market, fulfillment_mode=fulfillment, business_mode=business_mode,
+                    role="sales", is_demo=True)
         db.add_all([product, shop])
         db.flush()
         db.add(ProductAsset(tenant_id=tenant, workspace_id=tenant, product_id=product.id,
                             asset_key="main", version=1, asset_type="MAIN_IMAGE",
                             uri=product.images[0], content_hash="e" * 64, rights_status="OWNED",
                             source="launch e2e seed", rights_evidence_ref="evidence://e2e/source",
-                            market="SG", platform=_PLATFORM, verification_status="MANUAL_REPORTED",
+                            market=market, platform=platform, verification_status="MANUAL_REPORTED",
                             created_by=admin.id))
         db.commit()
-        profile = create_profile(db, ctx, _probe_profile())
+        profile = create_profile(db, ctx, definition)
         publish_profile(db, ctx, profile.id, profile.definition_hash)
         db.commit()
         ids = {"tenant_id": tenant, "product_id": product.id, "shop_id": shop.id,
-               "profile_id": profile.id, "admin_user_id": admin.id}
+               "profile_id": profile.id, "admin_user_id": admin.id,
+               "profile_name": profile_name, "platform": platform, "market": market}
     app_db.engine.dispose()  # 释放副本库连接，避免与随后的 uvicorn 进程争用
-    print("=== 2c. 应用内种子===  产品 id=%s 店铺 id=%s Profile id=%s"
-          % (ids["product_id"], ids["shop_id"], ids["profile_id"]))
+    print("=== 2c. 应用内种子===  产品 id=%s 店铺 id=%s Profile id=%s（%s / %s / %s）"
+          % (ids["product_id"], ids["shop_id"], ids["profile_id"],
+             profile_name, platform, market))
     return ids
+
+
+def _profile_definition(profile_name):
+    """按 `--profile` 取流程定义；契约样本在 env 生效后才导入，避免过早求值 app.config。"""
+    if profile_name == "probe":
+        return _probe_profile()
+    from app.workflows.contract_profiles import complex_contract, simple_contract
+    return {"simple": simple_contract, "complex": complex_contract}[profile_name]()
 
 
 # ---------------------------------------------------------------------------------- HTTP 闭环
@@ -295,8 +323,10 @@ def _find_forbidden(node):
 
 
 def _http_loop(base_url, seed, record):
-    """执行 8 步 Launch HTTP 闭环，返回最终 revision 与 run_id。"""
+    """执行 Launch HTTP 闭环，返回最终 revision 与 run_id。"""
     token = _login(base_url)
+    step_code = _PROFILE_STEP_CODES[seed["profile_name"]]
+    create_key = _CREATE_KEYS[seed["profile_name"]]
 
     status, ctx = _api(base_url, "GET", "/launch/context", token=token)
     perms = set(ctx.get("permissions", []))
@@ -310,7 +340,7 @@ def _http_loop(base_url, seed, record):
 
     body = {"product_id": seed["product_id"], "shop_id": seed["shop_id"],
             "environment": "CONTRACT_TEST"}
-    head = {"Idempotency-Key": _CREATE_KEY}
+    head = {"Idempotency-Key": create_key}
     status, created = _api(base_url, "POST", "/launch", token=token, headers=head, json=body)
     run_id = created.get("id")
     record("2. POST /launch 创建", status == 200 and isinstance(run_id, int)
@@ -344,12 +374,14 @@ def _http_loop(base_url, seed, record):
     step_map = {item["step_code"]: item for item in steps.get("items", [])}
     record("5. GET /launch/{id}/steps", status == 200 and "revision" in steps
            and {"key", "version", "hash"} <= set(profile)
-           and step_map.get(_STEP_CODE, {}).get("available_actions", [{}])[0].get("action")
+           and profile.get("key") == _PROFILE_KEYS[seed["profile_name"]]
+           and step_map.get(step_code, {}).get("available_actions", [{}])[0].get("action")
            == "COMPLETE_DATA",
-           f"status={status} revision={steps.get('revision')} profile={profile}")
+           f"status={status} revision={steps.get('revision')} profile={profile} "
+           f"期望 profile_key={_PROFILE_KEYS[seed['profile_name']]}")
 
     revision = steps.get("revision")
-    action_body = {"step_code": _STEP_CODE, "expected_revision": revision, "payload": {}}
+    action_body = {"step_code": step_code, "expected_revision": revision, "payload": {}}
     status, acted = _api(base_url, "POST", f"/launch/{run_id}/actions/COMPLETE_DATA", token=token,
                          headers={"Idempotency-Key": "launch-e2e-complete"},
                          json=action_body)
@@ -361,6 +393,20 @@ def _http_loop(base_url, seed, record):
     if status != 200:
         raise RuntimeError(f"COMPLETE_DATA 失败：{acted}")
     current_revision = (acted.get("launch") or {}).get("revision", acted.get("revision"))
+
+    # P0-4：阻断不能只给原因。逐项检查「阻断码 + 原因 + 补齐动作」三要素，
+    # 且补齐入口必须指向应用内真实页面（`/app/...`），不允许退回 `repair_action: None`。
+    status, after = _api(base_url, "GET", f"/launch/{run_id}", token=token)
+    blockers = after.get("blockers") or []
+    broken = [b for b in blockers
+              if not isinstance(b, dict) or not b.get("code")
+              or not str(b.get("message", "")).strip()
+              or not isinstance(b.get("repair_action"), dict)
+              or not str((b.get("repair_action") or {}).get("path", "")).startswith("/app")]
+    sample = blockers[0] if blockers else {}
+    record("6b. 阻断项三要素齐全", status == 200 and not broken,
+           f"阻断数={len(blockers)} 缺要素={len(broken)} "
+           f"首项={sample.get('code')}→{(sample.get('repair_action') or {}).get('path')}")
 
     status, synced = _api(base_url, "POST", f"/launch/{run_id}/sync", token=token,
                           json={"mode": "refresh", "expected_revision": current_revision})
@@ -409,6 +455,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Launch 真机闭环端到端验收（不碰业务主库）")
     parser.add_argument("--port", type=int, default=8125)
     parser.add_argument("--keep", action="store_true", help="保留副本库与日志（默认清理）")
+    parser.add_argument("--profile", choices=["probe", "simple", "complex"], default="probe",
+                        help="跑哪条 Profile：probe=ACTION_PROBE（默认）；simple/complex=契约样本")
     args = parser.parse_args(argv)
 
     prod_db = _BACKEND_DIR / "erp.db"
@@ -416,11 +464,11 @@ def main(argv=None) -> int:
         print("[FAIL] 业务主库不存在或端口已被占用")
         return 3
     work = _BACKEND_DIR / "backups" / "launch_e2e"
+    copy_db = work / f"launch-{args.profile}.db"
     if work.exists():
-        for stale in ("launch.db", "uvicorn.out.log", "uvicorn.err.log"):
+        for stale in (copy_db.name, "uvicorn.out.log", "uvicorn.err.log"):
             _best_effort_unlink(work / stale)
     work.mkdir(parents=True, exist_ok=True)
-    copy_db = work / "launch.db"
     env = {
         **os.environ,
         "ERP_DB_URL": "sqlite:///" + copy_db.as_posix(),
@@ -442,7 +490,7 @@ def main(argv=None) -> int:
     try:
         _prepare_copy(args, prod_db, copy_db)
         _migrate_copy(copy_db, env)
-        run_ids = _seed_copy(env)
+        run_ids = _seed_copy(env, args.profile)
 
         print("=== 3. 启动真实服务（uvicorn + 副本库）===")
         with open(out_log, "w", encoding="utf-8") as fo, open(err_log, "w", encoding="utf-8") as fe:
@@ -468,12 +516,13 @@ def main(argv=None) -> int:
             run_ids["revision"] = final_revision
 
             print("=== 5. 数据库断言（副本库只读）===")
-            facts = _db_assert(copy_db=copy_db, run_id=run_id, step_code=_STEP_CODE,
+            step_code = _PROFILE_STEP_CODES[run_ids["profile_name"]]
+            facts = _db_assert(copy_db=copy_db, run_id=run_id, step_code=step_code,
                                expected_revision=final_revision)
             db_ok = all((facts["revision_ok"], facts["step_ok"], facts["evidence_ok"], facts["action_event_ok"]))
             record("9. workflow_runs.revision == HTTP 终值",
                    facts["revision_ok"], f"db={facts['revision']} http={facts['expected_revision']}")
-            record("10. 目标步骤 COMPLETED", facts["step_ok"], f"{_STEP_CODE}={facts['step_status']}")
+            record("10. 目标步骤 COMPLETED", facts["step_ok"], f"{step_code}={facts['step_status']}")
             record("11. 步骤 result 含完成证据", facts["evidence_ok"], "completed_by/at/facts_digest")
             record("12. 存在 LaunchActionExecuted 事件", facts["action_event_ok"],
                    f"事件数={facts['event_count']}")
@@ -512,7 +561,7 @@ def main(argv=None) -> int:
     if args.keep:
         print(f"\n副本库与日志保留在：{work}")
     else:
-        for stale in ("launch.db", "uvicorn.out.log", "uvicorn.err.log"):
+        for stale in (copy_db.name, "uvicorn.out.log", "uvicorn.err.log"):
             _best_effort_unlink(work / stale)
 
     print(f"\n==== 结果：{'全部通过' if exit_code == 0 else '存在失败'}（exit={exit_code}）====")
