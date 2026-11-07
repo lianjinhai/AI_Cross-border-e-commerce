@@ -111,14 +111,19 @@ def test_dependency_unsatisfied_never_waits():
 
 
 def test_other_external_wait_types_keep_ready():
-    """未接通的 EXTERNAL_WAIT 类型（PRICE_REVIEW）保持 READY + 禁用，不伪装等待。"""
+    """PRICE_REVIEW 不进 WAITING_EXTERNAL：本系统没有平台核价往返，不伪装「在等平台」。
+
+    M2-A 起 REPORT_PRICE 已接通（本地报价轮次），但步骤语义仍不变——它是 READY 可执行，
+    而不是「已向平台发出、等平台回价」的 WAITING_EXTERNAL。
+    """
     profile = complex_contract()
     facts, checks = _facts("SUBMITTED")
     states = _states(profile, PRODUCT_INFORMATION="COMPLETED", PLATFORM_ATTRIBUTES="COMPLETED",
                      PRODUCT_CREATED="COMPLETED")
     plan = evaluate_readiness(profile, states, facts, checks)
     assert plan["steps"]["PRICE_REVIEW"]["status"] == "READY"
-    assert BUSINESS_ACTION_META["REPORT_PRICE"].connected is False
+    assert BUSINESS_ACTION_META["REPORT_PRICE"].connected is True
+    assert BUSINESS_ACTION_META["REPORT_PRICE"].source_states == frozenset({"READY"})
 
 
 # ------------------------------------------------------------------ 动作可从等待态核验

@@ -120,9 +120,10 @@ def test_low_margin_gate_blocks_with_numeric_reason_and_pricing_entry():
     _assert_three_parts(blocker, "PRICE_UNACCEPTABLE")
     assert "8.0%" in blocker["message"] and "15.0%" in blocker["message"]
     assert blocker["repair_action"]["path"] == "/app/pricing"
-    # 核价领域服务未接入：入口可看但必须说明不能在此完成。
-    assert blocker["repair_action"]["connected"] is False
-    assert "未接入" in blocker["repair_action"]["reason"]
+    # M2-A 起核价轮次已接通：定价页能算出「多少钱才过门槛」，入口是真可用的，
+    # 因此 connected=True 且不再需要「未接入」免责说明。
+    assert blocker["repair_action"]["connected"] is True
+    assert blocker["repair_action"]["reason"] == ""
 
 
 def test_low_margin_gate_passes_above_floor():

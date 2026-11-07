@@ -159,7 +159,10 @@ def test_workflow_pauses_before_publish_and_resumes_only_after_execution(
     assert started.status_code == 200, started.text
     run_id = started.json()["id"]
     detail = client.get(f"/api/workflows/runs/{run_id}", headers=auth_headers).json()
-    assert detail["status"] == "blocked" and detail["steps"][2]["status"] == "blocked"
+    assert detail["status"] == "blocked" and detail["steps"][2]["status"] == "blocked", (
+        "工作流应在发布步暂停等待审批；实际 status=%s，各步=%s"
+        % (detail["status"],
+           [(s["status"], (s.get("error") or "")[:200]) for s in detail["steps"]]))
     assert detail["steps"][3]["status"] == "skipped"
     pending = detail["steps"][2]["output"]["pending"][0]
     action_id, lid = pending["action_id"], pending["id"]

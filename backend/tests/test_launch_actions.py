@@ -228,8 +228,9 @@ def test_unknown_and_unconnected_actions_rejected(env):
                               {"step_code": "INFORMATION", "expected_revision": 1, "payload": {}}, "k1")
     assert unknown.value.code == "ACTION_NOT_ALLOWED"
     # 未接通领域动作（B03-B09）即使带合法步骤也一律 409 并给出禁用原因。
+    # M2-A 起 REPORT_PRICE/ACCEPT_PRICE/COUNTER_PRICE 已接通，故改用仍未接通的备货动作作样本。
     with pytest.raises(LaunchError) as disabled:
-        execute_launch_action(db, contexts["admin"], run.id, "REPORT_PRICE",
+        execute_launch_action(db, contexts["admin"], run.id, "REQUEST_STOCK",
                               {"step_code": "INFORMATION", "expected_revision": 1, "payload": {}}, "k2")
     assert disabled.value.code == "ACTION_NOT_ALLOWED" and "未接入" in str(disabled.value)
     assert db.query(WorkflowEvent).filter_by(run_id=run.id).count() == 1

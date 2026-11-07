@@ -116,7 +116,10 @@ def test_migration_table_list_matches_model_metadata(client):
                  # business_profiles 由 Revision 29（D63 经营画像）新建，同理不回改
                  # Revision 16 清单；其 tenant_id → tenants.id 由元数据级契约
                  # test_all_tenant_id_columns_have_foreign_key 与 test_business_profile 共同核对。
-                 "business_profiles"}
+                 "business_profiles",
+                 # price_rounds 由 Revision 32（M2-A 核价轮次）新建，同理不回改 Revision 16
+                 # 清单；其 tenant_id → tenants.id 由元数据级契约与 test_launch_price_rounds 核对。
+                 "price_rounds"}
 
     assert listed == expected, (
         "迁移清单与模型层不一致——漏补：%s；多补：%s"

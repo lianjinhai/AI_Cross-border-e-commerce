@@ -12,7 +12,7 @@ from datetime import datetime
 
 from app.auth import hash_password
 from app.db import SessionLocal
-from app.models import Product, SupplierOffer, Tenant, User
+from app.models import SupplierOffer, Tenant, User
 from app.services.costing import best_purchase
 
 
@@ -240,21 +240,27 @@ def test_stale_selection_is_flagged_not_silent(client, auth_headers):
     assert ov0["supply"]["cost_offer_id"] == stale
 
     # 直库把选定指向不存在的报价 id：本库 FK 强制会拦，故临时关闭 PRAGMA 模拟
-    # 「FK 未开启的直库损坏环境」（防御性诚实信号仍须存在）
-    from sqlalchemy import text
+    # 「FK 未开启的直库损坏环境」（防御性诚实信号仍须存在）。
+    #
+    # **必须用一次性引擎写，不能借 SessionLocal()**：`PRAGMA foreign_keys` 是
+    # **连接级**状态，借来的连接归还连接池后仍带着 OFF，后面任何用例只要复用
+    # 到它，外键就静默失效（实测 test_tenant_id_foreign_keys 的「必须抛
+    # IntegrityError」变成 DID NOT RAISE，单跑绿、全量红；恢复语句也不可靠，
+    # 因为 PRAGMA 在事务中会被 SQLite 忽略）。一次性引擎用完 dispose，
+    # 共享池里不会留下带 OFF 的连接。
+    from sqlalchemy import create_engine, text
 
-    db = SessionLocal()
+    from app.db import engine as app_engine
+
+    corrupt = create_engine(str(app_engine.url))
     try:
-        db.execute(text("PRAGMA foreign_keys=OFF"))
-        p = db.get(Product, pid)
-        p.selected_offer_id = 99999999
-        db.commit()
+        with corrupt.connect() as conn:
+            conn.execute(text("PRAGMA foreign_keys=OFF"))
+            conn.execute(text("UPDATE products SET selected_offer_id = 99999999 "
+                              "WHERE id = :pid"), {"pid": pid})
+            conn.commit()
     finally:
-        # PRAGMA 是**连接级**状态：连接回池后会被后续用例复用。这里不恢复，
-        # test_tenant_id_foreign_keys 的「必须抛 IntegrityError」会静默失效
-        # （2026-10-20 全量跑实测：单跑绿、全量红）。
-        db.execute(text("PRAGMA foreign_keys=ON"))
-        db.close()
+        corrupt.dispose()
 
     ov = client.get(f"/api/products/{pid}/overview", headers=auth_headers)
     assert ov.status_code == 200, ov.text
@@ -262,6 +268,14 @@ def test_stale_selection_is_flagged_not_silent(client, auth_headers):
     assert supply["selected_offer_missing"] is True, supply
     assert supply["cost_offer_id"] == keep, supply
     assert supply["selected_offer_price_cny"] is None, supply
+
+    # 收尾：本用例故意写过一条悬空引用（PRAGMA 关闭下落的库）。测试库是全量共享的，
+    # 留着它会让后续任何做全库 `PRAGMA foreign_key_check` 的用例（如
+    # test_shop_archive_and_purge 的清理后完整性断言）看到孤儿行，误判成
+    # 「清理逻辑漏删」——症状是单跑绿、全量红。这里把选定重置为合法报价，恢复不变量。
+    fixed = client.put(f"/api/products/{pid}/selected-offer", headers=auth_headers,
+                       json={"offer_id": stale})
+    assert fixed.status_code == 200, fixed.text
 
 
 def test_pricing_calc_exposes_offer_id(client, auth_headers):

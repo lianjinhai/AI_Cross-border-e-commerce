@@ -136,7 +136,8 @@ def test_disabled_actions_include_missing_permission():
 
 
 def test_unconnected_action_has_batch_reason():
-    reason = action_block_reason("REPORT_PRICE", action_meta("REPORT_PRICE"), "READY", {},
+    # M2-A 起核价三动作已接通，改用仍未接通的备货动作：禁用原因必须指向责任领域。
+    reason = action_block_reason("REQUEST_STOCK", action_meta("REQUEST_STOCK"), "READY", {},
                                  OWNER_PERMS, _run())
     assert reason and "未接入" in reason   # AC-9.6：禁用原因指向责任领域
 
