@@ -576,6 +576,59 @@ class PriceRound(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class LabelPackage(Base):
+    """标签包（M2-E）：按「商品 × 店铺 × 目的国」逐版生成，只增不改。
+
+    为什么必须有这张表：``LABEL_PREPARATION`` 的完成条件是
+    ``verified_artifact: LABEL_PACKAGE``，但全仓此前**没有任何生产者**——条件永远为
+    UNKNOWN，步骤永远只能「未完成」，而动作 ``GENERATE_LABEL`` 又是 ``connected=False``。
+    结果是：要么伪造一个布尔值让它看起来完成，要么永远卡住。两条路都不能走。
+
+    三条不可让步的口径：
+
+    1. **标签上的认证声明只能来自已核验证据**。``content["marks"]`` 的每一项都对应
+       ``product_compliance_evidence`` 里一条 ``evidence_ref`` 非空且未过期的记录；
+       缺证据就不生成，绝不用「大概是 CE」之类的推测填充。
+    2. **依据变了，旧包立刻失效**。``basis_fingerprint`` 是「这一版依据的指纹」：
+       要求集、每条要求的证据引用、有效期任一变化即失配，``verified_artifact`` 转
+       False，标签步骤重新阻断。不靠人去记「上次是什么时候生成的」。
+    3. **没有 update / delete 代码路径**。重生成 = 追加新 ``version``，旧版本永久保留，
+       这样才能回答「当时印出去的那一版，依据是什么」。
+
+    边界：``open_items`` 记录本系统**没有数据源**的字段（如进口商/欧盟责任人信息）。
+    它们不阻断生成（那些信息属于店铺授权材料，不是合规证据），但会同时写进
+    ``content`` 与回执，前端必须显示——不把「缺进口商信息」悄悄当成已齐备。
+    """
+    __tablename__ = "label_packages"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "product_id", "shop_id", "destination_country", "version",
+                         name="uq_label_packages_tenant_product_shop_country_version"),
+        Index("ix_label_packages_product_created", "tenant_id", "product_id", "id"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", name="fk_label_packages_tenant_id_tenants"), index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    # 标签按店铺隔离：不同店铺的市场/平台不同，标签不能互相顶替。
+    shop_id: Mapped[int] = mapped_column(
+        ForeignKey("shops.id", name="fk_label_packages_shop_id_shops"), index=True)
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("workflow_runs.id", name="fk_label_packages_run_id_workflow_runs"),
+        nullable=True, index=True)
+    step_code: Mapped[str] = mapped_column(String(48), default="")
+    # 归一化后的业务判定单元（欧盟成员国统一落 EU），与合规证据同一口径。
+    destination_country: Mapped[str] = mapped_column(String(8), default="", index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    action: Mapped[str] = mapped_column(String(16), default="GENERATE")  # GENERATE/REGENERATE
+    content: Mapped[dict] = mapped_column(JSON, default=dict)           # 标签字段（不含虚构值）
+    content_digest: Mapped[str] = mapped_column(String(64), default="")
+    basis: Mapped[dict] = mapped_column(JSON, default=dict)             # 依据快照（要求 + 证据）
+    basis_fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    open_items: Mapped[list] = mapped_column(JSON, default=list)        # 无数据源、需人工补全
+    created_by: Mapped[int] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class AdCampaign(Base):
     __tablename__ = "ad_campaigns"
     id: Mapped[int] = mapped_column(primary_key=True)

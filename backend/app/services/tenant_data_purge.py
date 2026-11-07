@@ -31,6 +31,7 @@ from ..models import (
     ForecastSnapshot,
     InventorySnapshot,
     KnowledgeCandidate,
+    LabelPackage,
     Listing,
     ListingReviewDecision,
     Message,
@@ -80,6 +81,7 @@ _PURGE_PLAN = (
     (WorkflowEvent, "workflow_events"),                     # → workflow_steps / workflow_runs
     (WorkflowStep, "workflow_steps"),                       # → workflow_runs
     (PriceRound, "price_rounds"),                           # → workflow_runs / products（M2-A 核价轮次）
+    (LabelPackage, "label_packages"),                       # → workflow_runs / products / shops（M2-E 标签包）
     (WorkflowRun, "workflow_runs"),                         # → listings / products
     (ProductAsset, "product_assets"),                       # → products；有素材时门禁拒绝清理
     (Message, "messages"),                                   # → conversations
