@@ -22,3 +22,14 @@ export async function calcProfit(data = {}) {
 export async function suggestPrice(productId) {
   return (await api.post('/pricing/suggest', { product_id: productId })).data
 }
+
+/**
+ * 核价报价轮次（M2-A）：GET /pricing/rounds {product_id, limit} → {items[], total}（新→旧）。
+ * 只读：写入入口在 Launch 动作（REPORT_PRICE / ACCEPT_PRICE / COUNTER_PRICE），
+ * 定价页不允许绕过流程写轮次，否则「谁批的、依据哪份成本」就断了。
+ */
+export async function fetchPriceRounds({ productId, limit } = {}) {
+  return (await api.get('/pricing/rounds', {
+    params: { product_id: productId, limit },
+  })).data
+}

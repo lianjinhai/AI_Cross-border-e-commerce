@@ -8,6 +8,15 @@
       title="高风险动作：请核对影响范围后再提交" />
 
     <el-form label-width="96px" @submit.prevent>
+      <el-form-item v-if="priceRequired" label="申报价" required>
+        <el-input-number v-model="form.price" :min="0.01" :precision="2" :step="1" controls-position="right" />
+      </el-form-item>
+      <el-form-item v-if="priceRequired" label="币种" required>
+        <el-select v-model="form.currency" placeholder="必须选择" style="width: 160px">
+          <el-option v-for="code in CURRENCIES" :key="code" :label="code" :value="code" />
+        </el-select>
+        <span class="hint">金额离开币种就是错数，因此不设默认币种</span>
+      </el-form-item>
       <el-form-item v-if="materialRequired" label="材料引用">
         <el-input v-model="form.material_ref" placeholder="平台后台核验材料链接或编号" />
       </el-form-item>
@@ -31,7 +40,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from '../../shared/ui'
 import {
   actionPayload, errorEnvelope, executeAction, isUncertainError, needsDoubleConfirm, requiresMaterial,
-  requiresNote,
+  requiresNote, requiresPrice,
 } from '../../composables/launchCenter'
 
 const props = defineProps({
@@ -43,7 +52,9 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:modelValue', 'executed', 'conflict'])
 
-const form = reactive({ note: '', material_ref: '', confirmed: false })
+const form = reactive({ note: '', material_ref: '', confirmed: false, price: null, currency: '' })
+/** 常用币种；不预选任何一个，避免替用户默认成 USD。 */
+const CURRENCIES = ['USD', 'CNY', 'EUR', 'GBP', 'JPY']
 const submitting = ref(false)
 const uncertain = ref(false)
 const conflictMessage = ref('')
@@ -51,10 +62,12 @@ const conflictMessage = ref('')
 const actionName = computed(() => props.action?.action || '')
 const doubleConfirm = computed(() => needsDoubleConfirm(actionName.value, props.action || {}))
 const materialRequired = computed(() => requiresMaterial(actionName.value))
+const priceRequired = computed(() => requiresPrice(actionName.value))
 const noteRequired = computed(() => requiresNote(actionName.value))
 const submittable = computed(() => !submitting.value && !uncertain.value
   && (!doubleConfirm.value || form.confirmed)
   && (!materialRequired.value || form.material_ref.trim().length > 0)
+  && (!priceRequired.value || (Number(form.price) > 0 && /^[A-Z]{3}$/.test(form.currency || '')))
   && (!noteRequired.value || form.note.trim().length > 0))
 
 watch(() => props.modelValue, (open) => { if (open) reset() })
@@ -63,6 +76,8 @@ function reset() {
   form.note = ''
   form.material_ref = ''
   form.confirmed = false
+  form.price = null
+  form.currency = ''
   submitting.value = false
   uncertain.value = false
   conflictMessage.value = ''
@@ -106,4 +121,5 @@ async function submit() {
 
 <style scoped>
 .mb12 { margin-bottom: 12px; }
+.hint { margin-left: 8px; color: var(--color-text-secondary); font-size: var(--font-size-xs); }
 </style>

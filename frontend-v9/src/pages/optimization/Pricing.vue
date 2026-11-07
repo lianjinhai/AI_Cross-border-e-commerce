@@ -37,6 +37,46 @@
       </div>
     </FormSection>
 
+    <!-- 核价报价轮次（M2-A）：只读历史 + 低价门禁解释；写入口在 Launch 动作 -->
+    <FormSection
+      title="核价报价轮次"
+      description="只增不改的报价历史；申报 / 还价 / 接受在 Launch 流程内执行，本页只读，不绕过流程写轮次"
+    >
+      <el-alert
+        v-if="gateMessage" type="error" :closable="false" show-icon class="mt8"
+        :title="gateMessage"
+        description="本页只能帮你测算到达标价；提交报价轮次请回到 Launch 的「平台核价」步骤——那里才有流程上下文与决策留痕。"
+      />
+      <el-descriptions v-if="calcResult" :column="4" border size="small" class="mt8">
+        <el-descriptions-item label="最低毛利要求">{{ percent(calcResult.min_margin) }}</el-descriptions-item>
+        <el-descriptions-item label="目标毛利">{{ percent(calcResult.target_margin) }}</el-descriptions-item>
+        <el-descriptions-item label="当前售价毛利">{{ percent(calcResult.margin) }}</el-descriptions-item>
+        <el-descriptions-item label="门槛判定">
+          <el-tag :type="gateMessage ? 'danger' : 'success'" size="small">
+            {{ gateMessage ? '低于门槛' : '达标' }}
+          </el-tag>
+        </el-descriptions-item>
+      </el-descriptions>
+      <el-table v-loading="roundsLoading" :data="roundRowsData" size="small" class="mt8">
+        <el-table-column prop="roundNo" label="轮次" width="70" />
+        <el-table-column prop="actionLabel" label="动作" width="100" />
+        <el-table-column prop="priceText" label="申报价" width="140" />
+        <el-table-column prop="marginText" label="毛利率" width="90" />
+        <el-table-column prop="floorText" label="门槛" width="90" />
+        <el-table-column label="门禁" width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.gateOk ? 'success' : 'danger'" size="small">{{ row.gateLabel }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="decisionLabel" label="决策" width="90" />
+        <el-table-column prop="at" label="时间" width="170" />
+        <el-table-column prop="source" label="来源" width="90" />
+        <template #empty>
+          <EmptyState reason="NO_DATA" hint="还没有报价轮次：在 Launch 的「平台核价」步骤申报第一轮" />
+        </template>
+      </el-table>
+    </FormSection>
+
     <FormSection title="定价记录（最新在前）" description="勾选后批量采纳建议价（写入商品取价口径 attrs.sale_price）；忽略为本地标记（后端暂无忽略端点）">
       <div class="batch-bar" v-if="writable">
         <el-button
@@ -93,7 +133,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from '../../shared/ui'
 import PageHeader from '../../components/PageHeader.vue'
@@ -101,7 +141,8 @@ import JourneyJ0Bar from '../../components/JourneyJ0Bar.vue'
 import FormSection from '../../components/FormSection.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import { can } from '../../permissions/permissions'
-import { fetchPricingRecords, calcProfit, suggestPrice } from '../../api/domains/pricing'
+import { fetchPricingRecords, calcProfit, suggestPrice, fetchPriceRounds } from '../../api/domains/pricing'
+import { roundRows, priceGateMessage } from '../../shared/pricingRounds'
 import { fetchProduct, updateProduct } from '../../api/domains/products'
 import { isJourneyActive, buildJourneyQuery } from '../../shared/journeyJ0View'
 
@@ -133,6 +174,12 @@ const calcCurrency = ref('')
  * 而非默认 $. 仅做展示绑定，不做前端换汇、不在浏览器算利润（costing.calc_profit 权威）。
  */
 const priceUnit = computed(() => (calcCurrency.value ? `（${calcCurrency.value}）` : '—（口径未知）'))
+const rounds = ref([])
+const roundsLoading = ref(false)
+/** 低价门禁文案：门槛取自后端 calc 响应的 min_margin，前端不写死 15%。 */
+const gateMessage = computed(() => priceGateMessage(
+  calcResult.value?.margin, calcResult.value?.min_margin))
+const roundRowsData = computed(() => roundRows(rounds.value))
 const selected = ref([])
 const adopting = ref(false)
 /** 本地忽略集（后端无忽略端点，仅本次会话生效，不做假持久化）。 */
@@ -241,7 +288,25 @@ function ignoreSelected() {
   ElMessage.info('已本地忽略所选记录（后端暂无忽略端点，刷新后恢复）')
 }
 
-onMounted(load)
+async function loadRounds() {
+  roundsLoading.value = true
+  try {
+    const data = await fetchPriceRounds({ productId: pid.value, limit: 50 })
+    rounds.value = data?.items || []
+  } catch {
+    // 轮次读失败不能挡住整页：清空列表并保持空态，不伪造历史。
+    rounds.value = []
+  } finally {
+    roundsLoading.value = false
+  }
+}
+
+watch(pid, loadRounds)
+
+onMounted(() => {
+  load()
+  loadRounds()
+})
 </script>
 
 <style scoped>

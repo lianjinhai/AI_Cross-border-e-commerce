@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }))
 vi.mock('../src/shared/api/client', () => ({ default: { get: mocks.get, post: mocks.post } }))
 
 const {
-  NOT_CONNECTED, PLATFORM_STATUS, actionPayload, actionReceiptView, blockerText, buildReturnTo, detailPath, emptyStateReason,
+  NOT_CONNECTED, PLATFORM_STATUS, actionPayload, normalizeCurrency, requiresPrice, actionReceiptView, blockerText, buildReturnTo, detailPath, emptyStateReason,
   errorEnvelope, evidenceText, executeAction, executionStatusMeta, groupStepsBySequence, guidedSummary,
   isSafeReturnTo, isUncertainError, listLaunches, listQuery, loadContext, needsDoubleConfirm,
   newIdempotencyKey, nextActionText, notConnected, ownerText, parallelReadySteps, parseReturnTo,
@@ -230,12 +230,29 @@ describe('动作载荷与二次确认（AC-15.5/15.7）', () => {
     expect(needsDoubleConfirm('X', { approval_required: true })).toBe(true)
   })
 
+  it('requiresPrice/normalizeCurrency 只认 3 位币种代码', () => {
+    expect(requiresPrice('REPORT_PRICE')).toBe(true)
+    expect(requiresPrice('COUNTER_PRICE')).toBe(true)
+    expect(requiresPrice('ACCEPT_PRICE')).toBe(false)
+    expect(normalizeCurrency(' usd ')).toBe('USD')
+    expect(normalizeCurrency('US')).toBe('')
+    expect(normalizeCurrency('US1')).toBe('')
+    expect(normalizeCurrency(null)).toBe('')
+  })
+
   it('actionPayload 按 per-action 契约构造，避免未知键 422', () => {
     expect(actionPayload('CANCEL', { note: ' 不再上线 ' })).toEqual({ note: '不再上线', confirm: true })
     expect(actionPayload('CONFIRM_ACTIVATION', { material_ref: ' https://x ', note: 'OK' }))
       .toEqual({ material_ref: 'https://x', note: 'OK' })
     expect(actionPayload('COMPLETE_DATA', {})).toEqual({})
     expect(actionPayload('COMPLETE_DATA', { note: '完成' })).toEqual({ note: '完成' })
+    // M2-A：核价动作必带金额与币种，币种归一化后随载荷发送（不默认 USD）
+    expect(actionPayload('REPORT_PRICE', { price: 19.99, currency: 'usd', note: ' 首轮 ' }))
+      .toEqual({ price: 19.99, currency: 'USD', note: '首轮' })
+    expect(actionPayload('COUNTER_PRICE', { price: '25', currency: ' eur ' }))
+      .toEqual({ price: 25, currency: 'EUR' })
+    // 接受动作不带价：接受的是已记录的那一轮
+    expect(actionPayload('ACCEPT_PRICE', { price: 99, currency: 'USD' })).toEqual({})
     expect(requiresMaterial('CONFIRM_ACTIVATION')).toBe(true)
     expect(requiresNote('CANCEL')).toBe(true)
     expect(requiresNote('COMPLETE_DATA')).toBe(false)

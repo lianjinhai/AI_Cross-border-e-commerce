@@ -211,12 +211,33 @@ export function requiresNote(action) {
   return CONFIRM_PAYLOAD_ACTIONS.has(action)
 }
 
+/**
+ * 需要「金额 + 币种」的动作（M2-A 核价）：后端载荷必填 `price` 与 `currency`，
+ * 缺币种直接 422（不默认 USD）。这里把要求显式暴露给对话框，避免用户点下去才报错。
+ */
+const PRICE_PAYLOAD_ACTIONS = new Set(['REPORT_PRICE', 'COUNTER_PRICE'])
+/** 接受报价不需要填价：接受的是已记录的那一轮，价格由后端取最新轮次。 */
+export function requiresPrice(action) {
+  return PRICE_PAYLOAD_ACTIONS.has(action)
+}
+
+/** 金额币种归一化：只接受 3 位字母代码，其他一律视为「没填」。 */
+export function normalizeCurrency(value) {
+  const code = String(value || '').trim().toUpperCase()
+  return /^[A-Z]{3}$/.test(code) ? code : ''
+}
+
 /** 按 per-action 载荷契约构造 payload（避免发送未知键触发 422）。 */
 export function actionPayload(action, form = {}) {
   if (CONFIRM_PAYLOAD_ACTIONS.has(action)) {
     return { note: String(form.note || '').trim(), confirm: true }
   }
   const payload = {}
+  if (requiresPrice(action)) {
+    // 金额与币种一起给：只给金额不给币种，后端会 422，这里提前按同一契约构造。
+    payload.price = Number(form.price)
+    payload.currency = normalizeCurrency(form.currency)
+  }
   if (requiresMaterial(action) && form.material_ref) payload.material_ref = String(form.material_ref).trim()
   if (form.note) payload.note = String(form.note).trim()
   return payload
