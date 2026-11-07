@@ -205,6 +205,56 @@ def test_list_filters_pagination_and_validation(client, auth_headers, api_env):
     assert bad.status_code == 422 and bad.json()["detail"]["code"] == "FILTER_INVALID"
 
 
+def test_round_history_replays_after_cancel(client, auth_headers, api_env):
+    """P0-3：取消后重新发起，历史能按轮次完整回读，活跃槽始终只有一个。
+
+    编号口径由前端定（按 created_at 升序），后端只需保证两件事：
+    默认列表只给活跃槽、``include_history=true`` 时把历史一并给出且逐条带 ``is_history``。
+    """
+    db, ctx, product, shops = api_env
+    shop_id = shops[0].id
+    first_id = _create(client, auth_headers, product, shops[0], key="round-1").json()["id"]
+    revision = client.get(f"/api/launch/{first_id}", headers=auth_headers).json()["revision"]
+    cancel = client.post(f"/api/launch/{first_id}/actions/CANCEL",
+                         headers={**auth_headers, "Idempotency-Key": "round-1-cancel"},
+                         json={"expected_revision": revision,
+                               "payload": {"note": "换一次选品，重开一轮", "confirm": True}})
+    assert cancel.status_code == 200, cancel.text
+    assert cancel.json()["receipt"]["active_slot_released"] is True
+    second = _create(client, auth_headers, product, shops[0], key="round-2",
+                     previous_run_id=first_id)
+    assert second.status_code == 200, second.text
+    second_id = second.json()["id"]
+
+    # 默认口径：只有活跃槽，历史不出现。
+    active = client.get("/api/launch", headers=auth_headers,
+                        params={"product_id": product.id, "shop_id": shop_id})
+    assert [item["id"] for item in active.json()["items"]] == [second_id]
+    assert active.json()["items"][0]["is_history"] is False
+    assert active.json()["total"] == 1
+
+    # 带历史：两轮都在，按创建时间倒序（同秒用 id 兜底），is_history 如实标注。
+    history = client.get("/api/launch", headers=auth_headers,
+                         params={"product_id": product.id, "shop_id": shop_id,
+                                 "include_history": True})
+    assert history.status_code == 200, history.text
+    body = history.json()
+    assert body["total"] == 2
+    assert [item["id"] for item in body["items"]] == [second_id, first_id]
+    assert [item["is_history"] for item in body["items"]] == [False, True]
+
+    # 轮次衔接与槽位：新轮次指向上一轮，库里仍然只有一个 active_slot=1。
+    assert client.get(f"/api/launch/{second_id}", headers=auth_headers).json()["previous_run_id"] == first_id
+    assert db.query(WorkflowRun).filter_by(product_id=product.id, shop_id=shop_id,
+                                           active_slot=1).count() == 1
+
+    # 活跃槽没释放时再开一轮仍被拦（唯一槽位口径不接受「有历史就放行」）。
+    again = _create(client, auth_headers, product, shops[0], key="round-3")
+    assert again.status_code == 409
+    assert again.json()["detail"]["code"] == "ACTIVE_LAUNCH_EXISTS"
+    assert again.json()["detail"]["existing_launch_id"] == second_id
+
+
 # ------------------------------------------------------------------ AC-2/3 详情与步骤
 
 def test_detail_fields_and_read_only_does_not_bump_revision(client, auth_headers, api_env):

@@ -93,7 +93,29 @@ TypeError: u.value.find is not a function
 
 前端全量：`59 files / 745 tests passed`（此前一次跑出 57/673，是 2 个测试文件写盘 EPERM 未收集，已复核为环境噪声）。
 
-### 4.2 真实链路（只调 API，不改库）
+### 4.2 后端用例（验收项「历史能按轮次完整回读」原本没有覆盖，本批补上）
+
+复核时发现 `include_history` 在 `tests/` 下**没有任何用例**，而它正是本批验收口径之一，
+于是补 `tests/test_launch_api.py::test_round_history_replays_after_cancel`：
+
+```
+创建第 1 轮 → CANCEL（断言 receipt.active_slot_released）   → 槽位释放
+带 previous_run_id 创建第 2 轮
+默认列表           → 只有第 2 轮，is_history=False，total=1
+include_history    → [第2轮, 第1轮]，is_history=[False, True]，total=2
+第 2 轮详情        → previous_run_id == 第 1 轮
+库里 active_slot=1 → 恰好 1 条
+槽位未释放再创建   → 409 ACTIVE_LAUNCH_EXISTS（不接受「有历史就放行」）
+```
+
+「不能为同一销售对象开第二个活跃槽」原本已有覆盖，无需新增：
+`test_launch_records.py` 的 `test_idempotency_and_active_object_conflicts`（顺序重复）、
+`test_concurrent_creation_has_single_sales_object`（两线程并发，只允许 1 个 int 结果）、
+`test_database_slot_constraint_and_bound_listing_target`（库级约束）。
+
+`pytest -q -k "workflow or launch"` → `186 passed`。
+
+### 4.3 真实链路（只调 API，不改库）
 
 全新隔离副本库 `Temp/p03_shot/erp.db` + 真 uvicorn `:8013`，通过「创建 → 取消 → 重新发起」走三轮：
 
@@ -106,13 +128,13 @@ run 38  active_slot=1      is_history=false   WAITING_EXTERNAL / UNDER_REVIEW  �
 `include_history=true` 返回 3 条。第三轮随后由真实动作推进到 `UNDER_REVIEW`（承接 P0-2b），
 所以图上第 3 轮显示「等待平台反馈 / 平台审核中」。
 
-### 4.3 图 4
+### 4.4 图 4
 
 `04-transition-history-1440.png`（1440 视口，全页）：轮次历史三行——第 1 轮「历史 / 待执行 / 未提交」、
 第 2 轮同、第 3 轮「活跃槽 / 等待平台反馈 / 平台审核中 / 当前查看」。
 同时可见状态汇总三格、等待态横幅与事件流，控制台无报错。
 
-### 4.4 轮次跳转（顺带验证响应式修复）
+### 4.5 轮次跳转（顺带验证响应式修复）
 
 点第 1 轮的「查看」后：
 
@@ -141,6 +163,7 @@ URL     /app/launch/38  →  /app/launch/36
 ```bash
 cd frontend-v9 && npx vitest run tests/launch-rounds.test.js
 cd frontend-v9 && npm test
-cd backend && python -m pytest -q -k workflow
+cd backend && python -m pytest tests/test_launch_api.py -q -k round_history
+cd backend && python -m pytest -q -k "workflow or launch"
 cd backend && python scripts/check_docs_consistency.py --json   # 要求 total=0
 ```
