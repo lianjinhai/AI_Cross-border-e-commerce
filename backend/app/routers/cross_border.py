@@ -26,7 +26,7 @@ from ..models import (
     User,
 )
 from ..serialize import to_dict
-from ..services import compliance_registry, costing, duty, logistics, platform_fees
+from ..services import compliance_registry, costing, duty, label_packages, logistics, platform_fees
 
 router = APIRouter(prefix="/cross-border", tags=["cross-border"])
 
@@ -303,6 +303,38 @@ def upsert_compliance_evidence(product_id: int, body: EvidenceIn, user: User = _
     db.commit()
     return compliance_registry.check_evidence(db, user.tenant_id, product,
                                               body.destination_country)
+
+
+# ---------------------------------------------------------------- 标签包（M2-E，只读）
+@router.get("/products/{product_id}/labels")
+def list_label_packages(product_id: int, shop_id: int = 0, country: str = "", limit: int = 50,
+                        user: User = _READ, db: Session = Depends(get_db)):
+    """标签包版本历史（只读）；给 ``country`` 时附带该目的国的当前依据判定。
+
+    **写入入口不在这里**：标签包只能由 Launch 动作 `GENERATE_LABEL` / `REGENERATE_LABEL`
+    生成（要经过依据门禁与 revision CAS）。这里只回答「印出去过哪几版、依据还能不能对上」，
+    避免出现绕过门禁的第二个写入口。
+    """
+    product = _get_product(db, user.tenant_id, product_id)
+    rows = label_packages.history(db, user.tenant_id, product.id, limit)
+    if shop_id:
+        rows = [row for row in rows if row.shop_id == shop_id]
+    items = [{"id": row.id, "shop_id": row.shop_id, "version": row.version,
+              "action": row.action, "destination_country": row.destination_country,
+              "content_digest": row.content_digest, "basis_fingerprint": row.basis_fingerprint,
+              "created_at": row.created_at.isoformat() if row.created_at else None,
+              "open_items": list(row.open_items or []), "content": row.content or {}}
+             for row in rows]
+    payload = {"items": items}
+    if country:
+        # 依据（要求 + 证据 + 缺项）与店铺无关，因此只给国家就能取；
+        # 「这一版标签是否仍当前」才需要 shop_id（标签按店铺隔离）。
+        basis = label_packages.resolve_basis(db, user.tenant_id, product, country)
+        payload["basis"] = basis
+        if shop_id:
+            basis["package_current"] = label_packages.basis_current(
+                db, user.tenant_id, product, shop_id, country)
+    return payload
 
 
 @router.post("/landed-cost")
