@@ -91,6 +91,11 @@
         </div>
       </el-card>
 
+      <!-- 目的国合规要求与证据（M2-E）：`LABEL_BASIS_MISSING` 的补齐入口就落在这里，
+           页面上必须有真的能补的地方，否则阻断里给的「去商品详情」又是一次指路指错。 -->
+      <ComplianceEvidence v-if="product.id" :product-id="product.id" :shops="shopOptions"
+        :default-country="product.attrs?.destination_country || ''" />
+
       <!-- 货源·供给研究（B3 原型 04）：左供给资料（报价表），右目标市场条件（会话画像，仅参考） -->
       <el-card class="mb16" shadow="never">
         <template #header>
@@ -398,6 +403,7 @@ import StatusBadge from '../../components/StatusBadge.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ErrorState from '../../components/ErrorState.vue'
 import SectionState from '../../components/SectionState.vue'
+import ComplianceEvidence from '../../features/product/ComplianceEvidence.vue'
 import { canApprove, canWrite } from '../../permissions/permissions'
 import {
   addAsset, fetchAssetUploadCapability, fetchAssets, fetchChannels, fetchProduct, fetchProductOverview,

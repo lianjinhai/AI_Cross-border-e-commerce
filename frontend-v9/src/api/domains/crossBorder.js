@@ -35,3 +35,34 @@ export const complianceRules = crud('compliance-rules')
 export async function calcLandedCost(data = {}) {
   return (await api.post('/cross-border/landed-cost', data)).data
 }
+
+/**
+ * 某商品在目的国的准入要求 × 证据核验：GET /cross-border/products/{id}/compliance?country=
+ * → {country, required[], missing[], expired[], satisfied[], passed, blocking[]}
+ *
+ * 注意 `passed=true` 且 `required=[]` 的含义是**未收录要求**，不是「无需认证」——
+ * 页面必须用 `/labels` 的 basis.reasons 说清这一点，别直接渲染绿勾。
+ */
+export async function productCompliance(productId, { country = '' } = {}) {
+  return (await api.get(`/cross-border/products/${productId}/compliance`,
+    { params: { country } })).data
+}
+
+/**
+ * 登记/更新一条目的国合规证据：POST /cross-border/products/{id}/compliance
+ * {destination_country, requirement, evidence_ref, valid_until?, note?} → 更新后的核验结果
+ */
+export async function saveComplianceEvidence(productId, data = {}) {
+  return (await api.post(`/cross-border/products/${productId}/compliance`, data)).data
+}
+
+/**
+ * 标签包版本历史（只读，M2-E）：GET /cross-border/products/{id}/labels?country=&shop_id=&limit=
+ * → {items[], basis?}；给 country 才有 basis（要求/证据/缺项/原因）。
+ * **写入不在这里**：标签只能由 Launch 动作 GENERATE_LABEL / REGENERATE_LABEL 生成。
+ */
+export async function labelPackages(productId, { country = '', shopId = 0, limit = 20 } = {}) {
+  const params = { country, limit }
+  if (shopId) params.shop_id = shopId
+  return (await api.get(`/cross-border/products/${productId}/labels`, { params })).data
+}
